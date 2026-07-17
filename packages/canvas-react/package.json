@@ -25,6 +25,7 @@
     "./styles.css": "./src/styles/canvas.css"
   },
   "publishConfig": {
+    "access": "public",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
     "exports": {
