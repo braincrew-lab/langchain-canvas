@@ -1,0 +1,68 @@
+{
+  "name": "@langchain-canvas/react",
+  "version": "0.1.0",
+  "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/langchain-canvas/langchain-canvas.git",
+    "directory": "packages/canvas-react"
+  },
+  "sideEffects": [
+    "*.css",
+    "./dist/index.js"
+  ],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "comment": "Dev resolves to source (no build needed; Next transpiles via transpilePackages). publishConfig swaps to dist for npm.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles/canvas.css"
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./styles.css": "./dist/styles.css"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "dependencies": {
+    "@fortune-sheet/react": "^1.0.4",
+    "react-markdown": "^9.0.1",
+    "recharts": "^3.1.0",
+    "remark-gfm": "^4.0.0",
+    "zustand": "^4.5.4"
+  },
+  "optionalDependencies": {
+    "docx": "^9.0.2",
+    "exceljs": "^4.4.0",
+    "fast-formula-parser": "^1.0.19",
+    "pptxgenjs": "^3.12.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "jsdom": "^25",
+    "tsup": "^8.2.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2"
+  }
+}

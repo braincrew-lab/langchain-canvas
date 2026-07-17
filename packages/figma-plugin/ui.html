@@ -1,0 +1,40 @@
+<style>
+  body { font-family: Inter, -apple-system, sans-serif; margin: 0; padding: 16px; color: #1f2328; }
+  h1 { font-size: 13px; margin: 0 0 4px; }
+  p { font-size: 12px; color: #6b7280; margin: 0 0 14px; }
+  input[type="file"] { width: 100%; font-size: 12px; margin-bottom: 12px; }
+  button { width: 100%; padding: 9px; border: 0; border-radius: 8px; background: #6366f1; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; }
+</style>
+
+<h1>Import a canvas deck</h1>
+<p>Select the <code>.json</code> exported from langchain-canvas ("Figma (JSON)").</p>
+<input type="file" id="file" accept=".json,application/json" />
+<button id="import" disabled>Import slides</button>
+
+<script>
+  const fileInput = document.getElementById("file");
+  const button = document.getElementById("import");
+  let deck = null;
+
+  fileInput.onchange = () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        deck = JSON.parse(reader.result);
+        button.disabled = false;
+      } catch (e) {
+        alert("That file isn't valid JSON.");
+        deck = null;
+        button.disabled = true;
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  button.onclick = () => {
+    if (deck) parent.postMessage({ pluginMessage: { type: "import-deck", deck } }, "*");
+  };
+</script>

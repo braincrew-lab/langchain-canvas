@@ -1,0 +1,26 @@
+{
+  "name": "langchain-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
+  "license": "MIT",
+  "packageManager": "pnpm@9.7.0",
+  "scripts": {
+    "build": "pnpm --filter @langchain-canvas/react build",
+    "dev:web": "pnpm --filter langchain-canvas-web dev",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @langchain-canvas/react test"
+  },
+  "keywords": [
+    "langchain",
+    "langgraph",
+    "agents",
+    "canvas",
+    "generative-ui",
+    "react",
+    "sse"
+  ],
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
+}
