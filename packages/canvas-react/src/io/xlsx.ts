@@ -185,6 +185,61 @@ function cellValue(cell: any): Record<string, unknown> | null {
   return v;
 }
 
+/** Base64-encode a byte buffer without Node's `Buffer` (this runs in the browser). */
+function bytesToBase64(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+  }
+  return btoa(bin);
+}
+
+const EMU_PER_PX = 9525;
+const DEFAULT_COL_PX = 73; // Fortune's default column width / row height, used to
+const DEFAULT_ROW_PX = 19; // position an image anchored to a cell that has no explicit size
+
+/** Extract a worksheet's floating images as Fortune `Image`s (px position + data URL). */
+function sheetImages(
+  ws: any,
+  media: any[],
+  columnlen: Record<number, number>,
+  rowlen: Record<number, number>,
+): FortuneSheet[] {
+  const placed = typeof ws.getImages === "function" ? ws.getImages() : [];
+  if (!placed.length || !media?.length) return [];
+  const colLeft = (c: number) => { let x = 0; for (let i = 0; i < c; i++) x += columnlen[i] ?? DEFAULT_COL_PX; return x; };
+  const rowTop = (r: number) => { let y = 0; for (let i = 0; i < r; i++) y += rowlen[i] ?? DEFAULT_ROW_PX; return y; };
+
+  const images: FortuneSheet[] = [];
+  placed.forEach((im: any, idx: number) => {
+    const entry = media[Number(im.imageId)];
+    if (!entry?.buffer) return;
+    const src = `data:image/${entry.extension || "png"};base64,${bytesToBase64(entry.buffer)}`;
+    const tl = im.range?.tl;
+    if (!tl) return;
+    const left = colLeft(tl.nativeCol ?? tl.col ?? 0) + Math.round((tl.nativeColOff ?? 0) / EMU_PER_PX);
+    const top = rowTop(tl.nativeRow ?? tl.row ?? 0) + Math.round((tl.nativeRowOff ?? 0) / EMU_PER_PX);
+    let width = im.range?.ext?.width;
+    let height = im.range?.ext?.height;
+    if ((!width || !height) && im.range?.br) {
+      // A two-cell anchor sizes the image by the span from tl to br.
+      const br = im.range.br;
+      width = colLeft(br.nativeCol ?? br.col ?? (tl.col ?? 0) + 2) - left;
+      height = rowTop(br.nativeRow ?? br.row ?? (tl.row ?? 0) + 2) - top;
+    }
+    images.push({
+      id: `img_${idx}`,
+      src,
+      left: Math.max(0, Math.round(left)),
+      top: Math.max(0, Math.round(top)),
+      width: Math.max(16, Math.round(width || 100)),
+      height: Math.max(16, Math.round(height || 100)),
+    });
+  });
+  return images;
+}
+
 /** Parse a merge range ("A1:C2") into Fortune's `{r,c,rs,cs}` (0-based). */
 function parseMerge(range: string): { key: string; entry: { r: number; c: number; rs: number; cs: number } } | null {
   const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
@@ -207,6 +262,7 @@ export async function xlsxToSheets(buffer: ArrayBuffer, load: () => Promise<any>
   const ExcelJS = await load();
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
+  const media = wb.model?.media ?? [];
 
   const sheets: FortuneSheet[] = [];
   wb.worksheets.forEach((ws: any, index: number) => {
@@ -301,6 +357,7 @@ export async function xlsxToSheets(buffer: ArrayBuffer, load: () => Promise<any>
       column: Math.max(colCount + 2, 10),
       celldata,
       config: { merge, columnlen, rowlen, borderInfo },
+      images: sheetImages(ws, media, columnlen, rowlen),
     });
   });
 

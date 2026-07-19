@@ -507,13 +507,22 @@ const INSPECTOR_SCRIPT = `
     // clean <br> instead. Escape commits by blurring.
     document.addEventListener("keydown", function (e) {
       var t = e.target;
-      if (!(t instanceof Element) || !t.hasAttribute("contenteditable")) return;
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (!document.execCommand("insertLineBreak")) document.execCommand("insertHTML", false, "<br>");
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        t.blur();
+      var editing = t instanceof Element && t.hasAttribute("contenteditable");
+      if (editing) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (!document.execCommand("insertLineBreak")) document.execCommand("insertHTML", false, "<br>");
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          t.blur();
+        }
+        return;
+      }
+      // Escape with a live selection clears it here and tells the host to close its
+      // selection UI (an empty multi-select).
+      if (e.key === "Escape" && selected.length) {
+        clearSelected();
+        parent.postMessage({ source: MARK, type: "multi_select", items: [] }, "*");
       }
     }, true);
 

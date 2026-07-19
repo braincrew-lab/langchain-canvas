@@ -53,6 +53,15 @@ function CanvasPanel({ emptyState, onEditElement }: Pick<CanvasProps, "emptyStat
   const { importFiles } = useCanvasImport();
   const [dropping, setDropping] = useState(false);
 
+  // Escape clears the current selection (closes the style panel / selection bar).
+  // The in-iframe highlight is dropped by HtmlRenderer once selections empties.
+  useEffect(() => {
+    if (!selections.length) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelections([]); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selections.length, setSelections]);
+
   const active = activeId ? artifacts[activeId] : undefined;
 
   // Drag-and-drop a file anywhere on the panel to open it as an artifact.

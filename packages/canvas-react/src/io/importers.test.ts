@@ -194,6 +194,27 @@ describe("importFile xlsx (robust to real spreadsheets)", () => {
     expect(m(2)).toBe("$1,000"); // currency + thousands
     expect(m(3)).toBe("2026-07-11"); // date pattern, local calendar day
   });
+
+  it("imports embedded images as positioned Fortune images", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    const png = Uint8Array.from(atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAF0lEQVR42mNk+M9Qz0AEYBxVSFyFAwAX9wX/eGj4bwAAAABJRU5ErkJggg==",
+    ), (c) => c.charCodeAt(0));
+    const id = wb.addImage({ buffer: png as unknown as ExcelJS.Buffer, extension: "png" });
+    ws.addImage(id, { tl: { col: 1, row: 2 }, ext: { width: 100, height: 100 } });
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "i.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    const imgs = table.sheet[0].images;
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].src).toMatch(/^data:image\/png;base64,/);
+    expect(imgs[0].width).toBe(100);
+    expect(imgs[0].height).toBe(100);
+    expect(imgs[0].left).toBeGreaterThan(0); // anchored at column B, not the origin
+  });
 });
 
 describe("canImport", () => {
