@@ -81,7 +81,7 @@ function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: F
       // real sheet and to keep growing, small enough that the scrollbar stays
       // proportional (a huge empty grid makes scrolling feel disconnected).
       row: Math.max(rows.length + 40, 60),
-      column: Math.max(columns.length + 4, 16),
+      column: Math.max(columns.length + 2, 8),
       celldata,
       // No frozen pane: a freeze split offsets the initial scroll and hides the
       // first data rows behind the split line. A plain grid scrolls cleanly.
