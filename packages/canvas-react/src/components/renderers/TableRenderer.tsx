@@ -12,12 +12,15 @@
  * rendered after mount (never during SSR).
  */
 
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "@fortune-sheet/react/dist/index.css";
 
+import type { WorkbookInstance } from "@fortune-sheet/react";
+
 import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
+import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 
 const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
@@ -178,41 +181,67 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey, hasFormulas]);
 
-  const source = useMemo(
-    () => toWorkbook(columns, rows, formulas),
+  const hasSheet = !!artifact.data.sheet?.length;
+  // The workbook's data is frozen at mount (keyed by dataKey): a rich imported
+  // sheet is rendered as-is; agent-built columns/rows are converted once. In-sheet
+  // edits are owned by Fortune and mirrored back to the store via onChange — they
+  // must NOT feed back into this prop, or the workbook would reset mid-edit.
+  const initialData = useMemo(
+    () => (artifact.data.sheet?.length ? artifact.data.sheet : toWorkbook(columns, rows, formulas)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataKey, formulas],
+    [dataKey, formulasReady],
   );
+
+  // Persist in-sheet edits (cell values, inserted rows/columns, images, styling)
+  // back onto the artifact so they survive re-renders and flow into exports.
+  // Debounced, since Fortune fires onChange on every keystroke; writes only
+  // `data.sheet` with no version bump, so the workbook is never remounted.
+  const applyEvent = useCanvasStore((s) => s.applyEvent);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleChange = useCallback(
+    (sheets: unknown) => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(() => {
+        applyEvent({ type: "canvas.patch", id: artifact.id, patch: { sheet: sheets as TableData["sheet"] } });
+      }, 400);
+    },
+    [applyEvent, artifact.id],
+  );
+  useEffect(() => () => { if (persistTimer.current) clearTimeout(persistTimer.current); }, []);
+
+  // Discoverable row/column inserts (the right-click menu is easy to miss). Insert
+  // next to the current selection, or at the top-left if nothing is selected.
+  const wbRef = useRef<WorkbookInstance>(null);
+  const insert = (type: "row" | "column") => {
+    const sel = wbRef.current?.getSelection?.();
+    const range = sel?.[0]?.[type] ?? [0, 0];
+    wbRef.current?.insertRowOrColumn(type, Math.max(0, range[1]), 1, "rightbottom");
+  };
 
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">Loading spreadsheet…</div>;
   }
-  // A rich imported workbook (all sheets, fonts/fills/formats/merges/widths) is
-  // rendered as-is; the simple columns/rows path is only for agent-built tables.
-  const sheet = artifact.data.sheet;
-  if (sheet?.length) {
-    return (
-      <div className="cv-sheet" ref={rootRef}>
-        <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
-          <Workbook key={`${dataKey}:rich`} data={sheet as never} />
-        </Suspense>
-      </div>
-    );
-  }
-  if (columns.length === 0) {
+  if (!hasSheet && columns.length === 0) {
     return <div className="cv-sheet cv-sheet--empty">Waiting for data…</div>;
   }
   // Wait for formula pre-computation before mounting, so the workbook mounts once
   // with final values — no remount that could interrupt an in-progress edit.
-  if (!formulasReady) {
+  if (!hasSheet && !formulasReady) {
     return <div className="cv-sheet cv-sheet--empty">Calculating…</div>;
   }
 
   return (
-    <div className="cv-sheet" ref={rootRef}>
-      <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
-        <Workbook key={dataKey} data={source as never} />
-      </Suspense>
+    <div className="cv-sheet-panel">
+      <div className="cv-sheet-tools">
+        <button type="button" onClick={() => insert("column")}>＋ Column</button>
+        <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
+      </div>
+      <div className="cv-sheet" ref={rootRef}>
+        <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
+          <Workbook key={dataKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
+        </Suspense>
+      </div>
     </div>
   );
 }

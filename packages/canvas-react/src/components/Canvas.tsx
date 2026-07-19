@@ -8,7 +8,7 @@
  * component only owns view-local concerns (which tab, which version).
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Artifact } from "../protocol/artifacts";
 import { CanvasRegistryProvider, useRenderer, type ArtifactRegistry } from "../registry/registry";
@@ -164,7 +164,11 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
       <div className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}`} ref={bodyRef}>
         {Renderer ? (
           <RendererBoundary resetKey={`${shown.id}:${shown.version}`}>
-            <Renderer artifact={shown} />
+            {/* Structured renderers are lazy (recharts / react-markdown / fortune-sheet
+                split into on-demand chunks); Suspense covers their first load. */}
+            <Suspense fallback={<div className="cv-fallback">Loading…</div>}>
+              <Renderer artifact={shown} />
+            </Suspense>
           </RendererBoundary>
         ) : (
           <div className="cv-fallback">No renderer registered for type “{shown.type}”.</div>
