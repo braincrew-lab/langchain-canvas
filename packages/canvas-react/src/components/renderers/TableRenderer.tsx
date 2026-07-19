@@ -12,12 +12,15 @@
  * rendered after mount (never during SSR).
  */
 
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "@fortune-sheet/react/dist/index.css";
 
+import type { WorkbookInstance } from "@fortune-sheet/react";
+
 import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
+import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 
 const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
@@ -56,32 +59,93 @@ function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: F
       });
     });
   });
+  // Auto-fit each column to its widest cell (header included), like double-clicking
+  // a column border in Excel — so long text isn't truncated. Clamped to sane bounds.
+  // Sample at most the first ~400 rows to size columns — enough to fit content
+  // without an O(rows × cols) scan stalling a very large sheet.
+  const sample = Math.min(rows.length, 400);
+  const columnlen: Record<number, number> = {};
+  columns.forEach((col, c) => {
+    let widest = String(col.label ?? col.key).length;
+    for (let ri = 0; ri < sample; ri++) {
+      let v = rows[ri][col.key];
+      if (isFormula(v)) v = formulas.get(`${ri + 1},${c}`) ?? ""; // measure the result, not the source
+      if (v != null && v !== "") widest = Math.max(widest, String(v).length);
+    }
+    columnlen[c] = Math.min(360, Math.max(64, Math.round(widest * 8.5) + 18));
+  });
+
   return [
     {
       name: "Sheet1",
       id: "sheet1",
       order: 0,
-      // A generously large grid so it scrolls smoothly in both directions like a
-      // real spreadsheet — no dynamic row insertion mid-scroll (which jumps the
-      // scrollbar). Grows past the defaults only when the data itself is larger.
-      row: Math.max(rows.length + 100, 200),
-      column: Math.max(columns.length + 8, 30),
+      // Size the grid to the data plus a modest buffer — big enough to feel like a
+      // real sheet and to keep growing, small enough that the scrollbar stays
+      // proportional (a huge empty grid makes scrolling feel disconnected).
+      row: Math.max(rows.length + 40, 60),
+      column: Math.max(columns.length + 2, 8),
       celldata,
       // No frozen pane: a freeze split offsets the initial scroll and hides the
-      // first data rows behind the split line. A plain grid scrolls cleanly in
-      // both directions, exactly like a default spreadsheet.
-      config: { rowlen: { 0: 28 } },
+      // first data rows behind the split line. A plain grid scrolls cleanly.
+      config: { rowlen: { 0: 28 }, columnlen },
     },
   ];
+}
+
+/** Columns from the union of row keys — a fallback when `columns` is omitted. */
+function deriveColumns(rows: TableData["rows"]): TableColumn[] {
+  const keys = new Set<string>();
+  for (let i = 0; i < Math.min(rows.length, 50); i++) Object.keys(rows[i] ?? {}).forEach((k) => keys.add(k));
+  return [...keys].map((key) => ({ key }));
 }
 
 const EMPTY_FORMULAS: FormulaValues = new Map();
 
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
-  const { columns, rows } = artifact.data;
+  const rows = artifact.data.rows;
+  // Fall back to deriving columns from the row keys, so a table that arrives with
+  // rows but no explicit `columns` still renders instead of "Waiting for data".
+  const columns = useMemo(
+    () => (artifact.data.columns.length ? artifact.data.columns : deriveColumns(rows)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [artifact.id, artifact.version, artifact.data.columns.length, rows.length],
+  );
   const [mounted, setMounted] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => setMounted(true), []);
+
+  // Fortune-sheet advances only a couple of pixels per wheel notch, so a tall
+  // sheet feels like the vertical scroll is stuck (hundreds of gestures to reach
+  // the bottom). Forward the wheel delta 1:1 to its own scrollbars instead, for
+  // natural scrolling — and only swallow the event when we actually moved, so
+  // page scroll past the sheet's edges still works.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const onWheel = (e: WheelEvent) => {
+      const y = root.querySelector<HTMLElement>(".luckysheet-scrollbar-y");
+      const x = root.querySelector<HTMLElement>(".luckysheet-scrollbar-x");
+      let moved = false;
+      if (y && e.deltaY && y.scrollHeight > y.clientHeight) {
+        const max = y.scrollHeight - y.clientHeight;
+        const next = Math.max(0, Math.min(max, y.scrollTop + e.deltaY));
+        if (next !== y.scrollTop) { y.scrollTop = next; moved = true; }
+      }
+      if (x && e.deltaX && x.scrollWidth > x.clientWidth) {
+        const max = x.scrollWidth - x.clientWidth;
+        const next = Math.max(0, Math.min(max, x.scrollLeft + e.deltaX));
+        if (next !== x.scrollLeft) { x.scrollLeft = next; moved = true; }
+      }
+      // A horizontal-dominant gesture must stay inside the sheet even at (or past)
+      // the scroll edge — otherwise it leaks out and the surrounding layout grabs
+      // it, so left–right scrolling feels like it "catches on the outside".
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (moved || (horizontal && e.deltaX)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    root.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => root.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
+  }, [mounted]);
 
   // Identity of the streamed data — the workbook re-keys on change (uncontrolled
   // afterward, so in-session edits are preserved between renders). `version` is
@@ -89,7 +153,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // row/column counts are unchanged.
   const dataKey = `${artifact.id}:v${artifact.version}:${columns.length}x${rows.length}`;
   const hasFormulas = useMemo(
-    () => rows.some((row) => columns.some((col) => isFormula(row[col.key]))),
+    () => rows.slice(0, 400).some((row) => columns.some((col) => isFormula(row[col.key]))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dataKey],
   );
@@ -117,29 +181,67 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey, hasFormulas]);
 
-  const source = useMemo(
-    () => toWorkbook(columns, rows, formulas),
+  const hasSheet = !!artifact.data.sheet?.length;
+  // The workbook's data is frozen at mount (keyed by dataKey): a rich imported
+  // sheet is rendered as-is; agent-built columns/rows are converted once. In-sheet
+  // edits are owned by Fortune and mirrored back to the store via onChange — they
+  // must NOT feed back into this prop, or the workbook would reset mid-edit.
+  const initialData = useMemo(
+    () => (artifact.data.sheet?.length ? artifact.data.sheet : toWorkbook(columns, rows, formulas)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataKey, formulas],
+    [dataKey, formulasReady],
   );
 
-  if (columns.length === 0) {
-    return <div className="cv-sheet cv-sheet--empty">Waiting for data…</div>;
-  }
+  // Persist in-sheet edits (cell values, inserted rows/columns, images, styling)
+  // back onto the artifact so they survive re-renders and flow into exports.
+  // Debounced, since Fortune fires onChange on every keystroke; writes only
+  // `data.sheet` with no version bump, so the workbook is never remounted.
+  const applyEvent = useCanvasStore((s) => s.applyEvent);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleChange = useCallback(
+    (sheets: unknown) => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+      persistTimer.current = setTimeout(() => {
+        applyEvent({ type: "canvas.patch", id: artifact.id, patch: { sheet: sheets as TableData["sheet"] } });
+      }, 400);
+    },
+    [applyEvent, artifact.id],
+  );
+  useEffect(() => () => { if (persistTimer.current) clearTimeout(persistTimer.current); }, []);
+
+  // Discoverable row/column inserts (the right-click menu is easy to miss). Insert
+  // next to the current selection, or at the top-left if nothing is selected.
+  const wbRef = useRef<WorkbookInstance>(null);
+  const insert = (type: "row" | "column") => {
+    const sel = wbRef.current?.getSelection?.();
+    const range = sel?.[0]?.[type] ?? [0, 0];
+    wbRef.current?.insertRowOrColumn(type, Math.max(0, range[1]), 1, "rightbottom");
+  };
+
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">Loading spreadsheet…</div>;
   }
+  if (!hasSheet && columns.length === 0) {
+    return <div className="cv-sheet cv-sheet--empty">Waiting for data…</div>;
+  }
   // Wait for formula pre-computation before mounting, so the workbook mounts once
   // with final values — no remount that could interrupt an in-progress edit.
-  if (!formulasReady) {
+  if (!hasSheet && !formulasReady) {
     return <div className="cv-sheet cv-sheet--empty">Calculating…</div>;
   }
 
   return (
-    <div className="cv-sheet" ref={rootRef}>
-      <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
-        <Workbook key={dataKey} data={source as never} />
-      </Suspense>
+    <div className="cv-sheet-panel">
+      <div className="cv-sheet-tools">
+        <button type="button" onClick={() => insert("column")}>＋ Column</button>
+        <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
+      </div>
+      <div className="cv-sheet" ref={rootRef}>
+        <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
+          <Workbook key={dataKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
+        </Suspense>
+      </div>
     </div>
   );
 }

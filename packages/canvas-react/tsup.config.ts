@@ -7,6 +7,9 @@ export default defineConfig({
   sourcemap: false, // keep the published tarball small; heavy deps are external anyway
   clean: true,
   treeshake: true,
+  // Split the lazy renderers (recharts / react-markdown / fortune-sheet) into
+  // their own chunks so a consumer only downloads what their artifacts use.
+  splitting: true,
   // Keep the optional Office/formula engines OUT of the bundle — they're declared
   // in optionalDependencies and pulled via guarded dynamic import, so the core
   // stays ~100 KB and a Node builtin (exceljs → crypto) never leaks into a chunk.

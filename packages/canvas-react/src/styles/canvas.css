@@ -63,6 +63,9 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* min-width: 0 so the panel can shrink below its content's min width in a flex/
+     grid host — otherwise a wide spreadsheet toolbar pushes the whole page wider. */
+  min-width: 0;
   background: var(--cv-bg);
   color: var(--cv-text);
   font-family: var(--cv-font);
@@ -371,7 +374,15 @@
 
 /* --- Excel viewer (Fortune-sheet workbook) ------------------------------------ */
 
-.cv-sheet { position: relative; width: 100%; height: 100%; min-height: 0; }
+.cv-sheet-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
+.cv-sheet-tools { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--cv-border); background: var(--cv-bg); flex: 0 0 auto; }
+.cv-sheet-tools button {
+  font-size: 12px; font-weight: 600; padding: 4px 10px; border: 1px solid var(--cv-border);
+  border-radius: 6px; background: var(--cv-bg); color: var(--cv-text); cursor: pointer;
+}
+.cv-sheet-tools button:hover { border-color: var(--cv-accent, #6366f1); color: var(--cv-accent, #6366f1); }
+.cv-sheet-tools__hint { margin-left: auto; font-size: 11px; color: var(--cv-muted); }
+.cv-sheet { position: relative; width: 100%; flex: 1; height: auto; min-height: 0; }
 .cv-sheet .fortune-container { height: 100% !important; width: 100% !important; }
 .cv-sheet--empty { display: grid; place-items: center; height: 200px; color: var(--cv-muted); font-size: 14px; }
 
@@ -876,8 +887,11 @@
 
 .cv-style {
   position: absolute;
-  right: 16px;
-  bottom: 72px; /* anchor to the lower-right — never overlaps the top editing toolbar */
+  /* Anchor to the lower-LEFT: the resize handle sits at an element's bottom-right,
+     so a right-docked panel hid it on wide elements. Left keeps the handle clear
+     and stays below the top editing toolbar. */
+  left: 16px;
+  bottom: 72px;
   z-index: 20;
   width: 210px;
   padding: 12px 14px;

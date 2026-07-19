@@ -122,9 +122,16 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
         applyEvent({ type: "canvas.node_patch", id: artifact.id, cid: data.cid, html: data.html });
         lastSelfHtml.current = (api.getState().canvas.artifacts[artifact.id]?.data as HtmlData | undefined)?.html ?? null;
       } else if (data.type === "doc_edit") {
-        // A structural edit shifted every cid — replace the whole document.
+        // A structural edit — replace the whole document. A reorder (`self`) is
+        // already reflected in the iframe with every cid intact, so mark it
+        // self-applied to skip the reload (no flicker) and keep the selection;
+        // other structural edits mint new nodes and reload to re-tag cids.
         applyEvent({ type: "canvas.patch", id: artifact.id, patch: { html: data.html } });
-        setSelections([]);
+        if (data.self) {
+          lastSelfHtml.current = (api.getState().canvas.artifacts[artifact.id]?.data as HtmlData | undefined)?.html ?? null;
+        } else {
+          setSelections([]);
+        }
       }
     }
     window.addEventListener("message", onMessage);

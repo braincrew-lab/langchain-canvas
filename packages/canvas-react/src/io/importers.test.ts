@@ -77,6 +77,147 @@ describe("importFile routing", () => {
   });
 });
 
+describe("importFile xlsx (robust to real spreadsheets)", () => {
+  it("reads the full range, fills merged cells, and names blank headers by letter", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    ws.getCell("A1").value = "Name"; // B1 left blank → should become column "B"
+    ws.getCell("C1").value = "Role";
+    ws.getCell("A2").value = "Alice";
+    ws.getCell("B2").value = 30;
+    ws.getCell("C2").value = "Eng";
+    ws.mergeCells("A3:A4"); // vertical merge — value only on the master A3
+    ws.getCell("A3").value = "Team X";
+    ws.getCell("C3").value = "PM";
+    ws.getCell("C4").value = "Designer";
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "sheet.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const events = await importFile(f);
+    const table = created(events).data as { columns: { key: string }[]; rows: Record<string, unknown>[]; sheet?: any[] };
+    expect(table.columns.map((c) => c.key)).toEqual(["Name", "B", "Role"]);
+    expect(table.rows[0]).toEqual({ Name: "Alice", B: 30, Role: "Eng" });
+    // merged A3:A4 → both rows carry "Team X"
+    expect(table.rows[1].Name).toBe("Team X");
+    expect(table.rows[2].Name).toBe("Team X");
+    expect(table.rows[2].Role).toBe("Designer");
+  });
+
+  it("keeps every sheet, real merges, and cell styling in the rich `sheet` blob", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const cover = wb.addWorksheet("Cover");
+    cover.mergeCells("A1:C1"); // real merge, value on master only
+    cover.getCell("A1").value = "Deep Agent Builder";
+    cover.getCell("A1").font = { bold: true, size: 14 };
+    cover.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDDEEFF" } } as any;
+    wb.addWorksheet("WBS").getCell("A1").value = "task"; // a second sheet with content
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "doc.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    expect(table.sheet).toHaveLength(2); // both sheets imported (not just the cover)
+    expect(table.sheet[1].name).toBe("WBS");
+    // merge preserved (not duplicated across cells)
+    expect(table.sheet[0].config.merge["0_0"]).toMatchObject({ r: 0, c: 0, rs: 1, cs: 3 });
+    // styling preserved on the master cell
+    const master = table.sheet[0].celldata.find((d: any) => d.r === 0 && d.c === 0);
+    expect(master.v.bl).toBe(1);
+    expect(master.v.bg).toBe("#DDEEFF");
+    expect(master.v.m).toBe("Deep Agent Builder");
+    expect(master.v.mc).toMatchObject({ r: 0, c: 0, rs: 1, cs: 3 }); // master carries the span
+    // covered cells point back to the master and hold no value (content shows once)
+    const covered = table.sheet[0].celldata.find((d: any) => d.r === 0 && d.c === 1);
+    expect(covered.v).toEqual({ mc: { r: 0, c: 0 } });
+  });
+
+  it("resolves theme-indexed text and fill colours (not just literal ARGB)", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    const cell = ws.getCell("A1");
+    cell.value = "themed";
+    cell.font = { color: { theme: 0 } as any }; // theme 0 = white text
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { theme: 4 } as any }; // accent1 blue
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "c.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    const c = table.sheet[0].celldata.find((d: any) => d.r === 0 && d.c === 0);
+    expect(c.v.fc).toBe("#FFFFFF"); // white, resolved from theme 0
+    expect(c.v.bg).toBe("#4472C4"); // accent1, resolved from theme 4
+  });
+
+  it("carries cell borders and legacy indexed fill colours", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    const cell = ws.getCell("B2");
+    cell.value = "boxed";
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { indexed: 22 } as any }; // #C0C0C0
+    cell.border = {
+      top: { style: "thin", color: { argb: "FFBFBFBF" } },
+      bottom: { style: "medium" },
+      left: { style: "thin" },
+      right: { style: "thin" },
+    };
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "b.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    const border = table.sheet[0].config.borderInfo.find(
+      (b: any) => b.value.row_index === 1 && b.value.col_index === 1,
+    );
+    expect(border.rangeType).toBe("cell");
+    expect(border.value.t).toEqual({ style: 1, color: "#BFBFBF" }); // thin
+    expect(border.value.b).toEqual({ style: 8, color: "#000000" }); // medium, default colour
+    const cd = table.sheet[0].celldata.find((d: any) => d.r === 1 && d.c === 1);
+    expect(cd.v.bg).toBe("#C0C0C0"); // resolved from indexed 22
+  });
+
+  it("renders numbers and dates using their Excel number format", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    ws.getCell("A1").value = 1234.5; ws.getCell("A1").numFmt = "#,##0.00";
+    ws.getCell("A2").value = 0.156; ws.getCell("A2").numFmt = "0.0%";
+    ws.getCell("A3").value = 1000; ws.getCell("A3").numFmt = "$#,##0";
+    ws.getCell("A4").value = new Date(2026, 6, 11); ws.getCell("A4").numFmt = "yyyy-mm-dd";
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "n.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    const m = (r: number) => table.sheet[0].celldata.find((d: any) => d.r === r && d.c === 0)?.v.m;
+    expect(m(0)).toBe("1,234.50"); // thousands + 2 decimals
+    expect(m(1)).toBe("15.6%"); // percent
+    expect(m(2)).toBe("$1,000"); // currency + thousands
+    expect(m(3)).toBe("2026-07-11"); // date pattern, local calendar day
+  });
+
+  it("imports embedded images as positioned Fortune images", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("s");
+    const png = Uint8Array.from(atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAF0lEQVR42mNk+M9Qz0AEYBxVSFyFAwAX9wX/eGj4bwAAAABJRU5ErkJggg==",
+    ), (c) => c.charCodeAt(0));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const id = wb.addImage({ buffer: png as any, extension: "png" });
+    ws.addImage(id, { tl: { col: 1, row: 2 }, ext: { width: 100, height: 100 } });
+    const buf = await wb.xlsx.writeBuffer();
+    const f = Object.assign(new File([], "i.xlsx"), { arrayBuffer: async () => buf }) as File;
+
+    const table = created(await importFile(f)).data as { sheet: any[] };
+    const imgs = table.sheet[0].images;
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0].src).toMatch(/^data:image\/png;base64,/);
+    expect(imgs[0].width).toBe(100);
+    expect(imgs[0].height).toBe(100);
+    expect(imgs[0].left).toBeGreaterThan(0); // anchored at column B, not the origin
+  });
+});
+
 describe("canImport", () => {
   it("accepts known extensions, rejects others", () => {
     expect(canImport(file("a.csv", ""))).toBe(true);

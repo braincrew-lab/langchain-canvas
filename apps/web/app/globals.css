@@ -75,7 +75,9 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: minmax(360px, 440px) 1fr;
+  /* minmax(0, 1fr) — not 1fr — so the canvas column can shrink below its content's
+     min width (a wide spreadsheet toolbar) instead of pushing the page wider. */
+  grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
   height: 100%;
 }
 

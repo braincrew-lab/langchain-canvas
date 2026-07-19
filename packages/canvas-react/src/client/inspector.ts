@@ -56,9 +56,6 @@ const INSPECTOR_CSS = `
   color: #fff; font-size: 14px; cursor: pointer; }
 .lcx-fmt button:hover { background: rgba(255,255,255,0.15); }
 .lcx-fmt button b { font-weight: 800; } .lcx-fmt button i { font-style: italic; } .lcx-fmt button u { text-decoration: underline; }
-.lcx-guide { position: fixed; z-index: 1000002; background: #f43f5e; pointer-events: none; }
-.lcx-guide-v { width: 1px; top: 0; bottom: 0; }
-.lcx-guide-h { height: 1px; left: 0; right: 0; }
 .lcx-resize { position: fixed; width: 14px; height: 14px; z-index: 1000001; background: #10b981;
   border: 2px solid #fff; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: nwse-resize; touch-action: none; }
 `.trim();
@@ -119,13 +116,17 @@ const INSPECTOR_SCRIPT = `
   // A structural change (insert/delete/move) shifts every cid, so we save the
   // whole document: clone <html>, drop the injected inspector nodes, scrub the
   // inspector's attributes, and post it for the host to store wholesale.
-  function emitDoc() {
+  // selfApplied = the iframe already reflects this change and every element kept
+  // its data-cid (a pure reorder/move), so the host can persist without reloading
+  // the iframe (no flicker). Edits that mint new nodes (insert) leave it false so a
+  // reload re-tags fresh cids.
+  function emitDoc(selfApplied) {
     var clone = document.documentElement.cloneNode(true);
     var injected = clone.querySelectorAll("[data-lcx]");
     for (var i = 0; i < injected.length; i++) injected[i].parentNode && injected[i].parentNode.removeChild(injected[i]);
     var marked = clone.querySelectorAll("[data-cid],[contenteditable],.lcx-hover,.lcx-selected");
     for (var j = 0; j < marked.length; j++) scrub(marked[j]);
-    parent.postMessage({ source: MARK, type: "doc_edit", html: "<!doctype html>\\n" + clone.outerHTML }, "*");
+    parent.postMessage({ source: MARK, type: "doc_edit", self: !!selfApplied, html: "<!doctype html>\\n" + clone.outerHTML }, "*");
   }
   function newBlock(tag) {
     var el = document.createElement(tag);
@@ -176,8 +177,14 @@ const INSPECTOR_SCRIPT = `
   function positionResize() {
     if (!resizeEl || !resizeHandle) return;
     var r = resizeEl.getBoundingClientRect();
-    resizeHandle.style.left = (r.right - 7) + "px";
-    resizeHandle.style.top = (r.bottom - 7) + "px";
+    // Anchor to the element's bottom-right, but keep the whole handle on-screen so
+    // a section taller/wider than the viewport still exposes a reachable grip
+    // (otherwise it sits below the fold and "there's no way to adjust it").
+    var M = 8;
+    var left = Math.max(r.left - 7, Math.min(r.right - 7, window.innerWidth - M - 14));
+    var top = Math.max(r.top - 7, Math.min(r.bottom - 7, window.innerHeight - M - 14));
+    resizeHandle.style.left = left + "px";
+    resizeHandle.style.top = top + "px";
   }
   function hideResize() { resizeEl = null; if (resizeHandle) resizeHandle.style.display = "none"; }
   function showResize(el) {
@@ -223,37 +230,51 @@ const INSPECTOR_SCRIPT = `
     var hovered = null;
     var selected = [];               // currently highlighted elements
     var marquee = null, sx = 0, sy = 0, dragging = false, moved = false, suppressClick = false;
-    var moveEls = null, moveBase = null, groupSeq = 0, guideV = null, guideH = null;
-    function parseTranslate(el) {
-      var m = (el.style.transform || "").match(/translate\\(\\s*(-?[\\d.]+)px\\s*,\\s*(-?[\\d.]+)px/);
-      return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : { x: 0, y: 0 };
+    // Free positioning: dragging places an element anywhere. The element is pulled
+    // into absolute positioning inside its own parent, and its final spot + size are
+    // stored as percentages of that parent — so it stays put proportionally across
+    // responsive breakpoints, instead of a fixed pixel offset that drifts off.
+    var dragEls = null, dragStart = null, dragBases = null, groupSeq = 0;
+
+    function ensurePositioned(parent) {
+      if (!parent || parent === document.body || parent === document.documentElement) return;
+      if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
     }
-    function showGuides(gx, gy) {
-      if (!guideV) { guideV = document.createElement("div"); guideV.setAttribute("data-lcx", ""); guideV.className = "lcx-guide lcx-guide-v"; document.body.appendChild(guideV); }
-      if (!guideH) { guideH = document.createElement("div"); guideH.setAttribute("data-lcx", ""); guideH.className = "lcx-guide lcx-guide-h"; document.body.appendChild(guideH); }
-      guideV.style.display = gx == null ? "none" : "block"; if (gx != null) guideV.style.left = gx + "px";
-      guideH.style.display = gy == null ? "none" : "block"; if (gy != null) guideH.style.top = gy + "px";
+    // Pull each element out into absolute positioning at its current spot (no visual
+    // jump), so it can then be moved freely.
+    function beginFreeDrag(els) {
+      dragBases = [];
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i], parent = el.parentElement || document.body;
+        ensurePositioned(parent);
+        var pr = parent.getBoundingClientRect(), r = el.getBoundingClientRect();
+        var base = { el: el, parent: parent, left: r.left - pr.left, top: r.top - pr.top, w: el.offsetWidth, h: el.offsetHeight };
+        el.style.position = "absolute";
+        el.style.margin = "0";
+        el.style.width = base.w + "px";        // freeze size while dragging (absolute can't inherit flow width)
+        el.style.left = base.left + "px";
+        el.style.top = base.top + "px";
+        dragBases.push(base);
+      }
     }
-    function hideGuides() { if (guideV) guideV.style.display = "none"; if (guideH) guideH.style.display = "none"; }
-    // Snap the just-moved element to nearby edges/centers (siblings + container).
-    function computeSnap(el) {
-      var TH = 6, r = el.getBoundingClientRect();
-      var ax = [r.left, (r.left + r.right) / 2, r.right], ay = [r.top, (r.top + r.bottom) / 2, r.bottom];
-      var tx = [], ty = [];
-      var pr = el.parentElement ? el.parentElement.getBoundingClientRect() : null;
-      if (pr) { tx.push((pr.left + pr.right) / 2); ty.push((pr.top + pr.bottom) / 2); }
-      var all = document.body.querySelectorAll("[data-cid]");
-      all.forEach(function (o) {
-        if (o.hasAttribute("data-lcx") || moveEls.indexOf(o) !== -1 || el.contains(o) || o.contains(el)) return;
-        var orc = o.getBoundingClientRect();
-        if (orc.width <= 0 || orc.height <= 0 || orc.width * orc.height > window.innerWidth * window.innerHeight * 0.9) return;
-        tx.push(orc.left, (orc.left + orc.right) / 2, orc.right);
-        ty.push(orc.top, (orc.top + orc.bottom) / 2, orc.bottom);
-      });
-      var bx = null, by = null, i, j;
-      for (i = 0; i < ax.length; i++) for (j = 0; j < tx.length; j++) { var dx = tx[j] - ax[i]; if (Math.abs(dx) <= TH && (!bx || Math.abs(dx) < Math.abs(bx.d))) bx = { d: dx, g: tx[j] }; }
-      for (i = 0; i < ay.length; i++) for (j = 0; j < ty.length; j++) { var dy = ty[j] - ay[i]; if (Math.abs(dy) <= TH && (!by || Math.abs(dy) < Math.abs(by.d))) by = { d: dy, g: ty[j] }; }
-      return { adjX: bx ? bx.d : 0, adjY: by ? by.d : 0, gx: bx ? bx.g : null, gy: by ? by.g : null };
+    function moveFree(dx, dy) {
+      for (var i = 0; i < dragBases.length; i++) {
+        var b = dragBases[i];
+        b.el.style.left = (b.left + dx) + "px";
+        b.el.style.top = (b.top + dy) + "px";
+      }
+    }
+    // Commit the current position (in px, as set live by moveFree) as % of the
+    // parent — position and width — so it scales with the layout. Falls back to px
+    // only if the parent has collapsed to zero on that axis.
+    function commitFree() {
+      for (var i = 0; i < dragBases.length; i++) {
+        var b = dragBases[i], pr = b.parent.getBoundingClientRect();
+        var curLeft = parseFloat(b.el.style.left) || 0, curTop = parseFloat(b.el.style.top) || 0;
+        b.el.style.left = pr.width ? ((curLeft / pr.width) * 100).toFixed(3) + "%" : curLeft + "px";
+        b.el.style.top = pr.height ? ((curTop / pr.height) * 100).toFixed(3) + "%" : curTop + "px";
+        if (pr.width) b.el.style.width = ((b.w / pr.width) * 100).toFixed(3) + "%";
+      }
     }
 
     function clearSelected() {
@@ -342,21 +363,26 @@ const INSPECTOR_SCRIPT = `
       }, "*");
     }, true);
 
-    // --- drag = marquee multi-select (Shift to add) -----------------------------
+    // --- drag: freely move an element anywhere, or marquee-select empty space ----
     document.addEventListener("mousedown", function (e) {
       suppressClick = false;             // a fresh press: never carry a stale suppress
       if (e.button !== 0) return;
       var t = e.target;
       if (t instanceof Element && t.isContentEditable) return;
       if (t === resizeHandle) return;    // the resize handle drives its own drag
-      // Pressing on any selected element starts a move of the whole selection
-      // (a single element, a multi-selection, or a group — all move together).
+      // Pressing on a selected element drags the whole selection; pressing on any
+      // other element drags just that one (a single gesture both selects and moves,
+      // so you never have to click first). Empty space starts a marquee.
       var onSel = false;
       for (var si = 0; si < selected.length; si++) { if (selected[si] === t || selected[si].contains(t)) { onSel = true; break; } }
       if (onSel && selected.length >= 1) {
-        moveEls = selected.slice();
-        moveBase = { sx: e.clientX, sy: e.clientY, bases: moveEls.map(parseTranslate) };
-        moved = false;
+        dragEls = selected.slice();
+      } else {
+        var el = t instanceof Element ? t.closest("[data-cid]") : null;
+        if (el && el !== document.body && el.parentElement) dragEls = [el];
+      }
+      if (dragEls) {
+        dragStart = { x: e.clientX, y: e.clientY }; moved = false;
         document.body.style.userSelect = "none";
         return;
       }
@@ -367,18 +393,13 @@ const INSPECTOR_SCRIPT = `
       document.body.appendChild(marquee);
     }, true);
     document.addEventListener("mousemove", function (e) {
-      if (moveEls) {
-        if (Math.abs(e.clientX - moveBase.sx) > 2 || Math.abs(e.clientY - moveBase.sy) > 2) moved = true;
-        var ddx = e.clientX - moveBase.sx, ddy = e.clientY - moveBase.sy;
-        var apply = function (ex, ey) {
-          for (var k = 0; k < moveEls.length; k++) {
-            moveEls[k].style.transform = "translate(" + Math.round(moveBase.bases[k].x + ex) + "px," + Math.round(moveBase.bases[k].y + ey) + "px)";
-          }
-        };
-        apply(ddx, ddy);                       // tentative, then snap the reference element
-        var snap = computeSnap(moveEls[0]);
-        if (snap.adjX || snap.adjY) apply(ddx + snap.adjX, ddy + snap.adjY);
-        showGuides(snap.gx, snap.gy);
+      if (dragEls) {
+        if (!moved && (Math.abs(e.clientX - dragStart.x) > 3 || Math.abs(e.clientY - dragStart.y) > 3)) {
+          moved = true;
+          beginFreeDrag(dragEls);       // pull into absolute positioning at the current spot
+        }
+        if (!moved) return;
+        moveFree(e.clientX - dragStart.x, e.clientY - dragStart.y);
         positionResize();
         return;
       }
@@ -390,15 +411,20 @@ const INSPECTOR_SCRIPT = `
       marquee.style.height = Math.abs(e.clientY - sy) + "px";
     }, true);
     document.addEventListener("mouseup", function (e) {
-      if (moveEls) {
-        var els = moveEls; moveEls = null;
-        hideGuides();
+      if (dragEls) {
+        var els = dragEls; dragEls = null;
         document.body.style.userSelect = "";
-        if (moved) {
+        if (moved && dragBases) {
           suppressClick = true;
-          // one node → surgical patch; several → save the whole document once.
-          if (els.length === 1) emitEdit(els[0]); else emitDoc();
+          moveFree(e.clientX - dragStart.x, e.clientY - dragStart.y);    // final px position
+          commitFree();                                                  // px → % of parent
+          positionResize();
+          // The new position is already shown in the iframe with every cid intact,
+          // so persist without a reload (no flicker): one element → node_edit,
+          // several → a self-applied doc_edit.
+          if (els.length === 1) emitEdit(els[0]); else emitDoc(true);
         }
+        dragBases = null;
         return;
       }
       if (!dragging) return;
@@ -443,10 +469,12 @@ const INSPECTOR_SCRIPT = `
     // which would leave move/marquee state stuck. Finalize cleanly on exit.
     function endDrag() {
       document.body.style.userSelect = "";
-      hideGuides();
-      if (moveEls) {
-        var els = moveEls; moveEls = null;
-        if (moved) { suppressClick = true; if (els.length === 1) emitEdit(els[0]); else emitDoc(); }
+      if (dragEls) {
+        // Pointer left the frame mid-drag: commit the move at its last position so
+        // it isn't lost (the element is already placed absolutely in the iframe).
+        var els = dragEls; dragEls = null;
+        if (moved && dragBases) { commitFree(); if (els.length === 1) emitEdit(els[0]); else emitDoc(true); }
+        dragBases = null;
       }
       if (dragging) {
         dragging = false;
@@ -472,6 +500,30 @@ const INSPECTOR_SCRIPT = `
       removeFmtBar();
       t.removeAttribute("contenteditable");
       emitEdit(t);
+    }, true);
+    // While editing text, Enter inserts a real line break. The browser's default
+    // for Enter is to split the block (which nests <div>s, or does nothing at all
+    // on inline/button-like elements), so line breaks appear not to work — force a
+    // clean <br> instead. Escape commits by blurring.
+    document.addEventListener("keydown", function (e) {
+      var t = e.target;
+      var editing = t instanceof Element && t.hasAttribute("contenteditable");
+      if (editing) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (!document.execCommand("insertLineBreak")) document.execCommand("insertHTML", false, "<br>");
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          t.blur();
+        }
+        return;
+      }
+      // Escape with a live selection clears it here and tells the host to close its
+      // selection UI (an empty multi-select).
+      if (e.key === "Escape" && selected.length) {
+        clearSelected();
+        parent.postMessage({ source: MARK, type: "multi_select", items: [] }, "*");
+      }
     }, true);
 
     // --- parent commands --------------------------------------------------------

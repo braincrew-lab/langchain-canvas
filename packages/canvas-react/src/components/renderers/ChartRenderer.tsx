@@ -1,36 +1,29 @@
 /**
- * Renders a `type: "chart"` artifact with Recharts, and lets the user edit it in
+ * Renders a `type: "chart"` artifact with ECharts, and lets the user edit it in
  * place — chart type, stacking, per-series colors & labels, per-slice colors
  * (pie), the y-axis label, and the underlying data (add / remove / edit rows).
  *
  * The renderer stays a thin adapter over the protocol's `ChartData` (tidy rows +
- * a series list, which maps almost 1:1 onto Recharts). Every edit goes through
+ * a series list), mapping it to an ECharts `option`. Every edit goes through
  * `patch`, so it flows through the same reconciler path an agent's updates would.
+ * An artifact may instead carry a raw `echartsOption`, which is rendered verbatim.
+ *
+ * ECharts is imported through this module only, which the registry loads lazily —
+ * so it never enters a bundle that doesn't render a chart.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import * as echarts from "echarts/core";
+import { BarChart, LineChart, PieChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 
 import type { ChartData, ChartSeries } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
+
+echarts.use([BarChart, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 // Accessible, brand-neutral categorical palette (swap for your design system).
 const PALETTE = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#0ea5e9", "#a855f7"];
@@ -40,10 +33,43 @@ const sliceColor = (options: ChartData["options"], index: number) => options?.co
 
 const CHART_TYPES: ChartData["chart"][] = ["bar", "line", "area", "pie"];
 
+/** Mount an ECharts instance and drive it from an `option`; resizes with its box. */
+function EChart({ option, height }: { option: Record<string, unknown>; height: number }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const instRef = useRef<echarts.ECharts | null>(null);
+  useEffect(() => {
+    if (!boxRef.current) return;
+    const inst = echarts.init(boxRef.current, undefined, { renderer: "canvas" });
+    instRef.current = inst;
+    const ro = new ResizeObserver(() => inst.resize());
+    ro.observe(boxRef.current);
+    return () => { ro.disconnect(); inst.dispose(); instRef.current = null; };
+  }, []);
+  useEffect(() => {
+    // `notMerge: true` so removing a series / switching type doesn't leave ghosts.
+    instRef.current?.setOption(option, true);
+  }, [option]);
+  return <div ref={boxRef} className="cv-chart__canvas" style={{ width: "100%", height }} />;
+}
+
 export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
-  const { chart, rows, xKey, series, options } = artifact.data;
+  const { chart, rows, xKey, series, options, echartsOption } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [editing, setEditing] = useState(false);
+
+  const option = useMemo(
+    () => echartsOption ?? toEChartsOption(chart, rows, xKey, series, options),
+    [echartsOption, chart, rows, xKey, series, options],
+  );
+
+  // A raw ECharts option is authored elsewhere — render it verbatim, no editor.
+  if (echartsOption) {
+    return (
+      <div className="cv-chart">
+        <EChart option={option} height={340} />
+      </div>
+    );
+  }
 
   if (rows.length === 0) {
     return <div className="cv-chart cv-chart--empty">Waiting for data…</div>;
@@ -123,9 +149,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
         </div>
       )}
 
-      <ResponsiveContainer width="100%" height={editing ? 260 : 340}>
-        {renderChart(chart, rows, xKey, series, options)}
-      </ResponsiveContainer>
+      <EChart option={option} height={editing ? 260 : 340} />
     </div>
   );
 }
@@ -189,90 +213,63 @@ function DataGrid({
   );
 }
 
-function renderChart(
+/** Map the tidy `ChartData` model onto an ECharts `option`. */
+function toEChartsOption(
   chart: ChartData["chart"],
   rows: ChartData["rows"],
   xKey: string,
   series: ChartSeries[],
   options: ChartData["options"],
-) {
-  const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--cv-border)" />;
-  const axes = (
-    <>
-      <XAxis dataKey={xKey} stroke="var(--cv-muted)" fontSize={12} />
-      <YAxis stroke="var(--cv-muted)" fontSize={12} label={yLabel(options)} />
-    </>
-  );
-  const common = (
-    <>
-      <Tooltip />
-      <Legend />
-    </>
-  );
-
-  switch (chart) {
-    case "line":
-      return (
-        <LineChart data={rows}>
-          {grid}
-          {axes}
-          {common}
-          {series.map((s, i) => (
-            <Line key={s.key} dataKey={s.key} name={s.label ?? s.key} stroke={seriesColor(s, i)} dot={false} strokeWidth={2} />
-          ))}
-        </LineChart>
-      );
-
-    case "area":
-      return (
-        <AreaChart data={rows}>
-          {grid}
-          {axes}
-          {common}
-          {series.map((s, i) => (
-            <Area
-              key={s.key}
-              dataKey={s.key}
-              name={s.label ?? s.key}
-              stroke={seriesColor(s, i)}
-              fill={seriesColor(s, i)}
-              fillOpacity={0.2}
-              stackId={options?.stacked ? "stack" : undefined}
-            />
-          ))}
-        </AreaChart>
-      );
-
-    case "bar":
-      return (
-        <BarChart data={rows}>
-          {grid}
-          {axes}
-          {common}
-          {series.map((s, i) => (
-            <Bar key={s.key} dataKey={s.key} name={s.label ?? s.key} fill={seriesColor(s, i)} stackId={options?.stacked ? "stack" : undefined} />
-          ))}
-        </BarChart>
-      );
-
-    case "pie": {
-      const valueKey = series[0]?.key ?? "value";
-      return (
-        <PieChart>
-          <Tooltip />
-          <Legend />
-          <Pie data={rows} dataKey={valueKey} nameKey={xKey} innerRadius={60} outerRadius={120} paddingAngle={2}>
-            {rows.map((_, i) => (
-              <Cell key={i} fill={sliceColor(options, i)} />
-            ))}
-          </Pie>
-        </PieChart>
-      );
-    }
+): Record<string, unknown> {
+  const AXIS = "#9aa4b2"; // muted axis/label ink that reads on light or dark
+  if (chart === "pie") {
+    const valueKey = series[0]?.key ?? "value";
+    return {
+      tooltip: { trigger: "item" },
+      legend: { bottom: 0, textStyle: { color: AXIS } },
+      series: [
+        {
+          type: "pie",
+          radius: ["45%", "72%"],
+          padAngle: 2,
+          itemStyle: { borderRadius: 4 },
+          label: { color: AXIS },
+          data: rows.map((r, i) => ({
+            name: String(r[xKey] ?? ""),
+            value: Number(r[valueKey] ?? 0),
+            itemStyle: { color: sliceColor(options, i) },
+          })),
+        },
+      ],
+    };
   }
-}
 
-function yLabel(options: ChartData["options"]) {
-  if (!options?.yLabel) return undefined;
-  return { value: options.yLabel, angle: -90, position: "insideLeft", fill: "var(--cv-muted)", fontSize: 12 } as const;
+  const stacked = (chart === "bar" || chart === "area") && !!options?.stacked;
+  return {
+    tooltip: { trigger: "axis" },
+    legend: { bottom: 0, textStyle: { color: AXIS } },
+    grid: { left: 8, right: 16, top: 24, bottom: 40, containLabel: true },
+    xAxis: {
+      type: "category",
+      data: rows.map((r) => String(r[xKey] ?? "")),
+      axisLabel: { color: AXIS, fontSize: 12 },
+      axisLine: { lineStyle: { color: "#d4d7dd" } },
+    },
+    yAxis: {
+      type: "value",
+      name: options?.yLabel,
+      nameTextStyle: { color: AXIS },
+      axisLabel: { color: AXIS, fontSize: 12 },
+      splitLine: { lineStyle: { color: "#e5e7eb", type: "dashed" } },
+    },
+    series: series.map((s, i) => ({
+      name: s.label ?? s.key,
+      type: chart === "area" ? "line" : chart,
+      ...(chart === "area" ? { areaStyle: { opacity: 0.2 }, smooth: false } : {}),
+      ...(chart !== "bar" ? { showSymbol: false, lineStyle: { width: 2 } } : {}),
+      stack: stacked ? "total" : undefined,
+      itemStyle: { color: seriesColor(s, i) },
+      data: rows.map((r) => Number(r[s.key] ?? 0)),
+    })),
+  };
 }

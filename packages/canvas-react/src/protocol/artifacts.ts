@@ -62,6 +62,12 @@ export interface ChartData {
   xKey: string;
   series: ChartSeries[];
   options?: ChartOptions;
+  /**
+   * Optional raw ECharts `option`. When present it's rendered verbatim — an
+   * escape hatch for agents/apps that already produce a full ECharts config
+   * (the tidy `rows`/`series` model is ignored, and inline editing is disabled).
+   */
+  echartsOption?: Record<string, unknown>;
 }
 
 export interface TableColumn {

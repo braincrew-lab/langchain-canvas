@@ -25,6 +25,7 @@ const GRADIENTS = [
 
 export function StylePanel({ selection }: { selection: ElementSelection }) {
   const send = useCanvasStore((s) => s.sendIframeCommand);
+  const setSelections = useCanvasStore((s) => s.setSelections);
   const styles = selection.styles ?? {};
 
   const [color, setColor] = useState(toHex(styles.color));
@@ -59,6 +60,9 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
     dirty.current = false;
     send({ artifactId: selection.artifactId, type: "commit", cid: selection.cid });
   };
+  // "Done" (and Escape) commit any pending edit and close the panel by clearing
+  // the selection — which also drops the in-iframe highlight.
+  const close = () => { commit(); setSelections([]); };
 
   // Commit pending live edits when the panel closes / the selection changes.
   useEffect(() => commit, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -186,7 +190,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
         <input ref={bgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onBgFile(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
 
-      <button className="cv-style__done" onClick={commit}>
+      <button className="cv-style__done" onClick={close}>
         Done
       </button>
     </div>
