@@ -3,11 +3,32 @@
   "version": "0.1.0",
   "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
   "license": "MIT",
+  "author": "Brain Crew (https://github.com/braincrew-lab)",
+  "homepage": "https://github.com/braincrew-lab/langchain-canvas#readme",
   "type": "module",
+  "keywords": [
+    "langchain",
+    "langgraph",
+    "ai",
+    "agent",
+    "canvas",
+    "artifacts",
+    "generative-ui",
+    "streaming",
+    "llm",
+    "react",
+    "document",
+    "chart",
+    "spreadsheet",
+    "slides"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/braincrew-lab/langchain-canvas.git",
     "directory": "packages/canvas-react"
+  },
+  "bugs": {
+    "url": "https://github.com/braincrew-lab/langchain-canvas/issues"
   },
   "sideEffects": [
     "*.css",
@@ -40,7 +61,11 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build",
+    "release:patch": "npm version patch -m \"release: %s\"",
+    "release:minor": "npm version minor -m \"release: %s\"",
+    "release:major": "npm version major -m \"release: %s\""
   },
   "peerDependencies": {
     "react": "^18 || ^19",
