@@ -887,8 +887,11 @@
 
 .cv-style {
   position: absolute;
-  right: 16px;
-  bottom: 72px; /* anchor to the lower-right — never overlaps the top editing toolbar */
+  /* Anchor to the lower-LEFT: the resize handle sits at an element's bottom-right,
+     so a right-docked panel hid it on wide elements. Left keeps the handle clear
+     and stays below the top editing toolbar. */
+  left: 16px;
+  bottom: 72px;
   z-index: 20;
   width: 210px;
   padding: 12px 14px;
