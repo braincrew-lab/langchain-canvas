@@ -58,7 +58,7 @@ pnpm dev:web                  # → http://localhost:3000/replay 열기
 구동하는 것과 똑같이 렌더되는 걸 보세요. 코드로는:
 
 ```tsx
-import { Canvas, useCanvasReplay, scenarios } from "@langchain-canvas/react";
+import { Canvas, useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
 
 const { play } = useCanvasReplay();
 play(scenarios[0].events);    // 스키마 → 화면, 네트워크 없음
@@ -119,8 +119,8 @@ async def chat(body: Body):
 
 ```tsx
 "use client";
-import { Canvas, useCanvasStream } from "@langchain-canvas/react";
-import "@langchain-canvas/react/styles.css";
+import { Canvas, useCanvasStream } from "@braincrew-lab/langchain-canvas";
+import "@braincrew-lab/langchain-canvas/styles.css";
 
 export default function Page() {
   const { sendMessage, messages, canvas, isStreaming, editSelection } =

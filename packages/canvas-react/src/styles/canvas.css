@@ -1,6 +1,6 @@
 /* Canvas SDK — default stylesheet.
  *
- * Import once at your app root: `import "@langchain-canvas/react/styles.css";`
+ * Import once at your app root: `import "@braincrew-lab/langchain-canvas/styles.css";`
  * Everything is namespaced under `cv-` and driven by CSS variables, so you can
  * retheme by overriding the `--cv-*` tokens without forking this file.
  */

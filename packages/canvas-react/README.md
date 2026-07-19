@@ -1,4 +1,4 @@
-# @langchain-canvas/react
+# @braincrew-lab/langchain-canvas
 
 A canvas for your LangChain chat app. Your agent streams an artifact — a web page, a spreadsheet, a slide deck, a chart, a document — and it shows up next to the conversation, live and editable. Users can tweak it by hand and export it to a real file.
 
@@ -15,7 +15,7 @@ const { sendMessage, messages, canvas } = useCanvasStream({ endpoint: "/api/chat
 ## Install
 
 ```bash
-npm i @langchain-canvas/react
+npm i @braincrew-lab/langchain-canvas
 ```
 
 Export/import for Office formats uses optional peers — install only what you need:
@@ -31,8 +31,8 @@ If a format's package isn't installed, that one export just tells the user what 
 Two things: the hook that receives your agent's stream, and the panel that renders it. They share a store, so nothing is wired between them.
 
 ```tsx
-import { Canvas, useCanvasStream } from "@langchain-canvas/react";
-import "@langchain-canvas/react/styles.css";
+import { Canvas, useCanvasStream } from "@braincrew-lab/langchain-canvas";
+import "@braincrew-lab/langchain-canvas/styles.css";
 
 function App() {
   const { sendMessage, messages } = useCanvasStream({ endpoint: "/api/chat" });
@@ -119,12 +119,12 @@ A PowerPoint-style editor where every element is movable.
 ## Wrapping it in your app
 
 - **Peer dependency:** React 18 or 19 — you bring your own. ESM only.
-- **Styles:** `import "@langchain-canvas/react/styles.css"` once.
+- **Styles:** `import "@braincrew-lab/langchain-canvas/styles.css"` once.
 - **Isolated instances:** `<CanvasProvider>` gives each subtree its own store.
 - **Bring your own renderer:** pass `registry` to add or override how a type renders.
 
 ```tsx
-import { Canvas, mergeRegistries, builtinRenderers } from "@langchain-canvas/react";
+import { Canvas, mergeRegistries, builtinRenderers } from "@braincrew-lab/langchain-canvas";
 
 const registry = mergeRegistries(builtinRenderers, {
   metric: ({ artifact }) => <div className="big-number">{artifact.data.value}</div>,
@@ -136,7 +136,7 @@ const registry = mergeRegistries(builtinRenderers, {
 ### No backend? Replay a fixture or mock the chat
 
 ```tsx
-import { useCanvasReplay, scenarios } from "@langchain-canvas/react";
+import { useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
 
 const { play } = useCanvasReplay();
 useEffect(() => { play(scenarios.find((s) => s.id === "table")!.events); }, [play]);

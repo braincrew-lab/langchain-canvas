@@ -51,7 +51,7 @@ so an agent author writes ordinary tools and gets a live canvas for free.
 ## Why these boundaries
 
 - **The protocol is a package, not a convention.** `langchain_canvas.protocol`
-  (Pydantic) and `@langchain-canvas/react` `protocol/*` (TypeScript) are
+  (Pydantic) and `@braincrew-lab/langchain-canvas` `protocol/*` (TypeScript) are
   hand-mirrored types. A wire change is a typed change on both sides, caught by
   the compiler rather than at runtime.
 - **The emitter hides the wire.** Tool authors call

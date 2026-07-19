@@ -23,7 +23,7 @@ export default defineConfig({
     const entry = "dist/index.js";
     const code = fs.readFileSync(entry, "utf8");
     if (!code.startsWith('"use client"')) fs.writeFileSync(entry, `"use client";\n${code}`);
-    // Ship the stylesheet alongside the JS (imported as "@langchain-canvas/react/styles.css").
+    // Ship the stylesheet alongside the JS (imported as "@braincrew-lab/langchain-canvas/styles.css").
     fs.copyFileSync("src/styles/canvas.css", "dist/styles.css");
   },
 });

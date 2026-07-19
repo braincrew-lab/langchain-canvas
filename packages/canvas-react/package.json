@@ -1,5 +1,5 @@
 {
-  "name": "@langchain-canvas/react",
+  "name": "@braincrew-lab/langchain-canvas",
   "version": "0.1.0",
   "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
   "license": "MIT",

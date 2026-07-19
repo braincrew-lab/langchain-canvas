@@ -8,7 +8,7 @@
  * a fixture drives it exactly as a real LangGraph agent would.
  */
 
-import { Canvas, scenarios, useCanvasReplay } from "@langchain-canvas/react";
+import { Canvas, scenarios, useCanvasReplay } from "@braincrew-lab/langchain-canvas";
 
 export default function ReplayPage() {
   const { play, isPlaying } = useCanvasReplay();

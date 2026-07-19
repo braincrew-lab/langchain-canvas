@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArtifactCard, type ChatMessage } from "@langchain-canvas/react";
+import { ArtifactCard, type ChatMessage } from "@braincrew-lab/langchain-canvas";
 
 interface ChatProps {
   messages: ChatMessage[];

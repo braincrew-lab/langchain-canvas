@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-import "@langchain-canvas/react/styles.css";
+import "@braincrew-lab/langchain-canvas/styles.css";
 import "./globals.css";
 import { TopNav } from "../components/TopNav";
 

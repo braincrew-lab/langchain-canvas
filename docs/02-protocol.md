@@ -3,7 +3,7 @@
 The protocol is the contract between a LangChain agent (Python) and a React
 canvas (TypeScript). Everything else in this repo is an implementation detail;
 this document is the source of truth. The Python types in
-`langchain_canvas.protocol` and the TypeScript types in `@langchain-canvas/react`
+`langchain_canvas.protocol` and the TypeScript types in `@braincrew-lab/langchain-canvas`
 are hand-mirrored from the definitions below and must stay in lockstep.
 
 ## Design goals

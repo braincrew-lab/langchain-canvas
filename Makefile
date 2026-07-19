@@ -5,7 +5,7 @@ install:               ## Install all JS + Python deps
 	cd apps/server && uv sync
 
 build:                 ## Build the React SDK
-	pnpm --filter @langchain-canvas/react build
+	pnpm --filter @braincrew-lab/langchain-canvas build
 
 dev-server:            ## Run the FastAPI reference server
 	cd apps/server && uvicorn app.main:app --reload --port 8000

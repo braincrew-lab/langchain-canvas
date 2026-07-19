@@ -62,8 +62,8 @@ async def chat(req: ChatRequest):
 
 ```tsx
 "use client";
-import { Canvas, useCanvasStream } from "@langchain-canvas/react";
-import "@langchain-canvas/react/styles.css";
+import { Canvas, useCanvasStream } from "@braincrew-lab/langchain-canvas";
+import "@braincrew-lab/langchain-canvas/styles.css";
 
 export default function Page() {
   const { sendMessage, messages, isStreaming } = useCanvasStream({ endpoint: "/api/chat" });
@@ -85,7 +85,7 @@ canvas is done.
 ## 4. Register a custom renderer (optional)
 
 ```tsx
-import { Canvas, builtinRenderers, type RendererProps } from "@langchain-canvas/react";
+import { Canvas, builtinRenderers, type RendererProps } from "@braincrew-lab/langchain-canvas";
 
 function KpiRenderer({ artifact }: RendererProps<{ label: string; value: number }>) {
   return <div className="kpi"><span>{artifact.data.label}</span><b>{artifact.data.value}</b></div>;

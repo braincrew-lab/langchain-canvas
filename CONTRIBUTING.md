@@ -9,7 +9,7 @@ touches one of those two seams.
 
 ```
 packages/canvas-py      # langchain-canvas (Python backend SDK)
-packages/canvas-react   # @langchain-canvas/react (frontend SDK)
+packages/canvas-react   # @braincrew-lab/langchain-canvas (frontend SDK)
 apps/server             # reference FastAPI server
 apps/web                # reference Next.js app
 docs/                   # architecture, protocol, getting started
@@ -20,7 +20,7 @@ docs/                   # architecture, protocol, getting started
 ```bash
 # Frontend workspace
 pnpm install
-pnpm --filter @langchain-canvas/react build
+pnpm --filter @braincrew-lab/langchain-canvas build
 
 # Python SDK + server
 cd apps/server && uv sync
@@ -28,7 +28,7 @@ cd apps/server && uv sync
 
 ## The golden rule: the protocol is mirrored
 
-`langchain_canvas.protocol` (Pydantic) and `@langchain-canvas/react` `protocol/*`
+`langchain_canvas.protocol` (Pydantic) and `@braincrew-lab/langchain-canvas` `protocol/*`
 (TypeScript) are hand-mirrored. **Any change to one must be made to the other in
 the same PR.** A field added to `ChartData` in Python that is missing in
 TypeScript is a bug, even if nothing breaks at runtime yet.

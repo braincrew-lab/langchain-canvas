@@ -7,7 +7,7 @@
  * real `/api/chat` (drop the `mock` option) to go live.
  */
 
-import { Canvas, scenarios, useCanvasStream, type StreamEvent } from "@langchain-canvas/react";
+import { Canvas, scenarios, useCanvasStream, type StreamEvent } from "@braincrew-lab/langchain-canvas";
 
 import { Chat } from "../../components/Chat";
 

@@ -18,6 +18,6 @@ from langchain_canvas import Canvas, create_canvas_agent, sse_from_agent
   it to a FastAPI `StreamingResponse`.
 
 The wire types live in `langchain_canvas.protocol` and mirror
-`@langchain-canvas/react`.
+`@braincrew-lab/langchain-canvas`.
 
 See the [getting-started guide](../../docs/03-getting-started.md).

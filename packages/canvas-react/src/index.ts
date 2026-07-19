@@ -1,8 +1,8 @@
 /**
- * @langchain-canvas/react — a live canvas for LangChain agents.
+ * @braincrew-lab/langchain-canvas — a live canvas for LangChain agents.
  *
- *     import { Canvas, useCanvasStream } from "@langchain-canvas/react";
- *     import "@langchain-canvas/react/styles.css";
+ *     import { Canvas, useCanvasStream } from "@braincrew-lab/langchain-canvas";
+ *     import "@braincrew-lab/langchain-canvas/styles.css";
  *
  * The public surface is small on purpose: one hook (`useCanvasStream`), one
  * component (`<Canvas />`), and the wire types. Everything else — the

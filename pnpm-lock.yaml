@@ -14,7 +14,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@langchain-canvas/react':
+      '@braincrew-lab/langchain-canvas':
         specifier: workspace:*
         version: link:../../packages/canvas-react
       next:

@@ -26,7 +26,7 @@ jobs:
         run: pnpm -r typecheck
 
       - name: Test
-        run: pnpm --filter @langchain-canvas/react test
+        run: pnpm --filter @braincrew-lab/langchain-canvas test
 
       - name: Build package
-        run: pnpm --filter @langchain-canvas/react build
+        run: pnpm --filter @braincrew-lab/langchain-canvas build

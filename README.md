@@ -58,7 +58,7 @@ Pick a scenario (HTML page, streaming doc, chart, table) and watch it render
 exactly as a real agent would drive it. In code:
 
 ```tsx
-import { Canvas, useCanvasReplay, scenarios } from "@langchain-canvas/react";
+import { Canvas, useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
 
 const { play } = useCanvasReplay();
 play(scenarios[0].events);    // schema → screen, no network
@@ -118,8 +118,8 @@ async def chat(body: Body):
 
 ```tsx
 "use client";
-import { Canvas, useCanvasStream } from "@langchain-canvas/react";
-import "@langchain-canvas/react/styles.css";
+import { Canvas, useCanvasStream } from "@braincrew-lab/langchain-canvas";
+import "@braincrew-lab/langchain-canvas/styles.css";
 
 export default function Page() {
   const { sendMessage, messages, canvas, isStreaming, editSelection } =

@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Canvas, scenarios, useCanvasReplay, type StreamEvent } from "@langchain-canvas/react";
+import { Canvas, scenarios, useCanvasReplay, type StreamEvent } from "@braincrew-lab/langchain-canvas";
 
 interface Prop {
   name: string;
