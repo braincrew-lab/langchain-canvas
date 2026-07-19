@@ -202,7 +202,8 @@ describe("importFile xlsx (robust to real spreadsheets)", () => {
     const png = Uint8Array.from(atob(
       "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAF0lEQVR42mNk+M9Qz0AEYBxVSFyFAwAX9wX/eGj4bwAAAABJRU5ErkJggg==",
     ), (c) => c.charCodeAt(0));
-    const id = wb.addImage({ buffer: png as unknown as ExcelJS.Buffer, extension: "png" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const id = wb.addImage({ buffer: png as any, extension: "png" });
     ws.addImage(id, { tl: { col: 1, row: 2 }, ext: { width: 100, height: 100 } });
     const buf = await wb.xlsx.writeBuffer();
     const f = Object.assign(new File([], "i.xlsx"), { arrayBuffer: async () => buf }) as File;
