@@ -56,9 +56,11 @@ const INSPECTOR_CSS = `
   color: #fff; font-size: 14px; cursor: pointer; }
 .lcx-fmt button:hover { background: rgba(255,255,255,0.15); }
 .lcx-fmt button b { font-weight: 800; } .lcx-fmt button i { font-style: italic; } .lcx-fmt button u { text-decoration: underline; }
-.lcx-guide { position: fixed; z-index: 1000002; background: #f43f5e; pointer-events: none; }
-.lcx-guide-v { width: 1px; top: 0; bottom: 0; }
-.lcx-guide-h { height: 1px; left: 0; right: 0; }
+.lcx-drop { position: fixed; z-index: 1000002; background: #6366f1; border-radius: 2px; pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.6); }
+[data-cid].lcx-dragging { opacity: 0.35; }
+.lcx-ghost { position: fixed; z-index: 1000003; pointer-events: none; opacity: 0.9; border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35); overflow: hidden; }
 .lcx-resize { position: fixed; width: 14px; height: 14px; z-index: 1000001; background: #10b981;
   border: 2px solid #fff; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: nwse-resize; touch-action: none; }
 `.trim();
@@ -119,13 +121,17 @@ const INSPECTOR_SCRIPT = `
   // A structural change (insert/delete/move) shifts every cid, so we save the
   // whole document: clone <html>, drop the injected inspector nodes, scrub the
   // inspector's attributes, and post it for the host to store wholesale.
-  function emitDoc() {
+  // selfApplied = the iframe already reflects this change and every element kept
+  // its data-cid (a pure reorder/move), so the host can persist without reloading
+  // the iframe (no flicker). Edits that mint new nodes (insert) leave it false so a
+  // reload re-tags fresh cids.
+  function emitDoc(selfApplied) {
     var clone = document.documentElement.cloneNode(true);
     var injected = clone.querySelectorAll("[data-lcx]");
     for (var i = 0; i < injected.length; i++) injected[i].parentNode && injected[i].parentNode.removeChild(injected[i]);
     var marked = clone.querySelectorAll("[data-cid],[contenteditable],.lcx-hover,.lcx-selected");
     for (var j = 0; j < marked.length; j++) scrub(marked[j]);
-    parent.postMessage({ source: MARK, type: "doc_edit", html: "<!doctype html>\\n" + clone.outerHTML }, "*");
+    parent.postMessage({ source: MARK, type: "doc_edit", self: !!selfApplied, html: "<!doctype html>\\n" + clone.outerHTML }, "*");
   }
   function newBlock(tag) {
     var el = document.createElement(tag);
@@ -229,37 +235,81 @@ const INSPECTOR_SCRIPT = `
     var hovered = null;
     var selected = [];               // currently highlighted elements
     var marquee = null, sx = 0, sy = 0, dragging = false, moved = false, suppressClick = false;
-    var moveEls = null, moveBase = null, groupSeq = 0, guideV = null, guideH = null;
-    function parseTranslate(el) {
-      var m = (el.style.transform || "").match(/translate\\(\\s*(-?[\\d.]+)px\\s*,\\s*(-?[\\d.]+)px/);
-      return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : { x: 0, y: 0 };
+    // Flow-based reorder: dragging moves elements in the DOM so the layout reflows,
+    // instead of a fixed-pixel transform that breaks across responsive breakpoints.
+    var dragEls = null, dragStart = null, drop = null, dropLine = null, groupSeq = 0;
+    var dragGhost = null, grabDX = 0, grabDY = 0;
+
+    // A clone of the element that follows the cursor, so it's obvious what's being
+    // dragged (the original stays dimmed in place, and a line marks where it lands).
+    function makeGhost(el) {
+      var r = el.getBoundingClientRect();
+      var cs = window.getComputedStyle(el);
+      var g = el.cloneNode(true);
+      if (g.removeAttribute) { g.removeAttribute("data-cid"); g.removeAttribute("id"); }
+      g.className = (el.className || "").replace(/lcx-\\S+/g, "") + " lcx-ghost";
+      g.setAttribute("data-lcx", "");
+      g.style.margin = "0";
+      g.style.width = r.width + "px";
+      g.style.height = r.height + "px";
+      g.style.left = r.left + "px";
+      g.style.top = r.top + "px";
+      g.style.transform = "none";
+      // Body-level clone doesn't inherit the ancestor's colour/typography — copy
+      // the computed values so the ghost reads exactly like the original.
+      g.style.color = cs.color;
+      g.style.font = cs.font;
+      if (cs.backgroundColor && cs.backgroundColor !== "rgba(0, 0, 0, 0)") g.style.backgroundColor = cs.backgroundColor;
+      document.body.appendChild(g);
+      dragGhost = g;
     }
-    function showGuides(gx, gy) {
-      if (!guideV) { guideV = document.createElement("div"); guideV.setAttribute("data-lcx", ""); guideV.className = "lcx-guide lcx-guide-v"; document.body.appendChild(guideV); }
-      if (!guideH) { guideH = document.createElement("div"); guideH.setAttribute("data-lcx", ""); guideH.className = "lcx-guide lcx-guide-h"; document.body.appendChild(guideH); }
-      guideV.style.display = gx == null ? "none" : "block"; if (gx != null) guideV.style.left = gx + "px";
-      guideH.style.display = gy == null ? "none" : "block"; if (gy != null) guideH.style.top = gy + "px";
+    function moveGhost(x, y) { if (dragGhost) { dragGhost.style.left = (x - grabDX) + "px"; dragGhost.style.top = (y - grabDY) + "px"; } }
+    function removeGhost() { if (dragGhost && dragGhost.parentNode) dragGhost.parentNode.removeChild(dragGhost); dragGhost = null; }
+
+    function showDrop(left, top, w, h) {
+      if (!dropLine) { dropLine = document.createElement("div"); dropLine.setAttribute("data-lcx", ""); dropLine.className = "lcx-drop"; document.body.appendChild(dropLine); }
+      dropLine.style.display = "block";
+      dropLine.style.left = left + "px"; dropLine.style.top = top + "px";
+      dropLine.style.width = w + "px"; dropLine.style.height = h + "px";
     }
-    function hideGuides() { if (guideV) guideV.style.display = "none"; if (guideH) guideH.style.display = "none"; }
-    // Snap the just-moved element to nearby edges/centers (siblings + container).
-    function computeSnap(el) {
-      var TH = 6, r = el.getBoundingClientRect();
-      var ax = [r.left, (r.left + r.right) / 2, r.right], ay = [r.top, (r.top + r.bottom) / 2, r.bottom];
-      var tx = [], ty = [];
-      var pr = el.parentElement ? el.parentElement.getBoundingClientRect() : null;
-      if (pr) { tx.push((pr.left + pr.right) / 2); ty.push((pr.top + pr.bottom) / 2); }
-      var all = document.body.querySelectorAll("[data-cid]");
-      all.forEach(function (o) {
-        if (o.hasAttribute("data-lcx") || moveEls.indexOf(o) !== -1 || el.contains(o) || o.contains(el)) return;
-        var orc = o.getBoundingClientRect();
-        if (orc.width <= 0 || orc.height <= 0 || orc.width * orc.height > window.innerWidth * window.innerHeight * 0.9) return;
-        tx.push(orc.left, (orc.left + orc.right) / 2, orc.right);
-        ty.push(orc.top, (orc.top + orc.bottom) / 2, orc.bottom);
-      });
-      var bx = null, by = null, i, j;
-      for (i = 0; i < ax.length; i++) for (j = 0; j < tx.length; j++) { var dx = tx[j] - ax[i]; if (Math.abs(dx) <= TH && (!bx || Math.abs(dx) < Math.abs(bx.d))) bx = { d: dx, g: tx[j] }; }
-      for (i = 0; i < ay.length; i++) for (j = 0; j < ty.length; j++) { var dy = ty[j] - ay[i]; if (Math.abs(dy) <= TH && (!by || Math.abs(dy) < Math.abs(by.d))) by = { d: dy, g: ty[j] }; }
-      return { adjX: bx ? bx.d : 0, adjY: by ? by.d : 0, gx: bx ? bx.g : null, gy: by ? by.g : null };
+    function hideDrop() { if (dropLine) dropLine.style.display = "none"; }
+
+    // True if a node is (inside) one of the dragged elements — can't drop into itself.
+    function inDrag(node) {
+      for (var i = 0; i < dragEls.length; i++) { if (dragEls[i] === node || dragEls[i].contains(node)) return true; }
+      return false;
+    }
+
+    // Where a drop at (x,y) lands: the reorderable element under the cursor and
+    // whether to insert before or after it. Side-by-side siblings use the horizontal
+    // midpoint, stacked siblings the vertical one — so rows, columns, grids and flex
+    // all work without inspecting layout modes.
+    function computeDrop(x, y) {
+      for (var i = 0; i < dragEls.length; i++) dragEls[i].style.pointerEvents = "none";
+      var under = document.elementFromPoint(x, y);
+      for (var j = 0; j < dragEls.length; j++) dragEls[j].style.pointerEvents = "";
+      if (!(under instanceof Element)) return null;
+      var target = under.closest("[data-cid]");
+      while (target && (target.hasAttribute("data-lcx") || inDrag(target) || target === document.body || !target.parentElement)) {
+        target = target.parentElement ? target.parentElement.closest("[data-cid]") : null;
+      }
+      if (!target) return null;
+      var r = target.getBoundingClientRect();
+      var sib = target.previousElementSibling || target.nextElementSibling;
+      var horizontal = false;
+      if (sib) { var sr = sib.getBoundingClientRect(); horizontal = Math.abs(sr.top - r.top) < Math.max(r.height, sr.height) * 0.5; }
+      var before = horizontal ? (x < r.left + r.width / 2) : (y < r.top + r.height / 2);
+      return { target: target, before: before, horizontal: horizontal, r: r };
+    }
+    // Perform the reorder: move each dragged element to the drop point (in order).
+    function applyDrop(els) {
+      var ref = drop.before ? drop.target : drop.target.nextSibling;
+      var parentNode = drop.target.parentNode;
+      for (var k = 0; k < els.length; k++) {
+        els[k].style.removeProperty("transform");         // shed any legacy free-drag offset
+        if (els[k].getAttribute("style") === "") els[k].removeAttribute("style");
+        parentNode.insertBefore(els[k], ref);
+      }
     }
 
     function clearSelected() {
@@ -348,21 +398,28 @@ const INSPECTOR_SCRIPT = `
       }, "*");
     }, true);
 
-    // --- drag = marquee multi-select (Shift to add) -----------------------------
+    // --- drag: reorder an element in the flow, or marquee-select empty space -----
     document.addEventListener("mousedown", function (e) {
       suppressClick = false;             // a fresh press: never carry a stale suppress
       if (e.button !== 0) return;
       var t = e.target;
       if (t instanceof Element && t.isContentEditable) return;
       if (t === resizeHandle) return;    // the resize handle drives its own drag
-      // Pressing on any selected element starts a move of the whole selection
-      // (a single element, a multi-selection, or a group — all move together).
+      // Pressing on a selected element drags the whole selection; pressing on any
+      // other element drags just that one (a single gesture both selects and moves,
+      // so you never have to click first). Empty space starts a marquee.
       var onSel = false;
       for (var si = 0; si < selected.length; si++) { if (selected[si] === t || selected[si].contains(t)) { onSel = true; break; } }
       if (onSel && selected.length >= 1) {
-        moveEls = selected.slice();
-        moveBase = { sx: e.clientX, sy: e.clientY, bases: moveEls.map(parseTranslate) };
-        moved = false;
+        dragEls = selected.slice();
+      } else {
+        var el = t instanceof Element ? t.closest("[data-cid]") : null;
+        if (el && el !== document.body && el.parentElement) dragEls = [el];
+      }
+      if (dragEls) {
+        var gr = dragEls[0].getBoundingClientRect();
+        grabDX = e.clientX - gr.left; grabDY = e.clientY - gr.top;
+        dragStart = { x: e.clientX, y: e.clientY }; moved = false; drop = null;
         document.body.style.userSelect = "none";
         return;
       }
@@ -373,19 +430,20 @@ const INSPECTOR_SCRIPT = `
       document.body.appendChild(marquee);
     }, true);
     document.addEventListener("mousemove", function (e) {
-      if (moveEls) {
-        if (Math.abs(e.clientX - moveBase.sx) > 2 || Math.abs(e.clientY - moveBase.sy) > 2) moved = true;
-        var ddx = e.clientX - moveBase.sx, ddy = e.clientY - moveBase.sy;
-        var apply = function (ex, ey) {
-          for (var k = 0; k < moveEls.length; k++) {
-            moveEls[k].style.transform = "translate(" + Math.round(moveBase.bases[k].x + ex) + "px," + Math.round(moveBase.bases[k].y + ey) + "px)";
-          }
-        };
-        apply(ddx, ddy);                       // tentative, then snap the reference element
-        var snap = computeSnap(moveEls[0]);
-        if (snap.adjX || snap.adjY) apply(ddx + snap.adjX, ddy + snap.adjY);
-        showGuides(snap.gx, snap.gy);
-        positionResize();
+      if (dragEls) {
+        if (!moved && (Math.abs(e.clientX - dragStart.x) > 3 || Math.abs(e.clientY - dragStart.y) > 3)) {
+          moved = true;
+          for (var d = 0; d < dragEls.length; d++) dragEls[d].classList.add("lcx-dragging");
+          makeGhost(dragEls[0]);
+        }
+        if (!moved) return;
+        moveGhost(e.clientX, e.clientY);
+        drop = computeDrop(e.clientX, e.clientY);
+        if (drop) {
+          var r = drop.r;
+          if (drop.horizontal) showDrop((drop.before ? r.left : r.right) - 1.5, r.top, 3, r.height);
+          else showDrop(r.left, (drop.before ? r.top : r.bottom) - 1.5, r.width, 3);
+        } else hideDrop();
         return;
       }
       if (!dragging || !marquee) return;
@@ -396,15 +454,18 @@ const INSPECTOR_SCRIPT = `
       marquee.style.height = Math.abs(e.clientY - sy) + "px";
     }, true);
     document.addEventListener("mouseup", function (e) {
-      if (moveEls) {
-        var els = moveEls; moveEls = null;
-        hideGuides();
+      if (dragEls) {
+        var els = dragEls; dragEls = null;
+        for (var c = 0; c < els.length; c++) els[c].classList.remove("lcx-dragging");
+        removeGhost();
+        hideDrop();
         document.body.style.userSelect = "";
-        if (moved) {
+        if (moved && drop && drop.target) {
           suppressClick = true;
-          // one node → surgical patch; several → save the whole document once.
-          if (els.length === 1) emitEdit(els[0]); else emitDoc();
+          applyDrop(els);
+          emitDoc(true);                  // reorder is already applied here → save without reload
         }
+        drop = null;
         return;
       }
       if (!dragging) return;
@@ -449,10 +510,13 @@ const INSPECTOR_SCRIPT = `
     // which would leave move/marquee state stuck. Finalize cleanly on exit.
     function endDrag() {
       document.body.style.userSelect = "";
-      hideGuides();
-      if (moveEls) {
-        var els = moveEls; moveEls = null;
-        if (moved) { suppressClick = true; if (els.length === 1) emitEdit(els[0]); else emitDoc(); }
+      hideDrop();
+      removeGhost();
+      if (dragEls) {
+        // Pointer left the frame mid-drag: cancel cleanly rather than drop at a
+        // stale, off-frame position.
+        for (var c = 0; c < dragEls.length; c++) dragEls[c].classList.remove("lcx-dragging");
+        dragEls = null; drop = null;
       }
       if (dragging) {
         dragging = false;
@@ -478,6 +542,21 @@ const INSPECTOR_SCRIPT = `
       removeFmtBar();
       t.removeAttribute("contenteditable");
       emitEdit(t);
+    }, true);
+    // While editing text, Enter inserts a real line break. The browser's default
+    // for Enter is to split the block (which nests <div>s, or does nothing at all
+    // on inline/button-like elements), so line breaks appear not to work — force a
+    // clean <br> instead. Escape commits by blurring.
+    document.addEventListener("keydown", function (e) {
+      var t = e.target;
+      if (!(t instanceof Element) || !t.hasAttribute("contenteditable")) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (!document.execCommand("insertLineBreak")) document.execCommand("insertHTML", false, "<br>");
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        t.blur();
+      }
     }, true);
 
     // --- parent commands --------------------------------------------------------
