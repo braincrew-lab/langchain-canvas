@@ -176,8 +176,14 @@ const INSPECTOR_SCRIPT = `
   function positionResize() {
     if (!resizeEl || !resizeHandle) return;
     var r = resizeEl.getBoundingClientRect();
-    resizeHandle.style.left = (r.right - 7) + "px";
-    resizeHandle.style.top = (r.bottom - 7) + "px";
+    // Anchor to the element's bottom-right, but keep the whole handle on-screen so
+    // a section taller/wider than the viewport still exposes a reachable grip
+    // (otherwise it sits below the fold and "there's no way to adjust it").
+    var M = 8;
+    var left = Math.max(r.left - 7, Math.min(r.right - 7, window.innerWidth - M - 14));
+    var top = Math.max(r.top - 7, Math.min(r.bottom - 7, window.innerHeight - M - 14));
+    resizeHandle.style.left = left + "px";
+    resizeHandle.style.top = top + "px";
   }
   function hideResize() { resizeEl = null; if (resizeHandle) resizeHandle.style.display = "none"; }
   function showResize(el) {

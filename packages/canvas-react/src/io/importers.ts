@@ -12,11 +12,10 @@
  * dynamic import so it never touches the main bundle.
  */
 
-import type { CellValue } from "exceljs";
-
 import type { Artifact, DocumentData, HtmlData, TableColumn, TableData } from "../protocol/artifacts";
 import type { CanvasCreate, CanvasStatus, StreamEvent } from "../protocol/events";
 import { loadOptional } from "../optionalImport";
+import { xlsxToSheets } from "./xlsx";
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
 export const IMPORTABLE_EXTENSIONS = [".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx"] as const;
@@ -71,8 +70,10 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
     case ".json":
       return importJson(await file.text(), id, title);
     case ".xlsx": {
-      const data = await xlsxToTable(await file.arrayBuffer());
-      return toEvents(artifact(id, "table", title, data));
+      // Rich import: every sheet, with fonts/fills/formats/merges/widths, plus a
+      // flat first-sheet view for export/fallback.
+      const { sheets, columns, rows } = await xlsxToSheets(await file.arrayBuffer(), () => loadOptional("exceljs", () => import("exceljs")));
+      return toEvents(artifact(id, "table", title, { columns, rows, sheet: sheets } satisfies TableData));
     }
     default:
       throw new Error(`Unsupported file type "${ext || file.name}". Supported: ${IMPORTABLE_EXTENSIONS.join(", ")}`);
@@ -158,39 +159,3 @@ function coerce(raw: string): string | number {
   return Number.isFinite(n) && String(n) === t ? n : raw;
 }
 
-/** Read the first worksheet of an .xlsx into the simple columns/rows shape. */
-async function xlsxToTable(buffer: ArrayBuffer): Promise<TableData> {
-  const ExcelJS = await loadOptional("exceljs", () => import("exceljs"));
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
-  const ws = wb.worksheets[0];
-  if (!ws) return { columns: [], rows: [] };
-
-  const cellText = (v: CellValue): string | number => {
-    if (v == null) return "";
-    if (typeof v === "number" || typeof v === "string") return v;
-    if (typeof v === "object" && "text" in v && typeof v.text === "string") return v.text; // rich text / hyperlink
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    return String(v);
-  };
-
-  // Keep each header's *real* worksheet column, so gaps (e.g. A, B, D) don't
-  // shift data into the wrong columns, and de-dupe repeated header labels.
-  const header = ws.getRow(1);
-  const headerCols: number[] = [];
-  const labels: string[] = [];
-  header.eachCell({ includeEmpty: false }, (cell, col) => {
-    labels.push(String(cellText(cell.value)).trim() || `Column ${col}`);
-    headerCols.push(col);
-  });
-  const columns = uniqueColumns(labels);
-
-  const rows: Record<string, string | number>[] = [];
-  ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1) return;
-    const obj: Record<string, string | number> = {};
-    columns.forEach((c, i) => (obj[c.key] = cellText(row.getCell(headerCols[i]).value)));
-    rows.push(obj);
-  });
-  return { columns, rows };
-}
