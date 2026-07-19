@@ -56,11 +56,6 @@ const INSPECTOR_CSS = `
   color: #fff; font-size: 14px; cursor: pointer; }
 .lcx-fmt button:hover { background: rgba(255,255,255,0.15); }
 .lcx-fmt button b { font-weight: 800; } .lcx-fmt button i { font-style: italic; } .lcx-fmt button u { text-decoration: underline; }
-.lcx-drop { position: fixed; z-index: 1000002; background: #6366f1; border-radius: 2px; pointer-events: none;
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.6); }
-[data-cid].lcx-dragging { opacity: 0.35; }
-.lcx-ghost { position: fixed; z-index: 1000003; pointer-events: none; opacity: 0.9; border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.35); overflow: hidden; }
 .lcx-resize { position: fixed; width: 14px; height: 14px; z-index: 1000001; background: #10b981;
   border: 2px solid #fff; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); cursor: nwse-resize; touch-action: none; }
 `.trim();
@@ -235,80 +230,50 @@ const INSPECTOR_SCRIPT = `
     var hovered = null;
     var selected = [];               // currently highlighted elements
     var marquee = null, sx = 0, sy = 0, dragging = false, moved = false, suppressClick = false;
-    // Flow-based reorder: dragging moves elements in the DOM so the layout reflows,
-    // instead of a fixed-pixel transform that breaks across responsive breakpoints.
-    var dragEls = null, dragStart = null, drop = null, dropLine = null, groupSeq = 0;
-    var dragGhost = null, grabDX = 0, grabDY = 0;
+    // Free positioning: dragging places an element anywhere. The element is pulled
+    // into absolute positioning inside its own parent, and its final spot + size are
+    // stored as percentages of that parent — so it stays put proportionally across
+    // responsive breakpoints, instead of a fixed pixel offset that drifts off.
+    var dragEls = null, dragStart = null, dragBases = null, groupSeq = 0;
 
-    // A clone of the element that follows the cursor, so it's obvious what's being
-    // dragged (the original stays dimmed in place, and a line marks where it lands).
-    function makeGhost(el) {
-      var r = el.getBoundingClientRect();
-      var cs = window.getComputedStyle(el);
-      var g = el.cloneNode(true);
-      if (g.removeAttribute) { g.removeAttribute("data-cid"); g.removeAttribute("id"); }
-      g.className = (el.className || "").replace(/lcx-\\S+/g, "") + " lcx-ghost";
-      g.setAttribute("data-lcx", "");
-      g.style.margin = "0";
-      g.style.width = r.width + "px";
-      g.style.height = r.height + "px";
-      g.style.left = r.left + "px";
-      g.style.top = r.top + "px";
-      g.style.transform = "none";
-      // Body-level clone doesn't inherit the ancestor's colour/typography — copy
-      // the computed values so the ghost reads exactly like the original.
-      g.style.color = cs.color;
-      g.style.font = cs.font;
-      if (cs.backgroundColor && cs.backgroundColor !== "rgba(0, 0, 0, 0)") g.style.backgroundColor = cs.backgroundColor;
-      document.body.appendChild(g);
-      dragGhost = g;
+    function ensurePositioned(parent) {
+      if (!parent || parent === document.body || parent === document.documentElement) return;
+      if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
     }
-    function moveGhost(x, y) { if (dragGhost) { dragGhost.style.left = (x - grabDX) + "px"; dragGhost.style.top = (y - grabDY) + "px"; } }
-    function removeGhost() { if (dragGhost && dragGhost.parentNode) dragGhost.parentNode.removeChild(dragGhost); dragGhost = null; }
-
-    function showDrop(left, top, w, h) {
-      if (!dropLine) { dropLine = document.createElement("div"); dropLine.setAttribute("data-lcx", ""); dropLine.className = "lcx-drop"; document.body.appendChild(dropLine); }
-      dropLine.style.display = "block";
-      dropLine.style.left = left + "px"; dropLine.style.top = top + "px";
-      dropLine.style.width = w + "px"; dropLine.style.height = h + "px";
-    }
-    function hideDrop() { if (dropLine) dropLine.style.display = "none"; }
-
-    // True if a node is (inside) one of the dragged elements — can't drop into itself.
-    function inDrag(node) {
-      for (var i = 0; i < dragEls.length; i++) { if (dragEls[i] === node || dragEls[i].contains(node)) return true; }
-      return false;
-    }
-
-    // Where a drop at (x,y) lands: the reorderable element under the cursor and
-    // whether to insert before or after it. Side-by-side siblings use the horizontal
-    // midpoint, stacked siblings the vertical one — so rows, columns, grids and flex
-    // all work without inspecting layout modes.
-    function computeDrop(x, y) {
-      for (var i = 0; i < dragEls.length; i++) dragEls[i].style.pointerEvents = "none";
-      var under = document.elementFromPoint(x, y);
-      for (var j = 0; j < dragEls.length; j++) dragEls[j].style.pointerEvents = "";
-      if (!(under instanceof Element)) return null;
-      var target = under.closest("[data-cid]");
-      while (target && (target.hasAttribute("data-lcx") || inDrag(target) || target === document.body || !target.parentElement)) {
-        target = target.parentElement ? target.parentElement.closest("[data-cid]") : null;
+    // Pull each element out into absolute positioning at its current spot (no visual
+    // jump), so it can then be moved freely.
+    function beginFreeDrag(els) {
+      dragBases = [];
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i], parent = el.parentElement || document.body;
+        ensurePositioned(parent);
+        var pr = parent.getBoundingClientRect(), r = el.getBoundingClientRect();
+        var base = { el: el, parent: parent, left: r.left - pr.left, top: r.top - pr.top, w: el.offsetWidth, h: el.offsetHeight };
+        el.style.position = "absolute";
+        el.style.margin = "0";
+        el.style.width = base.w + "px";        // freeze size while dragging (absolute can't inherit flow width)
+        el.style.left = base.left + "px";
+        el.style.top = base.top + "px";
+        dragBases.push(base);
       }
-      if (!target) return null;
-      var r = target.getBoundingClientRect();
-      var sib = target.previousElementSibling || target.nextElementSibling;
-      var horizontal = false;
-      if (sib) { var sr = sib.getBoundingClientRect(); horizontal = Math.abs(sr.top - r.top) < Math.max(r.height, sr.height) * 0.5; }
-      var before = horizontal ? (x < r.left + r.width / 2) : (y < r.top + r.height / 2);
-      return { target: target, before: before, horizontal: horizontal, r: r };
     }
-    // Perform the reorder: move each dragged element to the drop point (in order).
-    function applyDrop(els) {
-      var ref = drop.before ? drop.target : drop.target.nextSibling;
-      var parentNode = drop.target.parentNode;
-      for (var k = 0; k < els.length; k++) {
-        els[k].style.removeProperty("transform");         // shed any legacy free-drag offset
-        if (els[k].getAttribute("style") === "") els[k].removeAttribute("style");
-        parentNode.insertBefore(els[k], ref);
+    function moveFree(dx, dy) {
+      for (var i = 0; i < dragBases.length; i++) {
+        var b = dragBases[i];
+        b.el.style.left = (b.left + dx) + "px";
+        b.el.style.top = (b.top + dy) + "px";
+      }
+    }
+    // Commit the current position (in px, as set live by moveFree) as % of the
+    // parent — position and width — so it scales with the layout. Falls back to px
+    // only if the parent has collapsed to zero on that axis.
+    function commitFree() {
+      for (var i = 0; i < dragBases.length; i++) {
+        var b = dragBases[i], pr = b.parent.getBoundingClientRect();
+        var curLeft = parseFloat(b.el.style.left) || 0, curTop = parseFloat(b.el.style.top) || 0;
+        b.el.style.left = pr.width ? ((curLeft / pr.width) * 100).toFixed(3) + "%" : curLeft + "px";
+        b.el.style.top = pr.height ? ((curTop / pr.height) * 100).toFixed(3) + "%" : curTop + "px";
+        if (pr.width) b.el.style.width = ((b.w / pr.width) * 100).toFixed(3) + "%";
       }
     }
 
@@ -398,7 +363,7 @@ const INSPECTOR_SCRIPT = `
       }, "*");
     }, true);
 
-    // --- drag: reorder an element in the flow, or marquee-select empty space -----
+    // --- drag: freely move an element anywhere, or marquee-select empty space ----
     document.addEventListener("mousedown", function (e) {
       suppressClick = false;             // a fresh press: never carry a stale suppress
       if (e.button !== 0) return;
@@ -417,9 +382,7 @@ const INSPECTOR_SCRIPT = `
         if (el && el !== document.body && el.parentElement) dragEls = [el];
       }
       if (dragEls) {
-        var gr = dragEls[0].getBoundingClientRect();
-        grabDX = e.clientX - gr.left; grabDY = e.clientY - gr.top;
-        dragStart = { x: e.clientX, y: e.clientY }; moved = false; drop = null;
+        dragStart = { x: e.clientX, y: e.clientY }; moved = false;
         document.body.style.userSelect = "none";
         return;
       }
@@ -433,17 +396,11 @@ const INSPECTOR_SCRIPT = `
       if (dragEls) {
         if (!moved && (Math.abs(e.clientX - dragStart.x) > 3 || Math.abs(e.clientY - dragStart.y) > 3)) {
           moved = true;
-          for (var d = 0; d < dragEls.length; d++) dragEls[d].classList.add("lcx-dragging");
-          makeGhost(dragEls[0]);
+          beginFreeDrag(dragEls);       // pull into absolute positioning at the current spot
         }
         if (!moved) return;
-        moveGhost(e.clientX, e.clientY);
-        drop = computeDrop(e.clientX, e.clientY);
-        if (drop) {
-          var r = drop.r;
-          if (drop.horizontal) showDrop((drop.before ? r.left : r.right) - 1.5, r.top, 3, r.height);
-          else showDrop(r.left, (drop.before ? r.top : r.bottom) - 1.5, r.width, 3);
-        } else hideDrop();
+        moveFree(e.clientX - dragStart.x, e.clientY - dragStart.y);
+        positionResize();
         return;
       }
       if (!dragging || !marquee) return;
@@ -456,16 +413,18 @@ const INSPECTOR_SCRIPT = `
     document.addEventListener("mouseup", function (e) {
       if (dragEls) {
         var els = dragEls; dragEls = null;
-        for (var c = 0; c < els.length; c++) els[c].classList.remove("lcx-dragging");
-        removeGhost();
-        hideDrop();
         document.body.style.userSelect = "";
-        if (moved && drop && drop.target) {
+        if (moved && dragBases) {
           suppressClick = true;
-          applyDrop(els);
-          emitDoc(true);                  // reorder is already applied here → save without reload
+          moveFree(e.clientX - dragStart.x, e.clientY - dragStart.y);    // final px position
+          commitFree();                                                  // px → % of parent
+          positionResize();
+          // The new position is already shown in the iframe with every cid intact,
+          // so persist without a reload (no flicker): one element → node_edit,
+          // several → a self-applied doc_edit.
+          if (els.length === 1) emitEdit(els[0]); else emitDoc(true);
         }
-        drop = null;
+        dragBases = null;
         return;
       }
       if (!dragging) return;
@@ -510,13 +469,12 @@ const INSPECTOR_SCRIPT = `
     // which would leave move/marquee state stuck. Finalize cleanly on exit.
     function endDrag() {
       document.body.style.userSelect = "";
-      hideDrop();
-      removeGhost();
       if (dragEls) {
-        // Pointer left the frame mid-drag: cancel cleanly rather than drop at a
-        // stale, off-frame position.
-        for (var c = 0; c < dragEls.length; c++) dragEls[c].classList.remove("lcx-dragging");
-        dragEls = null; drop = null;
+        // Pointer left the frame mid-drag: commit the move at its last position so
+        // it isn't lost (the element is already placed absolutely in the iframe).
+        var els = dragEls; dragEls = null;
+        if (moved && dragBases) { commitFree(); if (els.length === 1) emitEdit(els[0]); else emitDoc(true); }
+        dragBases = null;
       }
       if (dragging) {
         dragging = false;
