@@ -788,6 +788,16 @@
   flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center;
   padding: 10px; background: var(--cv-surface); border-radius: 10px;
 }
+/* Fixed-aspect slide preview (read-only, scaled to fit). */
+.cv-slideview {
+  flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start;
+  padding: 16px; background: var(--cv-surface); border-radius: 10px;
+}
+.cv-slideview__frame {
+  position: relative; overflow: hidden; background: #fff; border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+.cv-slideview__frame iframe { display: block; }
 .cv-html-code {
   flex: 1; min-height: 0; width: 100%; resize: none;
   padding: 14px 16px; border: 1px solid var(--cv-border); border-radius: 10px;
