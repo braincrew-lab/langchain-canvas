@@ -69,6 +69,38 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   },
 };
 
+/** Read-only, fit-to-width preview of a fixed-aspect slide (e.g. a 1280×720 16:9
+ *  poster). The content lays out at its natural design width and is scaled down
+ *  with a CSS transform so the whole slide is visible without clipping. */
+function SlideView({ html, ratio, title }: { html: string; ratio: string; title: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [rw, rh] = ratio.split(/[:x/]/).map(Number);
+  const DESIGN_W = 1280;
+  const DESIGN_H = rw && rh ? Math.round((DESIGN_W * rh) / rw) : 720;
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const fit = () => setScale(Math.min(1, (el.clientWidth - 32) / DESIGN_W));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [DESIGN_W]);
+  return (
+    <div ref={boxRef} className="cv-slideview">
+      <div className="cv-slideview__frame" style={{ width: DESIGN_W * scale, height: DESIGN_H * scale }}>
+        <iframe
+          title={title}
+          srcDoc={html}
+          sandbox="allow-scripts allow-popups allow-modals"
+          style={{ width: DESIGN_W, height: DESIGN_H, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
@@ -164,6 +196,18 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
     reader.onload = () => sendIframeCommand({ artifactId: artifact.id, type: "set_src", cid: single.cid, value: String(reader.result) });
     reader.readAsDataURL(file); // embed as a data URI so the page stays self-contained
   };
+
+  // A fixed-aspect slide (the agent set `meta.ratio`, e.g. "16:9") is a poster,
+  // not a fluid web page: render it read-only, scaled to fit its column, with none
+  // of the page-builder chrome. Editing such an artifact happens through chat.
+  const ratio = artifact.meta?.ratio as string | undefined;
+  if (ratio) {
+    return (
+      <div className="cv-html-wrap">
+        <SlideView html={artifact.data.html} ratio={ratio} title={artifact.title} />
+      </div>
+    );
+  }
 
   return (
     <div className="cv-html-wrap">
