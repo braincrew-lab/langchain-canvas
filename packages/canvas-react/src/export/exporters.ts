@@ -52,7 +52,6 @@ export const dataExporters: Record<string, FileExport[]> = {
   ],
   slides: [
     { label: "PowerPoint", extension: "pptx", mime: MIME.pptx, build: (a) => slidesToPptx(a.data as SlidesData, a.title) },
-    { label: "Figma (JSON)", extension: "json", mime: MIME.json, build: (a) => slidesToFigmaJson(a.data as SlidesData) },
   ],
 };
 
@@ -183,93 +182,6 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
   }
 
   return (await pptx.write({ outputType: "blob" })) as Blob;
-}
-
-/**
- * Slides → a Figma-plugin-friendly deck JSON: a flat list of frames (one 16:9
- * slide each, stacked) holding text nodes with hex colors and pixel geometry.
- * The companion Figma plugin (`packages/figma-plugin`) maps each entry directly
- * onto real `figma.createFrame()` / `figma.createText()` nodes — so slides land
- * as native, editable Figma frames (not a flattened image).
- */
-function slidesToFigmaJson(data: SlidesData): string {
-  const W = 1280;
-  const H = 720;
-  const GAP = 64;
-  const slides = data.slides.length ? data.slides : [{ title: "Empty deck" }];
-
-  const textNode = (
-    x: number,
-    y: number,
-    width: number,
-    characters: string,
-    fontSize: number,
-    fontWeight: number,
-    align: "LEFT" | "CENTER",
-    color = "#1F2328",
-  ) => ({ type: "text", x, y, width, characters, fontSize, fontWeight, align, color });
-
-  const frames = slides.map((slide, i) => {
-    const nodes: object[] = [];
-    for (const el of resolveElements(slide)) {
-      if (el.type !== "text") continue;
-      nodes.push(
-        textNode((el.x / 100) * W, (el.y / 100) * H, (el.w / 100) * W, el.text ?? "", el.fontSize ?? 24, el.bold ? 700 : 400, el.align === "center" ? "CENTER" : "LEFT", el.color ?? slide.textColor ?? "#1F2328"),
-      );
-    }
-    return { name: `Slide ${i + 1}`, x: 0, y: i * (H + GAP), width: W, height: H, fill: slide.background ?? "#FFFFFF", nodes };
-  });
-
-  return JSON.stringify({ type: "langchain-canvas/figma-deck", version: 1, frames }, null, 2);
-}
-
-/**
- * Slides → a single SVG (one 16:9 frame per slide, stacked). Paste this SVG into
- * Figma and it becomes editable frames + text (Figma parses SVG from the
- * clipboard). Used by the "Copy to Figma" action.
- */
-export function slidesToSvg(data: SlidesData): string {
-  const W = 1280;
-  const H = 720;
-  const GAP = 64;
-  const slides = data.slides.length ? data.slides : [{ title: "Empty deck" }];
-  const totalH = slides.length * H + (slides.length - 1) * GAP;
-
-  const text = (
-    x: number,
-    y: number,
-    value: string,
-    size: number,
-    anchor: "start" | "middle" | "end",
-    weight: number,
-    fill = "#1f2328",
-  ) =>
-    `<text x="${x}" y="${y}" font-family="Inter, Arial, sans-serif" font-size="${size}" ` +
-    `font-weight="${weight}" text-anchor="${anchor}" fill="${fill}">${escapeXml(value)}</text>`;
-
-  const frames = slides
-    .map((slide, i) => {
-      const y = i * (H + GAP);
-      const bg = slide.background ?? "#ffffff";
-      let body = `<rect width="${W}" height="${H}" rx="8" fill="${bg}" stroke="#e5e7eb"/>`;
-      for (const el of resolveElements(slide)) {
-        const ex = (el.x / 100) * W;
-        const ey = (el.y / 100) * H;
-        const ew = (el.w / 100) * W;
-        if (el.type === "text") {
-          const anchor = el.align === "center" ? "middle" : el.align === "right" ? "end" : "start";
-          const ax = el.align === "center" ? ex + ew / 2 : el.align === "right" ? ex + ew : ex;
-          const fs = el.fontSize ?? 24;
-          body += text(ax, ey + fs, el.text ?? "", fs, anchor, el.bold ? 700 : 400, el.color ?? slide.textColor ?? "#1f2328");
-        } else if (el.src) {
-          body += `<image href="${el.src}" x="${ex}" y="${ey}" width="${ew}" height="${(el.h / 100) * H}" preserveAspectRatio="xMidYMid meet"/>`;
-        }
-      }
-      return `<g transform="translate(0 ${y})">${body}</g>`;
-    })
-    .join("");
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${totalH}" viewBox="0 0 ${W} ${totalH}">${frames}</svg>`;
 }
 
 /**

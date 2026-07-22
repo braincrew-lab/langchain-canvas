@@ -11,7 +11,7 @@ import { useState } from "react";
 
 import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
-import { dataExporters, slidesToPrintHtml, slidesToSvg, toStandaloneHtml, type FileExport } from "../export/exporters";
+import { dataExporters, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
@@ -59,18 +59,6 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     setOpen(false);
   };
 
-  // Copy slides as SVG to the clipboard — paste straight into Figma (it parses
-  // clipboard SVG into editable frames + text).
-  const copyToFigma = async () => {
-    const svg = slidesToSvg(artifact.data as SlidesData);
-    try {
-      await navigator.clipboard.writeText(svg);
-    } catch {
-      /* clipboard blocked */
-    }
-    setOpen(false);
-  };
-
   return (
     <div className="cv-export">
       <button
@@ -92,11 +80,6 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
             {PDF_TYPES.has(artifact.type) && (
               <button role="menuitem" onClick={exportPdf}>
                 PDF <span className="cv-export__ext">.pdf</span>
-              </button>
-            )}
-            {artifact.type === "slides" && (
-              <button role="menuitem" onClick={copyToFigma}>
-                Copy to Figma <span className="cv-export__ext">paste ⌘V</span>
               </button>
             )}
             {dataOptions.map((option) => (
