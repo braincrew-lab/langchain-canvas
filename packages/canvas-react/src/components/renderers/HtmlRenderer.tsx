@@ -69,41 +69,32 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   },
 };
 
-/** Read-only, fit-to-width preview of a fixed-aspect slide (e.g. a 1280×720 16:9
- *  poster). The content lays out at its natural design width and is scaled down
- *  with a CSS transform so the whole slide is visible without clipping. */
-function SlideView({ html, ratio, title }: { html: string; ratio: string; title: string }) {
-  const boxRef = useRef<HTMLDivElement>(null);
+const SLIDE_W = 1280;
+
+/** Fit a fixed-aspect slide's design width into the available column, returning
+ *  the scale factor and the design height for a given `ratio` (e.g. "16:9"). */
+function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivElement | null>) {
   const [scale, setScale] = useState(1);
-  const [rw, rh] = ratio.split(/[:x/]/).map(Number);
-  const DESIGN_W = 1280;
-  const DESIGN_H = rw && rh ? Math.round((DESIGN_W * rh) / rw) : 720;
+  const [rw, rh] = (ratio ?? "16:9").split(/[:x/]/).map(Number);
+  const height = rw && rh ? Math.round((SLIDE_W * rh) / rw) : 720;
   useEffect(() => {
+    if (!ratio) return;
     const el = boxRef.current;
     if (!el) return;
-    const fit = () => setScale(Math.min(1, (el.clientWidth - 32) / DESIGN_W));
+    const fit = () => setScale(Math.min(1, (el.clientWidth - 40) / SLIDE_W));
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [DESIGN_W]);
-  return (
-    <div ref={boxRef} className="cv-slideview">
-      <div className="cv-slideview__frame" style={{ width: DESIGN_W * scale, height: DESIGN_H * scale }}>
-        <iframe
-          title={title}
-          srcDoc={html}
-          sandbox="allow-scripts allow-popups allow-modals"
-          style={{ width: DESIGN_W, height: DESIGN_H, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
-        />
-      </div>
-    </div>
-  );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ratio, height]);
+  return { scale, width: SLIDE_W, height };
 }
 
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const api = useCanvasStoreApi();
   const setSelections = useCanvasStore((s) => s.setSelections);
   const applyEvent = useCanvasStore((s) => s.applyUserEvent);
@@ -116,14 +107,21 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // A single-node edit made *inside* the iframe is already reflected there, so we
   // keep the same srcDoc (no reload/flicker). Only tree-changing edits (structural
   // / code view / agent updates) rebuild it so cids get re-stamped.
+  //
+  // This self-edit short-circuit is only valid while the *same* iframe stays
+  // mounted. In "code" view the iframe is unmounted (replaced by a textarea), so
+  // returning to "design" mounts a fresh iframe that must reload from the current
+  // html — otherwise it would load a stale (or empty) cached srcDoc and render
+  // blank. Keying srcDoc on `mode` rebuilds it whenever we come back to design.
   const lastSelfHtml = useRef<string | null>(null);
   const srcDocRef = useRef<string>("");
   const srcDoc = useMemo(() => {
-    if (artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
+    if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
     srcDocRef.current = withInspector(artifact.data.html);
+    lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html]);
+  }, [artifact.data.html, mode]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 
@@ -197,17 +195,13 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
     reader.readAsDataURL(file); // embed as a data URI so the page stays self-contained
   };
 
-  // A fixed-aspect slide (the agent set `meta.ratio`, e.g. "16:9") is a poster,
-  // not a fluid web page: render it read-only, scaled to fit its column, with none
-  // of the page-builder chrome. Editing such an artifact happens through chat.
+  // A fixed-aspect slide (the agent set `meta.ratio`, e.g. "16:9") lays out at a
+  // fixed design width (1280×ratio) and is scaled to fit its column. It stays
+  // fully editable — a transform-scaled iframe still maps clicks to its own
+  // coordinates — so element select / drag / style / chat editing all work; only
+  // the fluid device-width switch (meaningless for a fixed slide) is hidden.
   const ratio = artifact.meta?.ratio as string | undefined;
-  if (ratio) {
-    return (
-      <div className="cv-html-wrap">
-        <SlideView html={artifact.data.html} ratio={ratio} title={artifact.title} />
-      </div>
-    );
-  }
+  const slide = useSlideFit(ratio, stageRef);
 
   return (
     <div className="cv-html-wrap">
@@ -215,15 +209,18 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
       <div className="cv-html-bar cv-chrome">
         {mode === "design" && (
           <>
-            <div className="cv-html-seg" role="group" aria-label="Preview width">
-              {DEVICES.map((d) => (
-                <button key={d.id} className={device === d.id ? "is-on" : ""} onClick={() => setDevice(d.id)}>
-                  {d.label}
-                </button>
-              ))}
-            </div>
-
-            <span className="cv-html-bar__sep" />
+            {!ratio && (
+              <>
+                <div className="cv-html-seg" role="group" aria-label="Preview width">
+                  {DEVICES.map((d) => (
+                    <button key={d.id} className={device === d.id ? "is-on" : ""} onClick={() => setDevice(d.id)}>
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="cv-html-bar__sep" />
+              </>
+            )}
             <span className="cv-html-bar__label">Add</span>
             {BLOCKS.map((b) => (
               <button key={b.tag} className="cv-html-add" onClick={() => command("insert", { block: b.tag })}>
@@ -297,15 +294,31 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
       </div>
 
       {mode === "design" ? (
-        <div className="cv-html-stage">
-          <iframe
-            ref={iframeRef}
-            className="cv-html"
-            title={artifact.title}
-            srcDoc={srcDoc}
-            sandbox="allow-scripts allow-popups allow-modals"
-            style={{ width: DEVICES.find((d) => d.id === device)!.width }}
-          />
+        <div className={`cv-html-stage${ratio ? " cv-html-stage--slide" : ""}`} ref={stageRef}>
+          {ratio ? (
+            // Scaled slide: the iframe lays out at its full design size, then a
+            // transform shrinks it to fit; a sized wrapper reserves the scaled box
+            // so the stage scrolls correctly. Clicks still hit the right elements.
+            <div style={{ width: slide.width * slide.scale, height: slide.height * slide.scale, flex: "0 0 auto" }}>
+              <iframe
+                ref={iframeRef}
+                className="cv-html"
+                title={artifact.title}
+                srcDoc={srcDoc}
+                sandbox="allow-scripts allow-popups allow-modals"
+                style={{ width: slide.width, height: slide.height, transform: `scale(${slide.scale})`, transformOrigin: "top left" }}
+              />
+            </div>
+          ) : (
+            <iframe
+              ref={iframeRef}
+              className="cv-html"
+              title={artifact.title}
+              srcDoc={srcDoc}
+              sandbox="allow-scripts allow-popups allow-modals"
+              style={{ width: DEVICES.find((d) => d.id === device)!.width }}
+            />
+          )}
         </div>
       ) : (
         <textarea

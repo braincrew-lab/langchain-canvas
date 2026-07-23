@@ -363,6 +363,14 @@ const INSPECTOR_SCRIPT = `
       }, "*");
     }, true);
 
+    // Block the browser's native drag (images and links start an HTML5 drag on
+    // mousemove by default, which hijacks our free-drag — the image "ghost" gets
+    // dragged instead of the element moving). Suppress it for any editable node.
+    document.addEventListener("dragstart", function (e) {
+      var t = e.target;
+      if (t instanceof Element && t.closest("[data-cid]") && !t.hasAttribute("data-lcx")) e.preventDefault();
+    }, true);
+
     // --- drag: freely move an element anywhere, or marquee-select empty space ----
     document.addEventListener("mousedown", function (e) {
       suppressClick = false;             // a fresh press: never carry a stale suppress
