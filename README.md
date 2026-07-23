@@ -175,6 +175,37 @@ Under the hood it rides LangChain 1.x's native custom-stream channel
 - 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`, or use the reconciler/SSE client with your own UI.
 - 🧵 **Typed on both ends** — Pydantic and TypeScript mirror one wire protocol.
 
+## What to emit per artifact type
+
+The `type` string selects the renderer, so **send the shape that matches the type
+you want** — a table wrapped in `html` renders as a web page, not a grid. One
+`canvas.create` line per artifact:
+
+| type       | renders as        | `data` you must ship                                  |
+| ---------- | ----------------- | ----------------------------------------------------- |
+| `html`     | web page (iframe) | `{ html }`                                             |
+| `document` | Word-style doc    | `{ format: "markdown", content }`                     |
+| `slides`   | PowerPoint deck   | `{ slides: [{ layout, title, bullets, … }] }`         |
+| `table`    | Excel-style grid  | `{ columns: [{ key, label }], rows: [{ … }] }`        |
+| `chart`    | line/bar/area/pie | `{ chart, xKey, rows, series: [{ key, label }] }`     |
+
+```json
+{ "type": "canvas.create", "artifact": {
+  "id": "deck-1", "type": "slides", "title": "Pitch", "version": 1, "status": "complete",
+  "data": { "slides": [
+    { "layout": "title",   "title": "AI for business", "subtitle": "2026 outlook" },
+    { "layout": "content", "title": "Why now", "bullets": ["Cheaper models", "Real ROI"] }
+  ] }
+} }
+```
+
+Only have **pre-rendered HTML**? Keep `type: "html"` and label the content with
+`meta` + in-HTML markers — a slide is `meta: { kind: "slide", ratio: "16:9" }` over
+a `1280×720 .slide-container`; a table wraps its `<table>` in
+`<div data-dataframe-table="true">`. Full copy-paste examples and gotchas (slide
+scaling, web-page scrolling, why a document must use `type: "document"`) are in the
+[wire protocol → *What to emit per type*](docs/02-protocol.md#what-to-emit-per-type--copy-paste-examples).
+
 ## Add your own artifact type
 
 Three steps, zero transport changes:
