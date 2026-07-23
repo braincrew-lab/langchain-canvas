@@ -81,7 +81,15 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
     if (!ratio) return;
     const el = boxRef.current;
     if (!el) return;
-    const fit = () => setScale(Math.min(1, (el.clientWidth - 40) / SLIDE_W));
+    // Guard against an unmeasurable box: while the Design stage is unmounted (Code
+    // view) the ResizeObserver can fire at clientWidth 0, which would yield a
+    // negative scale and shrink the iframe to nothing — the returning Design view
+    // then renders blank. Keep the last good scale until the box is laid out again.
+    const fit = () => {
+      const w = el.clientWidth;
+      if (w <= 40) return;
+      setScale(Math.min(1, (w - 40) / SLIDE_W));
+    };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
