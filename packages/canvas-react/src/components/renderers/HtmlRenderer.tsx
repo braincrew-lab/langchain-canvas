@@ -107,14 +107,21 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // A single-node edit made *inside* the iframe is already reflected there, so we
   // keep the same srcDoc (no reload/flicker). Only tree-changing edits (structural
   // / code view / agent updates) rebuild it so cids get re-stamped.
+  //
+  // This self-edit short-circuit is only valid while the *same* iframe stays
+  // mounted. In "code" view the iframe is unmounted (replaced by a textarea), so
+  // returning to "design" mounts a fresh iframe that must reload from the current
+  // html — otherwise it would load a stale (or empty) cached srcDoc and render
+  // blank. Keying srcDoc on `mode` rebuilds it whenever we come back to design.
   const lastSelfHtml = useRef<string | null>(null);
   const srcDocRef = useRef<string>("");
   const srcDoc = useMemo(() => {
-    if (artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
+    if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
     srcDocRef.current = withInspector(artifact.data.html);
+    lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html]);
+  }, [artifact.data.html, mode]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 
