@@ -71,6 +71,16 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
 
 const SLIDE_W = 1280;
 
+// Force a web artifact's document to scroll even when its own CSS says
+// `body{overflow:hidden}` (common in slide-derived templates). Injected only for
+// non-slide artifacts, as the very last <style> so `!important` wins the cascade.
+const SCROLL_FIX =
+  "<style>html,body{overflow:auto!important;height:auto!important;min-height:100%!important}</style>";
+function withScrollableBody(html: string): string {
+  const i = html.lastIndexOf("</body>");
+  return i === -1 ? html + SCROLL_FIX : html.slice(0, i) + SCROLL_FIX + html.slice(i);
+}
+
 /** Fit a fixed-aspect slide's design width into the available column, returning
  *  the scale factor and the design height for a given `ratio` (e.g. "16:9"). */
 function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivElement | null>) {
@@ -123,13 +133,19 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // blank. Keying srcDoc on `mode` rebuilds it whenever we come back to design.
   const lastSelfHtml = useRef<string | null>(null);
   const srcDocRef = useRef<string>("");
+  // A fixed-aspect slide keeps its own `overflow:hidden` (it's a 1280×720 page);
+  // a fluid web page must scroll, but agent templates often ship `body{overflow:
+  // hidden}`, which traps a tall page inside the iframe with no scrollbar. For the
+  // web case, force the document scrollable so it scrolls inside the panel.
+  const isFixedSlide = Boolean(artifact.meta?.ratio);
   const srcDoc = useMemo(() => {
     if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
-    srcDocRef.current = withInspector(artifact.data.html);
+    const base = withInspector(artifact.data.html);
+    srcDocRef.current = isFixedSlide ? base : withScrollableBody(base);
     lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html, mode]);
+  }, [artifact.data.html, mode, isFixedSlide]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 
