@@ -170,8 +170,12 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
     if (slide.background && /^#[0-9a-f]{3,8}$/i.test(slide.background)) s.background = { color: slide.background.replace("#", "") };
     const tc = slide.textColor ? slide.textColor.replace("#", "") : undefined;
 
+    // A slide `padding` (percent) insets the content area; map element geometry
+    // into that safe area so the PPTX matches the editor/PDF.
+    const pad = (slide.padding ?? 0) / 100;
+    const inset = (v: number) => pad + (v / 100) * (1 - 2 * pad);
     for (const el of resolveElements(slide)) {
-      const box = { x: (el.x / 100) * W, y: (el.y / 100) * H, w: (el.w / 100) * W, h: (el.h / 100) * H };
+      const box = { x: inset(el.x) * W, y: inset(el.y) * H, w: (el.w / 100) * (1 - 2 * pad) * W, h: (el.h / 100) * (1 - 2 * pad) * H };
       if (el.type === "text") {
         const color = el.color ? el.color.replace("#", "") : tc;
         s.addText(el.text ?? "", { ...box, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
@@ -222,7 +226,9 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
         })
         .join("");
-      return `<section class="slide" style="background:${escapeAttr(bg)}">${els}</section>`;
+      const pad = slide.padding ?? 0;
+      const inner = pad ? `<div style="position:absolute;inset:${pad}%">${els}</div>` : els;
+      return `<section class="slide" style="background:${escapeAttr(bg)}">${inner}</section>`;
     })
     .join("");
 

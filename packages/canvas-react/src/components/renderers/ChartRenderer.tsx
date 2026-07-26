@@ -34,16 +34,18 @@ const sliceColor = (options: ChartData["options"], index: number) => options?.co
 const CHART_TYPES: ChartData["chart"][] = ["bar", "line", "area", "pie"];
 
 /** Mount an ECharts instance and drive it from an `option`; resizes with its box. */
-function EChart({ option, height }: { option: Record<string, unknown>; height: number }) {
+function EChart({ option, height, onInst }: { option: Record<string, unknown>; height: number; onInst?: (inst: echarts.ECharts | null) => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const instRef = useRef<echarts.ECharts | null>(null);
   useEffect(() => {
     if (!boxRef.current) return;
     const inst = echarts.init(boxRef.current, undefined, { renderer: "canvas" });
     instRef.current = inst;
+    onInst?.(inst);
     const ro = new ResizeObserver(() => inst.resize());
     ro.observe(boxRef.current);
-    return () => { ro.disconnect(); inst.dispose(); instRef.current = null; };
+    return () => { ro.disconnect(); inst.dispose(); instRef.current = null; onInst?.(null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     // `notMerge: true` so removing a series / switching type doesn't leave ghosts.
@@ -56,6 +58,16 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
   const { chart, rows, xKey, series, options, echartsOption } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [editing, setEditing] = useState(false);
+  const instRef = useRef<echarts.ECharts | null>(null);
+  const downloadPng = () => {
+    const inst = instRef.current;
+    if (!inst) return;
+    const url = inst.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" });
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(artifact.title || "chart").replace(/[^a-z0-9가-힣]+/gi, "-").replace(/^-+|-+$/g, "") || "chart"}.png`;
+    a.click();
+  };
 
   const option = useMemo(
     () => echartsOption ?? toEChartsOption(chart, rows, xKey, series, options),
@@ -66,7 +78,11 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
   if (echartsOption) {
     return (
       <div className="cv-chart">
-        <EChart option={option} height={340} />
+        <div className="cv-chart__toolbar cv-chrome">
+          <span className="cv-chart__spacer" />
+          <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
+        </div>
+        <EChart option={option} height={320} onInst={(i) => (instRef.current = i)} />
       </div>
     );
   }
@@ -117,6 +133,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
           title="Chart title"
         />
         <span className="cv-chart__spacer" />
+        <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
         <button className={`cv-edit-btn ${editing ? "is-primary" : ""}`} onClick={() => setEditing((v) => !v)}>
           {editing ? "Done" : "Edit data"}
         </button>
@@ -156,7 +173,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
         </div>
       )}
 
-      <EChart option={option} height={editing ? 260 : 340} />
+      <EChart option={option} height={editing ? 260 : 340} onInst={(i) => (instRef.current = i)} />
     </div>
   );
 }

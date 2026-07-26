@@ -172,6 +172,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
               <div className="cv-deck__thumb-slide" style={s.background ? { background: s.background } : undefined}>
+                <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s).map((el) =>
                   el.type === "text" ? (
                     <span
@@ -186,6 +187,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                     <img key={el.id} src={el.src} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
                   ),
                 )}
+                </div>
               </div>
             </button>
           </div>
@@ -228,6 +230,10 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <input type="color" value={/^#/.test(slide.background ?? "") ? slide.background : "#ffffff"} onChange={(e) => update({ background: e.target.value })} />
           </label>
           <button onClick={() => bgRef.current?.click()} title="Background image">🖼 BG</button>
+          <label className="cv-deck__pad" title="Content padding (% of slide)">
+            Pad
+            <input type="number" min={0} max={20} value={slide.padding ?? 0} onChange={(e) => update({ padding: Number(e.target.value) || undefined })} />
+          </label>
           <span className="cv-deck__spacer" />
           <button className="cv-deck__present" onClick={() => setPresenting(true)} title="Present (full screen)">▶ Present</button>
           <button onClick={() => moveSlide(-1)} title="Move up" disabled={at === 0}>▲</button>
@@ -237,7 +243,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         </div>
 
         <div className="cv-slide cv-slide--blank" style={slideStyle}>
-          <FreeSlide elements={resolveElements(slide)} onChange={(elements) => update({ elements })} />
+          <FreeSlide elements={resolveElements(slide)} onChange={(elements) => update({ elements })} padding={slide.padding} />
         </div>
 
         <div className="cv-deck__nav cv-chrome">
@@ -258,7 +264,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         <div className="cv-present" onClick={() => setIndex(Math.min(at + 1, slides.length - 1))}>
           {/* key on the slide index so each advance re-triggers the fade-in. */}
           <div key={at} className="cv-present__slide cv-present__fade cv-slide cv-slide--blank" style={slideStyle}>
-            <div className="cv-free">
+            <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide).map((el) =>
                 el.type === "text" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>

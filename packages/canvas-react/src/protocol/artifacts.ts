@@ -128,6 +128,9 @@ export interface Slide {
   textColor?: string;
   /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
   notes?: string;
+  /** Content padding as a percent of the slide width (a safe margin around the
+   *  free canvas). Applied in the editor, present view, thumbnails, and export. */
+  padding?: number;
 }
 
 export interface SlidesData {

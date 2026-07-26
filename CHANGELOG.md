@@ -4,6 +4,24 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.13] — 2026-07-26
+
+### Added
+- **Slide padding (deck).** A "Pad" field on the SlidesRenderer toolbar sets a
+  per-slide content padding (percent of the slide) that insets the free canvas —
+  applied consistently in the editor, thumbnails, present mode, PDF, and PPTX.
+- **Chart PNG export.** A "⤓ PNG" button downloads the chart as a 2× PNG
+  (`echarts.getDataURL`), available for both editable and raw-option charts.
+- **Table sort & filter.** The spreadsheet toolbar gains a "Sort…" column picker
+  (with an asc/desc toggle) and a debounced "Filter…" box that narrows rows by a
+  substring match across columns.
+
+### Fixed
+- **Shape controls are one bar.** A selected slide shape put its fill-color swatch
+  in a separate floating popover from its duplicate/reorder/delete controls; the
+  fill swatch now lives in the same control bar, so shape editing reads as one
+  cohesive toolbar.
+
 ## [0.1.12] — 2026-07-26
 
 ### Added — document & chart editing
@@ -145,6 +163,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.13]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.13
 [0.1.12]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.12
 [0.1.11]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.11
 [0.1.10]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.10

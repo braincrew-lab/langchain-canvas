@@ -22,6 +22,9 @@ export function shapeStyle(el: SlideElement): CSSProperties {
 interface FreeSlideProps {
   elements: SlideElement[];
   onChange: (elements: SlideElement[]) => void;
+  /** Content padding as a percent of the slide — insets the free canvas so
+   *  element geometry maps into a safe margin. */
+  padding?: number;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -53,7 +56,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
   return best ? { pos: pos + best.delta, guide: best.guide } : { pos, guide: null };
 }
 
-export function FreeSlide({ elements, onChange }: FreeSlideProps) {
+export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
   const slideRef = useRef<HTMLDivElement>(null);
   const [els, setEls] = useState(elements);
   const [selected, setSelected] = useState<string | null>(null);
@@ -176,6 +179,7 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
     <div
       className="cv-free"
       ref={slideRef}
+      style={padding ? { inset: `${padding}%` } : undefined}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerLeave={onUp}
@@ -247,16 +251,13 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
             </div>
           )}
 
-          {selected === el.id && el.type === "shape" && (
-            <div className={`cv-free__fmt ${el.y < 16 ? "cv-free__fmt--below" : ""}`} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <input type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} title="Fill color" />
-            </div>
-          )}
-
           {selected === el.id && (
             <>
               <span className="cv-free__resize" onPointerDown={(e) => onDown(e, el, "resize")} />
               <div className={`cv-free__ctl ${el.y < 16 ? "cv-free__ctl--below" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
+                {el.type === "shape" && (
+                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title="Fill color" />
+                )}
                 <button onClick={(e) => { e.stopPropagation(); duplicate(el); }} title="Duplicate">⧉</button>
                 <button onClick={(e) => { e.stopPropagation(); zorder(el.id, 1); }} title="Bring forward">↑</button>
                 <button onClick={(e) => { e.stopPropagation(); zorder(el.id, -1); }} title="Send back">↓</button>

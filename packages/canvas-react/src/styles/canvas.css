@@ -396,6 +396,13 @@
   border-radius: 6px; background: var(--cv-bg); color: var(--cv-text); cursor: pointer;
 }
 .cv-sheet-tools button:hover { border-color: var(--cv-accent, #6366f1); color: var(--cv-accent, #6366f1); }
+.cv-sheet-tools__sep { width: 1px; height: 18px; background: var(--cv-border); margin: 0 2px; }
+.cv-sheet-tools__sort, .cv-sheet-tools__filter {
+  font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--cv-border); background: var(--cv-bg); color: var(--cv-text);
+}
+.cv-sheet-tools__filter { min-width: 96px; max-width: 160px; }
+.cv-sheet-tools__sort:focus, .cv-sheet-tools__filter:focus { outline: none; border-color: var(--cv-accent); }
 .cv-sheet-tools__hint { margin-left: auto; font-size: 11px; color: var(--cv-muted); }
 .cv-sheet { position: relative; width: 100%; flex: 1; height: auto; min-height: 0; }
 .cv-sheet .fortune-container { height: 100% !important; width: 100% !important; }
@@ -610,6 +617,13 @@
 .cv-deck__bg input[type="color"] {
   width: 30px; height: 30px; padding: 0;
   border: 1px solid var(--cv-border); border-radius: 7px; background: none; cursor: pointer;
+}
+.cv-deck__pad {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--cv-muted);
+}
+.cv-deck__pad input {
+  width: 48px; font: inherit; font-size: 12.5px; padding: 4px 6px;
+  border: 1px solid var(--cv-border); border-radius: 6px; background: var(--cv-bg); color: var(--cv-text);
 }
 .cv-deck__present {
   width: auto !important; padding: 0 12px !important;
