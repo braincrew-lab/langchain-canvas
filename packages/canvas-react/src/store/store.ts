@@ -50,9 +50,9 @@ export interface ChatMessage {
 /** A command the editing UI forwards to the active html artifact's iframe. */
 export interface IframeCommand {
   artifactId: string;
-  /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · clear. */
+  /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · set_slide_style · clear. */
   type:
-    | "set_style" | "commit" | "clear" | "set_src"
+    | "set_style" | "commit" | "clear" | "set_src" | "set_slide_style"
     | "duplicate" | "delete" | "move_up" | "move_down" | "insert" | "insert_html"
     | "group" | "ungroup";
   /** Target element (omitted for document-level inserts with no selection). */
@@ -61,6 +61,8 @@ export interface IframeCommand {
   cids?: string[];
   prop?: string;
   value?: string;
+  /** Style map to apply to the slide root for `set_slide_style` (e.g. background, color). */
+  style?: Record<string, string>;
   /** Tag/block to insert for `insert` (e.g. "h2", "p", "button", "img", "hr", "section"). */
   block?: string;
   /** HTML fragment to insert for `insert_html` (a built-in section template). */

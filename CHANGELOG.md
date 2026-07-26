@@ -4,6 +4,20 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.9] — Unreleased
+
+### Added — slide (PPT) authoring
+- **Slide-native toolbar.** On a fixed-aspect slide the Add palette now offers only
+  slide-appropriate blocks (Heading / Text / Image), and the web section-template
+  dropdown (hero/features/CTA) is hidden — the toolbar reads as a slide editor, not
+  a web-page builder.
+- **Slide layouts.** A "Layout…" dropdown inserts 10 slide-native layouts: title,
+  section, bullets, two-column, image+text, quote, agenda, big-stat, comparison,
+  closing.
+- **Slide themes.** A "Theme…" dropdown recolors the slide in one click (Light /
+  Paper / Ink / Navy / Forest / Sunset / Brand), via a new `set_slide_style`
+  iframe command that styles the `.slide-container` root.
+
 ## [0.1.8] — 2026-07-26
 
 ### Added

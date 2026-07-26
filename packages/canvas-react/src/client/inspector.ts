@@ -540,6 +540,12 @@ const INSPECTOR_SCRIPT = `
       if (!d || d.source !== MARK) return;
       if (d.type === "clear") { clearSelected(); return; }
       if (d.type === "set_style") { var el = byCid(d.cid); if (el) el.style[d.prop] = d.value; return; }
+      if (d.type === "set_slide_style") {
+        // Theme the whole slide: apply to the .slide-container (fallback body).
+        var root = document.querySelector(".slide-container") || document.body;
+        if (root && d.style) { for (var sk in d.style) { try { root.style[sk] = d.style[sk]; } catch (_e) {} } emitDoc(); }
+        return;
+      }
       if (d.type === "set_src") { var ei = byCid(d.cid); if (ei) { ei.setAttribute("src", d.value); emitEdit(ei); } return; }
       if (d.type === "commit") { var el2 = byCid(d.cid); if (el2) emitEdit(el2); return; }
 

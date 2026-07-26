@@ -38,6 +38,12 @@ const BLOCKS = [
   { tag: "hr", label: "Divider" },
 ];
 
+// On a fixed-aspect slide, Button/Divider and the web section templates
+// (hero / features / CTA) are web-page furniture that read wrong on a deck. Keep
+// only slide-native blocks so the toolbar feels like a slide editor, not a page
+// builder.
+const SLIDE_BLOCK_TAGS = new Set(["h2", "p", "img"]);
+
 // Self-contained, responsive section templates (inline-styled so they render the
 // same wherever they're dropped; grids use auto-fit so they reflow on mobile).
 const TEMPLATES: Record<string, { label: string; html: string }> = {
@@ -67,6 +73,96 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   <a href="#" style="display:inline-block;padding:12px 24px;background:#fff;color:#4338ca;border-radius:10px;text-decoration:none;font-weight:700">Sign up</a>
 </section>`,
   },
+};
+
+// Slide-native layouts (for fixed-aspect slides). Inline-styled so they read the
+// same dropped into any slide; sized in the slide's own coordinate space.
+const SLIDE_TEMPLATES: Record<string, { label: string; html: string }> = {
+  title: {
+    label: "Title",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <h1 style="font-size:64px;font-weight:800;letter-spacing:-.02em;margin:0 0 20px;line-height:1.1">Presentation title</h1>
+  <p style="font-size:26px;opacity:.7;margin:0">Subtitle or one-line summary</p>
+</div>`,
+  },
+  section: {
+    label: "Section",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <div style="width:72px;height:6px;border-radius:3px;background:currentColor;opacity:.85;margin-bottom:28px"></div>
+  <h2 style="font-size:52px;font-weight:800;margin:0;line-height:1.1">Section title</h2>
+</div>`,
+  },
+  bullets: {
+    label: "Bullets",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <h2 style="font-size:40px;font-weight:750;margin:0 0 28px">Heading</h2>
+  <ul style="font-size:26px;line-height:1.9;margin:0;padding-left:1.1em">
+    <li>First key point</li><li>Second key point</li><li>Third key point</li>
+  </ul>
+</div>`,
+  },
+  "two-column": {
+    label: "Two column",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:56px;align-content:center;padding:0 9%">
+  <div><h3 style="font-size:28px;font-weight:700;margin:0 0 14px">Left heading</h3><p style="font-size:22px;line-height:1.6;margin:0;opacity:.85">Supporting copy for the left column.</p></div>
+  <div><h3 style="font-size:28px;font-weight:700;margin:0 0 14px">Right heading</h3><p style="font-size:22px;line-height:1.6;margin:0;opacity:.85">Supporting copy for the right column.</p></div>
+</div>`,
+  },
+  "image-text": {
+    label: "Image + text",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;padding:0 9%">
+  <img src="https://placehold.co/720x480/eef/335?text=Image" alt="image" style="width:100%;border-radius:16px;display:block" />
+  <div><h2 style="font-size:36px;font-weight:750;margin:0 0 16px">Heading</h2><p style="font-size:24px;line-height:1.65;margin:0;opacity:.85">Explain the visual in a sentence or two.</p></div>
+</div>`,
+  },
+  quote: {
+    label: "Quote",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 12%">
+  <p style="font-size:44px;font-weight:700;line-height:1.3;margin:0 0 24px">“A short, memorable quote that anchors the point.”</p>
+  <p style="font-size:22px;opacity:.65;margin:0">— Attribution</p>
+</div>`,
+  },
+  agenda: {
+    label: "Agenda",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <h2 style="font-size:40px;font-weight:750;margin:0 0 28px">Agenda</h2>
+  <ol style="font-size:25px;line-height:2;margin:0;padding-left:1.2em">
+    <li>Background &amp; goals</li><li>Approach</li><li>Results</li><li>Next steps</li>
+  </ol>
+</div>`,
+  },
+  stat: {
+    label: "Big stat",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <div style="font-size:140px;font-weight:800;letter-spacing:-.03em;line-height:1">12×</div>
+  <p style="font-size:28px;opacity:.7;margin:16px 0 0">faster than the previous approach</p>
+</div>`,
+  },
+  comparison: {
+    label: "Comparison",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:40px;align-content:center;padding:0 9%">
+  <div style="border:2px solid currentColor;opacity:.9;border-radius:16px;padding:28px"><h3 style="font-size:26px;margin:0 0 14px">Before</h3><ul style="font-size:21px;line-height:1.8;margin:0;padding-left:1.1em"><li>Point one</li><li>Point two</li></ul></div>
+  <div style="border-radius:16px;padding:28px;background:currentColor"><div style="color:#fff;mix-blend-mode:difference"><h3 style="font-size:26px;margin:0 0 14px">After</h3><ul style="font-size:21px;line-height:1.8;margin:0;padding-left:1.1em"><li>Point one</li><li>Point two</li></ul></div></div>
+</div>`,
+  },
+  closing: {
+    label: "Closing",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <h1 style="font-size:56px;font-weight:800;margin:0 0 16px">Thank you</h1>
+  <p style="font-size:24px;opacity:.7;margin:0">Questions? · contact@example.com</p>
+</div>`,
+  },
+};
+
+// One-click slide themes — background + text color applied to the slide root.
+const SLIDE_THEMES: Record<string, { label: string; style: Record<string, string> }> = {
+  light: { label: "Light", style: { background: "#ffffff", color: "#141821" } },
+  paper: { label: "Paper", style: { background: "#f7f5ef", color: "#2b2a26" } },
+  ink: { label: "Ink", style: { background: "#14161d", color: "#f0f1f5" } },
+  navy: { label: "Navy", style: { background: "#0d1b3e", color: "#eef2ff" } },
+  forest: { label: "Forest", style: { background: "#0f2a22", color: "#e6f2ec" } },
+  sunset: { label: "Sunset", style: { background: "#2a1533", color: "#ffe8d6" } },
+  brand: { label: "Brand", style: { background: "#ffffff", color: "#b01722" } },
 };
 
 const SLIDE_W = 1280;
@@ -246,26 +342,64 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
               </>
             )}
             <span className="cv-html-bar__label">Add</span>
-            {BLOCKS.map((b) => (
+            {(ratio ? BLOCKS.filter((b) => SLIDE_BLOCK_TAGS.has(b.tag)) : BLOCKS).map((b) => (
               <button key={b.tag} className="cv-html-add" onClick={() => command("insert", { block: b.tag })}>
                 {b.label}
               </button>
             ))}
-            <select
-              className="cv-html-tpl"
-              value=""
-              title="Insert a section template"
-              onChange={(e) => {
-                const t = TEMPLATES[e.target.value];
-                if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
-                e.currentTarget.value = "";
-              }}
-            >
-              <option value="">Section…</option>
-              {Object.entries(TEMPLATES).map(([k, v]) => (
-                <option key={k} value={k}>{v.label}</option>
-              ))}
-            </select>
+            {/* Web section templates (hero/features/CTA) — only for fluid web pages. */}
+            {!ratio && (
+              <select
+                className="cv-html-tpl"
+                value=""
+                title="Insert a section template"
+                onChange={(e) => {
+                  const t = TEMPLATES[e.target.value];
+                  if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                  e.currentTarget.value = "";
+                }}
+              >
+                <option value="">Section…</option>
+                {Object.entries(TEMPLATES).map(([k, v]) => (
+                  <option key={k} value={k}>{v.label}</option>
+                ))}
+              </select>
+            )}
+            {/* Slide-native layouts + one-click themes — only for fixed-aspect slides. */}
+            {ratio && (
+              <>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a slide layout"
+                  onChange={(e) => {
+                    const t = SLIDE_TEMPLATES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Layout…</option>
+                  {Object.entries(SLIDE_TEMPLATES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Apply a slide theme"
+                  onChange={(e) => {
+                    const t = SLIDE_THEMES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "set_slide_style", style: t.style });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Theme…</option>
+                  {Object.entries(SLIDE_THEMES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+              </>
+            )}
 
             {selected.length >= 1 && (
               <>
