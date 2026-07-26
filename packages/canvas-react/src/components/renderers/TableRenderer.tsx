@@ -196,7 +196,9 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // back onto the artifact so they survive re-renders and flow into exports.
   // Debounced, since Fortune fires onChange on every keystroke; writes only
   // `data.sheet` with no version bump, so the workbook is never remounted.
-  const applyEvent = useCanvasStore((s) => s.applyEvent);
+  // A user edit — routed through applyUserEvent so it lands on the undo stack and
+  // fires the host's onUserEdit write-back hook.
+  const applyEvent = useCanvasStore((s) => s.applyUserEvent);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleChange = useCallback(
     (sheets: unknown) => {

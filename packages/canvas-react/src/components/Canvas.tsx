@@ -34,24 +34,39 @@ export interface CanvasProps {
    * reveals a quick-edit bar.
    */
   onEditElement?: (instruction: string) => void;
+  /**
+   * Fired after the *user* edits an artifact directly in the canvas — a table
+   * cell, a chart value, document text, a slide/HTML element — with the
+   * reconciled artifact. Wire this to sync the edit back to the agent/backend so
+   * the next turn sees it. Fires per committed edit (table edits are debounced);
+   * debounce further on the host before hitting the network.
+   */
+  onUserEdit?: (artifact: Artifact) => void;
 }
 
-export function Canvas({ registry = builtinRenderers, emptyState, onEditElement }: CanvasProps) {
+export function Canvas({ registry = builtinRenderers, emptyState, onEditElement, onUserEdit }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
-      <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} />
+      <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} />
     </CanvasRegistryProvider>
   );
 }
 
-function CanvasPanel({ emptyState, onEditElement }: Pick<CanvasProps, "emptyState" | "onEditElement">) {
+function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps, "emptyState" | "onEditElement" | "onUserEdit">) {
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
   const selections = useCanvasStore((s) => s.selections);
   const setSelections = useCanvasStore((s) => s.setSelections);
+  const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
   const { importFiles } = useCanvasImport();
   const [dropping, setDropping] = useState(false);
+
+  // Keep the store's write-back handler in sync with the latest prop.
+  useEffect(() => {
+    setOnUserEdit(onUserEdit ?? null);
+    return () => setOnUserEdit(null);
+  }, [onUserEdit, setOnUserEdit]);
 
   // Escape clears the current selection (closes the style panel / selection bar).
   // The in-iframe highlight is dropped by HtmlRenderer once selections empties.

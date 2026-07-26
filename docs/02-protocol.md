@@ -277,6 +277,29 @@ without resending the whole page — is a planned protocol extension
 (`canvas.node_patch`); today an edit is a full `canvas.patch`/`replace` of the
 `html` string.
 
+### Write-back: syncing a user's direct edits to the agent
+
+The other client→server concern is a **direct edit**: the user changes a table
+cell, a chart value, document text, or a slide/HTML element *in the canvas*. That
+edit reconciles into the client store immediately (and lands on the undo stack),
+but the agent won't see it on the next turn unless the host sends it back.
+
+`<Canvas onUserEdit={fn} />` fires `fn(artifact)` after any such edit, with the
+reconciled artifact. Every direct edit funnels through the store's
+`applyUserEvent`, so one hook covers all renderers; agent-driven updates
+(`applyEvent`/`applyEvents`) never fire it. Wire it to persist the edit — the
+mechanism depends on your backend:
+
+- **LangGraph Platform (SDK `Client`)** — patch thread state so the next run reads
+  it: `client.threads.updateState(threadId, { values: { … }, asNode: "__input__" })`
+  (requires a checkpointer and an artifacts field in your graph state).
+- **Custom backend** — `PUT` the artifact to your own endpoint, or attach it to the
+  next turn's message (re-serialized as its `{type,data}` or an `ArtifactContext`
+  tag), so the agent's next input reflects the edit.
+
+Fires per committed edit (table edits are debounced ~400ms); **debounce again on
+the host** before hitting the network.
+
 ## Versioning
 
 Version history is **client-owned** and derived from the stream; it is never

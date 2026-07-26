@@ -4,6 +4,22 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.8] — 2026-07-26
+
+### Added
+- **`onUserEdit` write-back hook.** `<Canvas onUserEdit={fn} />` fires `fn(artifact)`
+  after the user edits an artifact directly in the canvas — a table cell, a chart
+  value, document text, a slide/HTML element — with the reconciled artifact. Every
+  direct edit funnels through the store's `applyUserEvent`, so one hook covers all
+  renderers; agent-driven updates never fire it. Lets a host sync in-canvas edits
+  back to the agent/backend so the next turn sees them. Also exposed on the store
+  as `setOnUserEdit` and the `UserEditHandler` type.
+
+### Fixed
+- **Table edits now land on the undo stack** and fire `onUserEdit` — `TableRenderer`
+  routed cell edits through `applyEvent` (no undo, no write-back) instead of
+  `applyUserEvent`.
+
 ## [0.1.7] — 2026-07-23
 
 ### Fixed
@@ -55,6 +71,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.8]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.8
 [0.1.7]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.7
 [0.1.6]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.6
 [0.1.5]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.5
