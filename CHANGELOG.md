@@ -25,6 +25,20 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - **Text controls on selection.** Align left / center / right and Bold a selected
   text element (a new persisting `style_persist` iframe command).
 
+### Added — SlidesRenderer (native `type: "slides"` deck)
+- **Shapes.** A "+ Shape" control drops a rectangle, ellipse, or line onto the
+  slide; shapes drag/resize/duplicate/reorder like any element, take a fill color,
+  and render in the editor, thumbnails, present mode, PDF, and PPTX (via
+  `addShape`). New `SlideElement` fields `shape` and `fill`.
+- **Quick layouts.** A "Layout…" dropdown replaces the current slide's elements
+  with a structured layout (title / section / bullets / two-column / quote).
+- **More themes.** Theme presets expanded to 8 (added Paper, Navy, Forest).
+- **Background image.** A "🖼 BG" button sets a cover-fit image as the slide
+  background (PPTX skips non-solid backgrounds rather than corrupting the fill).
+- **Present mode polish.** Slides fade in as you advance (respecting
+  `prefers-reduced-motion`), and speaker notes show below the slide for the
+  presenter.
+
 ### Fixed — slide export fidelity
 - **Accurate HTML/PDF export for slides.** An html-substrate slide previously
   printed onto a default A4-portrait page and got clipped. `htmlSlideToPrintHtml`

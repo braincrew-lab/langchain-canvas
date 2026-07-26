@@ -165,7 +165,9 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
   const H = 5.625;
   for (const slide of data.slides) {
     const s = pptx.addSlide();
-    if (slide.background) s.background = { color: slide.background.replace("#", "") };
+    // Only a solid hex background maps to a pptx slide fill; url()/gradient
+    // backgrounds (e.g. an uploaded image) are skipped rather than corrupting it.
+    if (slide.background && /^#[0-9a-f]{3,8}$/i.test(slide.background)) s.background = { color: slide.background.replace("#", "") };
     const tc = slide.textColor ? slide.textColor.replace("#", "") : undefined;
 
     for (const el of resolveElements(slide)) {
@@ -173,6 +175,13 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
       if (el.type === "text") {
         const color = el.color ? el.color.replace("#", "") : tc;
         s.addText(el.text ?? "", { ...box, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
+      } else if (el.type === "shape") {
+        const fill = (el.fill ?? "#5b5bd6").replace("#", "");
+        if (el.shape === "line") {
+          s.addShape(pptx.ShapeType.line, { ...box, line: { color: fill, width: 2 } });
+        } else {
+          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, fill: { color: fill } });
+        }
       } else if (el.src) {
         s.addImage({ data: el.src, ...box, sizing: { type: "contain", w: box.w, h: box.h } });
       }
@@ -201,8 +210,13 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           if (el.type === "text") {
             // box is numeric; color/align are escaped individually — the composed
             // style string is then safe to place in the attribute as-is.
-            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")}`;
+            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")};white-space:pre-wrap`;
             return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
+          }
+          if (el.type === "shape") {
+            const fill = escapeAttr(el.fill ?? fg);
+            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
+            return `<div class="el" style="${box};background:${fill};border-radius:${radius}"></div>`;
           }
           const src = safeSrc(el.src);
           return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";

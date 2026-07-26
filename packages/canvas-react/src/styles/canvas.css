@@ -617,6 +617,16 @@
 .cv-present__slide .cv-slide__subtitle { font-size: clamp(16px, 2.6vw, 30px); }
 .cv-present__slide .cv-slide__bullets li { font-size: clamp(16px, 2.4vw, 30px); }
 .cv-present__hint { color: #9aa4b2; font-size: 13px; }
+/* Fade each slide in as the presenter advances. */
+.cv-present__fade { animation: cv-present-fade 0.32s ease; }
+@keyframes cv-present-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .cv-present__fade { animation: none; } }
+/* Speaker notes shown to the presenter, below the slide. */
+.cv-present__notes {
+  max-width: min(92vw, 1280px); color: #cdd3de; font-size: 15px; line-height: 1.5;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px; padding: 12px 16px; cursor: default; white-space: pre-wrap;
+}
 
 /* in-place editing cues */
 .cv-word .cv-doc { cursor: text; }

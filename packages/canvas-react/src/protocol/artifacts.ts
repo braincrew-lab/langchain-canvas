@@ -91,7 +91,7 @@ export interface TableData {
 /** A freely-positioned element on a "blank" slide (percent geometry, 0–100). */
 export interface SlideElement {
   id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "shape";
   x: number;
   y: number;
   w: number;
@@ -102,6 +102,10 @@ export interface SlideElement {
   bold?: boolean;
   color?: string;
   align?: "left" | "center" | "right";
+  /** Shape kind for `type: "shape"`. */
+  shape?: "rect" | "ellipse" | "line";
+  /** Fill (rect/ellipse) or stroke (line) color for a shape. */
+  fill?: string;
 }
 
 export interface Slide {

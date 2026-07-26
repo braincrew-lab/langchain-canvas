@@ -6,9 +6,18 @@
  * resolution-independent and exports cleanly to .pptx.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { SlideElement } from "../../protocol/artifacts";
+
+/** CSS for a shape element's body — shared by the editor, thumbnails, present, and
+ *  export so a rectangle/ellipse/line looks the same everywhere. */
+export function shapeStyle(el: SlideElement): CSSProperties {
+  const fill = el.fill ?? "currentColor";
+  if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
+  if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
+  return { width: "100%", height: "100%", background: fill, borderRadius: 8 };
+}
 
 interface FreeSlideProps {
   elements: SlideElement[];
@@ -212,6 +221,8 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
             >
               {el.text}
             </div>
+          ) : el.type === "shape" ? (
+            <div style={shapeStyle(el)} />
           ) : (
             <img className="cv-free__img" src={el.src} alt="" draggable={false} />
           )}
@@ -233,6 +244,12 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
               <button onClick={() => updateEl(el.id, { align: "left" })} title="Align left">⟸</button>
               <button onClick={() => updateEl(el.id, { align: "center" })} title="Align center">≡</button>
               <button onClick={() => updateEl(el.id, { align: "right" })} title="Align right">⟹</button>
+            </div>
+          )}
+
+          {selected === el.id && el.type === "shape" && (
+            <div className={`cv-free__fmt ${el.y < 16 ? "cv-free__fmt--below" : ""}`} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <input type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} title="Fill color" />
             </div>
           )}
 
