@@ -4,6 +4,17 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.11] — 2026-07-26
+
+### Added — web (HTML) authoring usability
+- **Full-page starters.** A "Page…" menu drops a complete page (Landing / SaaS /
+  Portfolio) composed from the section templates — undoable, so it's safe to try.
+- **Page outline.** An "Outline…" menu lists the page's headings and jumps the
+  preview to any of them (new `scroll_to` iframe command).
+- **Accessibility check.** A "♿ Check" button scans the page for missing alt text,
+  unlabeled links/buttons/form fields, a missing `<html lang>`, and a missing
+  `<h1>`, and lists what it finds.
+
 ## [0.1.10] — 2026-07-26
 
 ### Added — web (HTML) authoring usability
@@ -125,6 +136,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.11]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.11
 [0.1.10]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.10
 [0.1.9]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.9
 [0.1.8]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.8

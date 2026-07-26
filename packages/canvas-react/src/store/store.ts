@@ -52,7 +52,7 @@ export interface IframeCommand {
   artifactId: string;
   /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · set_slide_style · clear. */
   type:
-    | "set_style" | "style_persist" | "commit" | "clear" | "set_src" | "set_slide_style"
+    | "set_style" | "style_persist" | "commit" | "clear" | "set_src" | "set_slide_style" | "scroll_to"
     | "duplicate" | "delete" | "move_up" | "move_down" | "insert" | "insert_html"
     | "group" | "ungroup";
   /** Target element (omitted for document-level inserts with no selection). */
@@ -63,6 +63,8 @@ export interface IframeCommand {
   value?: string;
   /** Style map to apply to the slide root for `set_slide_style` (e.g. background, color). */
   style?: Record<string, string>;
+  /** Heading index to scroll into view for `scroll_to`. */
+  index?: number;
   /** Tag/block to insert for `insert` (e.g. "h2", "p", "button", "img", "hr", "section"). */
   block?: string;
   /** HTML fragment to insert for `insert_html` (a built-in section template). */

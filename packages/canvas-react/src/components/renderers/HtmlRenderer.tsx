@@ -156,6 +156,17 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   },
 };
 
+// Full-page starters — a whole document composed from the section templates, so
+// a blank web artifact can jump to a real page in one click.
+function pageDoc(title: string, sections: string[]): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:'Segoe UI',system-ui,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;background:#0b1020;color:#e6e8ef">${sections.join("\n")}</body></html>`;
+}
+const STARTERS: Record<string, { label: string; build: () => string }> = {
+  landing: { label: "Landing page", build: () => pageDoc("Landing", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.features.html, TEMPLATES.pricing.html, TEMPLATES.cta.html, TEMPLATES.footer.html]) },
+  saas: { label: "SaaS", build: () => pageDoc("SaaS", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.stats.html, TEMPLATES.features.html, TEMPLATES.testimonial.html, TEMPLATES.faq.html, TEMPLATES.cta.html, TEMPLATES.footer.html]) },
+  portfolio: { label: "Portfolio", build: () => pageDoc("Portfolio", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.gallery.html, TEMPLATES.contact.html, TEMPLATES.footer.html]) },
+};
+
 // Slide-native layouts (for fixed-aspect slides). Inline-styled so they read the
 // same dropped into any slide; sized in the slide's own coordinate space.
 const SLIDE_TEMPLATES: Record<string, { label: string; html: string }> = {
@@ -264,6 +275,32 @@ const SLIDE_FONTS: Record<string, { label: string; stack: string }> = {
   condensed: { label: "Condensed", stack: "'Arial Narrow', 'Helvetica Neue', 'Apple SD Gothic Neo', sans-serif" },
 };
 
+/** Quick, dependency-free accessibility scan of a page's HTML. Returns a list of
+ *  human-readable issues (empty = clean). Parsed in the host, not the iframe. */
+function checkA11y(html: string): string[] {
+  if (typeof DOMParser === "undefined") return [];
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const issues: string[] = [];
+  const count = (sel: string, keep: (el: Element) => boolean) =>
+    Array.from(doc.querySelectorAll(sel)).filter(keep).length;
+
+  const imgs = count("img", (el) => !el.getAttribute("alt"));
+  if (imgs) issues.push(`${imgs} image${imgs > 1 ? "s" : ""} missing alt text`);
+  const links = count("a", (el) => !el.textContent?.trim() && !el.getAttribute("aria-label"));
+  if (links) issues.push(`${links} link${links > 1 ? "s" : ""} with no text or aria-label`);
+  const btns = count("button", (el) => !el.textContent?.trim() && !el.getAttribute("aria-label"));
+  if (btns) issues.push(`${btns} button${btns > 1 ? "s" : ""} with no accessible label`);
+  const fields = count("input, textarea, select", (el) => {
+    const id = el.getAttribute("id");
+    const labelled = id && doc.querySelector(`label[for="${CSS.escape(id)}"]`);
+    return !labelled && !el.getAttribute("aria-label") && !el.getAttribute("placeholder");
+  });
+  if (fields) issues.push(`${fields} form field${fields > 1 ? "s" : ""} with no label`);
+  if (!doc.documentElement.getAttribute("lang")) issues.push("Missing a <html lang> attribute");
+  if (!doc.querySelector("h1")) issues.push("No <h1> — every page needs one top-level heading");
+  return issues;
+}
+
 const SLIDE_W = 1280;
 
 // Force a web artifact's document to scroll even when its own CSS says
@@ -317,6 +354,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeCommand = useCanvasStore((s) => s.iframeCommand);
   const [device, setDevice] = useState<(typeof DEVICES)[number]["id"]>("desktop");
   const [mode, setMode] = useState<"design" | "code">("design");
+  const [a11y, setA11y] = useState<string[] | null>(null);
 
   // A single-node edit made *inside* the iframe is already reflected there, so we
   // keep the same srcDoc (no reload/flicker). Only tree-changing edits (structural
@@ -344,6 +382,16 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   }, [artifact.data.html, mode, isFixedSlide]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
+
+  // Page outline — headings parsed from the source, for jump-to navigation.
+  const outline = useMemo(() => {
+    if (typeof DOMParser === "undefined") return [] as { level: number; text: string }[];
+    const doc = new DOMParser().parseFromString(artifact.data.html, "text/html");
+    return Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6")).map((h) => ({
+      level: Number(h.tagName[1]),
+      text: (h.textContent ?? "").trim().slice(0, 48) || "(untitled)",
+    }));
+  }, [artifact.data.html]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -465,23 +513,58 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 {b.label}
               </button>
             ))}
-            {/* Web section templates (hero/features/CTA) — only for fluid web pages. */}
+            {/* Web section templates + full-page starters — only for fluid web pages. */}
             {!ratio && (
-              <select
-                className="cv-html-tpl"
-                value=""
-                title="Insert a section template"
-                onChange={(e) => {
-                  const t = TEMPLATES[e.target.value];
-                  if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
-                  e.currentTarget.value = "";
-                }}
-              >
-                <option value="">Section…</option>
-                {Object.entries(TEMPLATES).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label}</option>
-                ))}
-              </select>
+              <>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Start from a full page template (replaces the page)"
+                  onChange={(e) => {
+                    const s = STARTERS[e.target.value];
+                    if (s) applyEvent({ type: "canvas.patch", id: artifact.id, patch: { html: s.build() } });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Page…</option>
+                  {Object.entries(STARTERS).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a section template"
+                  onChange={(e) => {
+                    const t = TEMPLATES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Section…</option>
+                  {Object.entries(TEMPLATES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                {outline.length > 0 && (
+                  <select
+                    className="cv-html-tpl"
+                    value=""
+                    title="Jump to a heading"
+                    onChange={(e) => {
+                      const idx = Number(e.target.value);
+                      if (!Number.isNaN(idx)) sendIframeCommand({ artifactId: artifact.id, type: "scroll_to", index: idx });
+                      e.currentTarget.value = "";
+                    }}
+                  >
+                    <option value="">Outline…</option>
+                    {outline.map((h, i) => (
+                      <option key={i} value={i}>{" ".repeat((h.level - 1) * 2) + h.text}</option>
+                    ))}
+                  </select>
+                )}
+                <button className="cv-html-add" title="Accessibility check" onClick={() => setA11y(checkA11y(artifact.data.html))}>♿ Check</button>
+              </>
             )}
             {/* Slide-native layouts + one-click themes — only for fixed-aspect slides. */}
             {ratio && (
@@ -607,6 +690,20 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
           <button className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>Code</button>
         </div>
       </div>
+
+      {a11y !== null && (
+        <div className="cv-a11y" role="status">
+          <button className="cv-a11y__close" onClick={() => setA11y(null)} aria-label="Dismiss">×</button>
+          {a11y.length === 0 ? (
+            <span className="cv-a11y__ok">♿ No accessibility issues found</span>
+          ) : (
+            <>
+              <b>♿ {a11y.length} accessibility issue{a11y.length > 1 ? "s" : ""}</b>
+              <ul>{a11y.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            </>
+          )}
+        </div>
+      )}
 
       {mode === "design" ? (
         <div className={`cv-html-stage${ratio ? " cv-html-stage--slide" : ""}`} ref={stageRef}>

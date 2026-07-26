@@ -539,6 +539,11 @@ const INSPECTOR_SCRIPT = `
       var d = e.data;
       if (!d || d.source !== MARK) return;
       if (d.type === "clear") { clearSelected(); return; }
+      if (d.type === "scroll_to") {
+        var hs = document.querySelectorAll("h1,h2,h3,h4,h5,h6");
+        if (hs[d.index]) hs[d.index].scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
       if (d.type === "set_style") { var el = byCid(d.cid); if (el) el.style[d.prop] = d.value; return; }
       if (d.type === "style_persist") { var elp = byCid(d.cid); if (elp) { elp.style[d.prop] = d.value; emitEdit(elp); } return; }
       if (d.type === "set_slide_style") {
