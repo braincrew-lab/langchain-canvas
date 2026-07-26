@@ -4,7 +4,7 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.1.9] — Unreleased
+## [0.1.9] — 2026-07-26
 
 ### Added — slide (PPT) authoring
 - **Slide-native toolbar.** On a fixed-aspect slide the Add palette now offers only
