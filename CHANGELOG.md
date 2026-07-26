@@ -4,6 +4,15 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.14] — 2026-07-26
+
+### Changed
+- **Polished, consistent toolbar buttons.** Every renderer's controls now share one
+  button language — a consistent 8px radius, a hairline of depth, a soft hover
+  lift, a tactile press, and a visible focus ring; segmented controls (Design/Code,
+  device preview) and primary actions (Present) get a subtle accent gloss. Works in
+  both light and dark themes.
+
 ## [0.1.13] — 2026-07-26
 
 ### Added
@@ -163,6 +172,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.14]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.14
 [0.1.13]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.13
 [0.1.12]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.12
 [0.1.11]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.11

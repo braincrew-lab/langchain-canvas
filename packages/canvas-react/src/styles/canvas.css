@@ -840,6 +840,49 @@
 .cv-html-act:hover { background: var(--cv-surface); }
 .cv-html-act--del:hover { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
 .cv-html-bar__spacer { flex: 1; }
+
+/* ── Unified, polished toolbar controls ─────────────────────────────────────────
+   One button language across every renderer: a consistent 8px radius, a hairline
+   of depth, a soft hover lift, a tactile press, and a real focus ring. */
+.cv-html-add, .cv-html-tpl, .cv-html-act, .cv-deck__toolbar button, .cv-edit-btn,
+.cv-sheet-tools button, .cv-doc-bar button {
+  border-radius: 8px;
+  font-weight: 500;
+  box-shadow: 0 1px 0 rgba(17, 17, 26, 0.02);
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease, transform 0.06s ease;
+}
+.cv-html-add:hover, .cv-html-tpl:hover, .cv-html-act:hover,
+.cv-deck__toolbar button:hover:not(:disabled), .cv-edit-btn:hover,
+.cv-sheet-tools button:hover, .cv-doc-bar button:hover {
+  background: var(--cv-surface);
+  border-color: color-mix(in srgb, var(--cv-text) 22%, var(--cv-border));
+  color: var(--cv-text);
+  box-shadow: 0 1px 3px rgba(17, 17, 26, 0.07);
+}
+.cv-html-add:active, .cv-html-tpl:active, .cv-html-act:active,
+.cv-deck__toolbar button:active, .cv-edit-btn:active,
+.cv-sheet-tools button:active, .cv-doc-bar button:active { transform: translateY(0.5px); }
+.cv-html-add:focus-visible, .cv-html-tpl:focus-visible, .cv-html-act:focus-visible,
+.cv-deck__toolbar button:focus-visible, .cv-edit-btn:focus-visible,
+.cv-sheet-tools button:focus-visible, .cv-doc-bar button:focus-visible,
+.cv-html-seg button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cv-accent) 48%, transparent);
+  outline-offset: 1px;
+}
+/* Segmented controls (Design/Code · device preview) */
+.cv-html-seg { border-radius: 8px; box-shadow: 0 1px 0 rgba(17, 17, 26, 0.02); }
+.cv-html-seg button { font-weight: 500; transition: background 0.14s ease, color 0.14s ease; }
+.cv-html-seg button:hover:not(.is-on) { background: var(--cv-surface); }
+.cv-html-seg button.is-on { box-shadow: inset 0 -1.5px 0 color-mix(in srgb, #000 16%, var(--cv-accent)); }
+/* Primary actions (Present · chart done) get a little lift and gloss */
+.cv-edit-btn.is-primary, .cv-deck__present {
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.cv-edit-btn.is-primary:hover, .cv-deck__present:hover {
+  background: color-mix(in srgb, #000 8%, var(--cv-accent)) !important;
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
 .cv-html-stage {
   flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center;
   padding: 10px; background: var(--cv-surface); border-radius: 10px;
