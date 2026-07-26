@@ -4,6 +4,15 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.12] — 2026-07-26
+
+### Added — document & chart editing
+- **Document formatting toolbar.** Editing a document now shows a toolbar to bold,
+  italicize, inline-code, add H1/H2, bullet/numbered lists, quotes, and links —
+  wrapping the selection in Markdown — plus a live **word count and read-time**.
+- **Chart title.** Charts take an optional title, shown above the plot and set from
+  a "Chart title…" field in the toolbar (new `ChartOptions.title`).
+
 ## [0.1.11] — 2026-07-26
 
 ### Added — web (HTML) authoring usability
@@ -136,6 +145,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.12]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.12
 [0.1.11]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.11
 [0.1.10]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.10
 [0.1.9]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.9

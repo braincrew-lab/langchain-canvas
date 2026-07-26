@@ -50,6 +50,8 @@ export interface ChartSeries {
 export interface ChartOptions {
   stacked?: boolean;
   yLabel?: string;
+  /** Chart title shown above the plot. */
+  title?: string;
   /** Per-slice colors for pie charts, index-aligned to `rows`. */
   colors?: string[];
 }

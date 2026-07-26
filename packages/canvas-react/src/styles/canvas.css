@@ -295,6 +295,21 @@
 
 /* --- Word viewer (document page) ---------------------------------------------- */
 
+.cv-doc-bar {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px;
+  max-width: 816px; margin: 0 auto 12px; padding: 6px 8px;
+  border: 1px solid var(--cv-border); border-radius: 10px; background: var(--cv-surface);
+  flex-wrap: wrap;
+}
+.cv-doc-bar button {
+  border: 0; background: transparent; color: var(--cv-text); font: inherit; font-size: 13px;
+  min-width: 28px; height: 28px; padding: 0 8px; border-radius: 6px; cursor: pointer;
+}
+.cv-doc-bar button:hover { background: var(--cv-surface-2, rgba(120,120,140,0.12)); }
+.cv-doc-bar__sep { width: 1px; height: 18px; background: var(--cv-border); margin: 0 4px; }
+.cv-doc-bar__spacer { flex: 1; }
+.cv-doc-bar__count { font-size: 12px; color: var(--cv-muted); white-space: nowrap; }
+.cv-doc-bar__done { background: var(--cv-accent) !important; color: #fff; font-weight: 600; }
 .cv-word { background: #edeef1; padding: 28px 16px; min-height: 100%; }
 .cv-word .cv-edit-toolbar { max-width: 816px; margin: 0 auto 12px; }
 .cv-word__page {
@@ -690,6 +705,12 @@
 .cv-chart__types .cv-edit-btn { text-transform: capitalize; }
 .cv-chart__stack { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--cv-muted); cursor: pointer; }
 .cv-chart__spacer { flex: 1; }
+.cv-chart__title-input {
+  font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 7px;
+  border: 1px solid var(--cv-border); background: var(--cv-bg); color: var(--cv-text);
+  min-width: 120px; max-width: 220px;
+}
+.cv-chart__title-input:focus { outline: none; border-color: var(--cv-accent); }
 
 /* --- chart editor ------------------------------------------------------------- */
 .cv-chart__editor {

@@ -109,6 +109,13 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
             Stacked
           </label>
         )}
+        <input
+          className="cv-chart__title-input"
+          value={options?.title ?? ""}
+          placeholder="Chart title…"
+          onChange={(e) => patch({ options: { ...options, title: e.target.value || undefined } })}
+          title="Chart title"
+        />
         <span className="cv-chart__spacer" />
         <button className={`cv-edit-btn ${editing ? "is-primary" : ""}`} onClick={() => setEditing((v) => !v)}>
           {editing ? "Done" : "Edit data"}
@@ -222,9 +229,14 @@ function toEChartsOption(
   options: ChartData["options"],
 ): Record<string, unknown> {
   const AXIS = "#9aa4b2"; // muted axis/label ink that reads on light or dark
+  const titleBlock = options?.title
+    ? { title: { text: options.title, left: "center", top: 2, textStyle: { color: AXIS, fontSize: 15, fontWeight: 600 } } }
+    : {};
+  const hasTitle = !!options?.title;
   if (chart === "pie") {
     const valueKey = series[0]?.key ?? "value";
     return {
+      ...titleBlock,
       tooltip: { trigger: "item" },
       legend: { bottom: 0, textStyle: { color: AXIS } },
       series: [
@@ -246,9 +258,10 @@ function toEChartsOption(
 
   const stacked = (chart === "bar" || chart === "area") && !!options?.stacked;
   return {
+    ...titleBlock,
     tooltip: { trigger: "axis" },
     legend: { bottom: 0, textStyle: { color: AXIS } },
-    grid: { left: 8, right: 16, top: 24, bottom: 40, containLabel: true },
+    grid: { left: 8, right: 16, top: hasTitle ? 44 : 24, bottom: 40, containLabel: true },
     xAxis: {
       type: "category",
       data: rows.map((r) => String(r[xKey] ?? "")),
