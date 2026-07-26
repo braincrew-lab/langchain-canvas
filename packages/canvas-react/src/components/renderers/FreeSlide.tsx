@@ -6,13 +6,25 @@
  * resolution-independent and exports cleanly to .pptx.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { SlideElement } from "../../protocol/artifacts";
+
+/** CSS for a shape element's body — shared by the editor, thumbnails, present, and
+ *  export so a rectangle/ellipse/line looks the same everywhere. */
+export function shapeStyle(el: SlideElement): CSSProperties {
+  const fill = el.fill ?? "currentColor";
+  if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
+  if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
+  return { width: "100%", height: "100%", background: fill, borderRadius: 8 };
+}
 
 interface FreeSlideProps {
   elements: SlideElement[];
   onChange: (elements: SlideElement[]) => void;
+  /** Content padding as a percent of the slide — insets the free canvas so
+   *  element geometry maps into a safe margin. */
+  padding?: number;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -44,7 +56,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
   return best ? { pos: pos + best.delta, guide: best.guide } : { pos, guide: null };
 }
 
-export function FreeSlide({ elements, onChange }: FreeSlideProps) {
+export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
   const slideRef = useRef<HTMLDivElement>(null);
   const [els, setEls] = useState(elements);
   const [selected, setSelected] = useState<string | null>(null);
@@ -167,6 +179,7 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
     <div
       className="cv-free"
       ref={slideRef}
+      style={padding ? { inset: `${padding}%` } : undefined}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerLeave={onUp}
@@ -212,6 +225,8 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
             >
               {el.text}
             </div>
+          ) : el.type === "shape" ? (
+            <div style={shapeStyle(el)} />
           ) : (
             <img className="cv-free__img" src={el.src} alt="" draggable={false} />
           )}
@@ -240,6 +255,9 @@ export function FreeSlide({ elements, onChange }: FreeSlideProps) {
             <>
               <span className="cv-free__resize" onPointerDown={(e) => onDown(e, el, "resize")} />
               <div className={`cv-free__ctl ${el.y < 16 ? "cv-free__ctl--below" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
+                {el.type === "shape" && (
+                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title="Fill color" />
+                )}
                 <button onClick={(e) => { e.stopPropagation(); duplicate(el); }} title="Duplicate">⧉</button>
                 <button onClick={(e) => { e.stopPropagation(); zorder(el.id, 1); }} title="Bring forward">↑</button>
                 <button onClick={(e) => { e.stopPropagation(); zorder(el.id, -1); }} title="Send back">↓</button>

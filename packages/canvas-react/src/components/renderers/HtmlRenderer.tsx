@@ -38,6 +38,12 @@ const BLOCKS = [
   { tag: "hr", label: "Divider" },
 ];
 
+// On a fixed-aspect slide, Button/Divider and the web section templates
+// (hero / features / CTA) are web-page furniture that read wrong on a deck. Keep
+// only slide-native blocks so the toolbar feels like a slide editor, not a page
+// builder.
+const SLIDE_BLOCK_TAGS = new Set(["h2", "p", "img"]);
+
 // Self-contained, responsive section templates (inline-styled so they render the
 // same wherever they're dropped; grids use auto-fit so they reflow on mobile).
 const TEMPLATES: Record<string, { label: string; html: string }> = {
@@ -67,9 +73,245 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   <a href="#" style="display:inline-block;padding:12px 24px;background:#fff;color:#4338ca;border-radius:10px;text-decoration:none;font-weight:700">Sign up</a>
 </section>`,
   },
+  navbar: {
+    label: "Nav bar",
+    html: `<nav style="display:flex;align-items:center;justify-content:space-between;padding:18px 32px;background:#0b1020;color:#e6e8ef;border-bottom:1px solid #232a44">
+  <strong style="font-size:18px;letter-spacing:-.01em">Brand</strong>
+  <div style="display:flex;gap:26px;align-items:center;font-size:15px">
+    <a href="#" style="color:#c7cddb;text-decoration:none">Product</a>
+    <a href="#" style="color:#c7cddb;text-decoration:none">Pricing</a>
+    <a href="#" style="color:#c7cddb;text-decoration:none">Docs</a>
+    <a href="#" style="padding:9px 18px;background:#6366f1;color:#fff;border-radius:9px;text-decoration:none;font-weight:600">Sign in</a>
+  </div>
+</nav>`,
+  },
+  pricing: {
+    label: "Pricing",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:960px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px">
+    <div style="background:#151a2e;border:1px solid #232a44;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Starter</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$0<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#9aa4b2;line-height:1.9"><li>1 project</li><li>Community support</li></ul></div>
+    <div style="background:#1b2140;border:1px solid #3a44f1;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Pro</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$29<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#c7cddb;line-height:1.9"><li>Unlimited projects</li><li>Priority support</li></ul></div>
+    <div style="background:#151a2e;border:1px solid #232a44;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Team</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$99<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#9aa4b2;line-height:1.9"><li>SSO &amp; roles</li><li>SLA</li></ul></div>
+  </div>
+</section>`,
+  },
+  stats: {
+    label: "Stats",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:900px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:24px;text-align:center">
+    <div><div style="font-size:44px;font-weight:800">12k+</div><div style="color:#9aa4b2">Customers</div></div>
+    <div><div style="font-size:44px;font-weight:800">99.9%</div><div style="color:#9aa4b2">Uptime</div></div>
+    <div><div style="font-size:44px;font-weight:800">4.9/5</div><div style="color:#9aa4b2">Rating</div></div>
+  </div>
+</section>`,
+  },
+  testimonial: {
+    label: "Testimonial",
+    html: `<section style="padding:64px 24px;background:#151a2e;color:#e6e8ef;text-align:center">
+  <p style="max-width:640px;margin:0 auto 20px;font-size:24px;line-height:1.5;font-weight:600">“This is the tool our team didn't know it was missing. Shipped a landing page in an afternoon.”</p>
+  <p style="margin:0;color:#9aa4b2">Jordan Lee · Head of Product, Acme</p>
+</section>`,
+  },
+  faq: {
+    label: "FAQ",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:720px;margin:0 auto">
+    <h2 style="margin:0 0 24px;font-size:26px">Frequently asked</h2>
+    <div style="border-top:1px solid #232a44;padding:18px 0"><h4 style="margin:0 0 6px">Is there a free plan?</h4><p style="margin:0;color:#9aa4b2">Yes — the Starter plan is free forever.</p></div>
+    <div style="border-top:1px solid #232a44;padding:18px 0"><h4 style="margin:0 0 6px">Can I cancel anytime?</h4><p style="margin:0;color:#9aa4b2">Absolutely, no questions asked.</p></div>
+  </div>
+</section>`,
+  },
+  gallery: {
+    label: "Gallery",
+    html: `<section style="padding:40px 24px;background:#0b1020">
+  <div style="max-width:960px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=1" alt="" style="width:100%;border-radius:12px;display:block" />
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=2" alt="" style="width:100%;border-radius:12px;display:block" />
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=3" alt="" style="width:100%;border-radius:12px;display:block" />
+  </div>
+</section>`,
+  },
+  contact: {
+    label: "Contact form",
+    html: `<section style="padding:56px 24px;background:#151a2e;color:#e6e8ef">
+  <form style="max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:12px">
+    <h2 style="margin:0 0 6px;font-size:24px">Get in touch</h2>
+    <input placeholder="Your name" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef" />
+    <input placeholder="Email" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef" />
+    <textarea placeholder="Message" rows="4" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef"></textarea>
+    <button style="padding:12px;background:#6366f1;color:#fff;border:0;border-radius:10px;font-weight:700;cursor:pointer">Send</button>
+  </form>
+</section>`,
+  },
+  footer: {
+    label: "Footer",
+    html: `<footer style="padding:40px 32px;background:#080b16;color:#9aa4b2;display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;border-top:1px solid #232a44">
+  <div><strong style="color:#e6e8ef;font-size:16px">Brand</strong><p style="margin:8px 0 0;max-width:260px;font-size:14px">Build faster with confidence.</p></div>
+  <div style="display:flex;gap:48px;font-size:14px">
+    <div style="display:flex;flex-direction:column;gap:8px"><a href="#" style="color:#9aa4b2;text-decoration:none">Product</a><a href="#" style="color:#9aa4b2;text-decoration:none">Pricing</a></div>
+    <div style="display:flex;flex-direction:column;gap:8px"><a href="#" style="color:#9aa4b2;text-decoration:none">About</a><a href="#" style="color:#9aa4b2;text-decoration:none">Contact</a></div>
+  </div>
+</footer>`,
+  },
 };
 
+// Full-page starters — a whole document composed from the section templates, so
+// a blank web artifact can jump to a real page in one click.
+function pageDoc(title: string, sections: string[]): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="margin:0;font-family:'Segoe UI',system-ui,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;background:#0b1020;color:#e6e8ef">${sections.join("\n")}</body></html>`;
+}
+const STARTERS: Record<string, { label: string; build: () => string }> = {
+  landing: { label: "Landing page", build: () => pageDoc("Landing", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.features.html, TEMPLATES.pricing.html, TEMPLATES.cta.html, TEMPLATES.footer.html]) },
+  saas: { label: "SaaS", build: () => pageDoc("SaaS", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.stats.html, TEMPLATES.features.html, TEMPLATES.testimonial.html, TEMPLATES.faq.html, TEMPLATES.cta.html, TEMPLATES.footer.html]) },
+  portfolio: { label: "Portfolio", build: () => pageDoc("Portfolio", [TEMPLATES.navbar.html, TEMPLATES.hero.html, TEMPLATES.gallery.html, TEMPLATES.contact.html, TEMPLATES.footer.html]) },
+};
+
+// Slide-native layouts (for fixed-aspect slides). Inline-styled so they read the
+// same dropped into any slide; sized in the slide's own coordinate space.
+const SLIDE_TEMPLATES: Record<string, { label: string; html: string }> = {
+  title: {
+    label: "Title",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <h1 style="font-size:64px;font-weight:800;letter-spacing:-.02em;margin:0 0 20px;line-height:1.1">Presentation title</h1>
+  <p style="font-size:26px;opacity:.7;margin:0">Subtitle or one-line summary</p>
+</div>`,
+  },
+  section: {
+    label: "Section",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <div style="width:72px;height:6px;border-radius:3px;background:currentColor;opacity:.85;margin-bottom:28px"></div>
+  <h2 style="font-size:52px;font-weight:800;margin:0;line-height:1.1">Section title</h2>
+</div>`,
+  },
+  bullets: {
+    label: "Bullets",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <h2 style="font-size:40px;font-weight:750;margin:0 0 28px">Heading</h2>
+  <ul style="font-size:26px;line-height:1.9;margin:0;padding-left:1.1em">
+    <li>First key point</li><li>Second key point</li><li>Third key point</li>
+  </ul>
+</div>`,
+  },
+  "two-column": {
+    label: "Two column",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:56px;align-content:center;padding:0 9%">
+  <div><h3 style="font-size:28px;font-weight:700;margin:0 0 14px">Left heading</h3><p style="font-size:22px;line-height:1.6;margin:0;opacity:.85">Supporting copy for the left column.</p></div>
+  <div><h3 style="font-size:28px;font-weight:700;margin:0 0 14px">Right heading</h3><p style="font-size:22px;line-height:1.6;margin:0;opacity:.85">Supporting copy for the right column.</p></div>
+</div>`,
+  },
+  "image-text": {
+    label: "Image + text",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;padding:0 9%">
+  <img src="https://placehold.co/720x480/eef/335?text=Image" alt="image" style="width:100%;border-radius:16px;display:block" />
+  <div><h2 style="font-size:36px;font-weight:750;margin:0 0 16px">Heading</h2><p style="font-size:24px;line-height:1.65;margin:0;opacity:.85">Explain the visual in a sentence or two.</p></div>
+</div>`,
+  },
+  quote: {
+    label: "Quote",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 12%">
+  <p style="font-size:44px;font-weight:700;line-height:1.3;margin:0 0 24px">“A short, memorable quote that anchors the point.”</p>
+  <p style="font-size:22px;opacity:.65;margin:0">— Attribution</p>
+</div>`,
+  },
+  agenda: {
+    label: "Agenda",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 9%">
+  <h2 style="font-size:40px;font-weight:750;margin:0 0 28px">Agenda</h2>
+  <ol style="font-size:25px;line-height:2;margin:0;padding-left:1.2em">
+    <li>Background &amp; goals</li><li>Approach</li><li>Results</li><li>Next steps</li>
+  </ol>
+</div>`,
+  },
+  stat: {
+    label: "Big stat",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <div style="font-size:140px;font-weight:800;letter-spacing:-.03em;line-height:1">12×</div>
+  <p style="font-size:28px;opacity:.7;margin:16px 0 0">faster than the previous approach</p>
+</div>`,
+  },
+  comparison: {
+    label: "Comparison",
+    html: `<div style="height:100%;display:grid;grid-template-columns:1fr 1fr;gap:40px;align-content:center;padding:0 9%">
+  <div style="border:2px solid currentColor;opacity:.9;border-radius:16px;padding:28px"><h3 style="font-size:26px;margin:0 0 14px">Before</h3><ul style="font-size:21px;line-height:1.8;margin:0;padding-left:1.1em"><li>Point one</li><li>Point two</li></ul></div>
+  <div style="border-radius:16px;padding:28px;background:currentColor"><div style="color:#fff;mix-blend-mode:difference"><h3 style="font-size:26px;margin:0 0 14px">After</h3><ul style="font-size:21px;line-height:1.8;margin:0;padding-left:1.1em"><li>Point one</li><li>Point two</li></ul></div></div>
+</div>`,
+  },
+  closing: {
+    label: "Closing",
+    html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:0 8%">
+  <h1 style="font-size:56px;font-weight:800;margin:0 0 16px">Thank you</h1>
+  <p style="font-size:24px;opacity:.7;margin:0">Questions? · contact@example.com</p>
+</div>`,
+  },
+};
+
+// One-click slide themes — background + text color applied to the slide root.
+const SLIDE_THEMES: Record<string, { label: string; style: Record<string, string> }> = {
+  light: { label: "Light", style: { background: "#ffffff", color: "#141821" } },
+  paper: { label: "Paper", style: { background: "#f7f5ef", color: "#2b2a26" } },
+  ink: { label: "Ink", style: { background: "#14161d", color: "#f0f1f5" } },
+  navy: { label: "Navy", style: { background: "#0d1b3e", color: "#eef2ff" } },
+  forest: { label: "Forest", style: { background: "#0f2a22", color: "#e6f2ec" } },
+  sunset: { label: "Sunset", style: { background: "#2a1533", color: "#ffe8d6" } },
+  brand: { label: "Brand", style: { background: "#ffffff", color: "#b01722" } },
+};
+
+// Drop-in shapes (self-contained inline SVG/div, sized in slide space).
+const SLIDE_SHAPES: Record<string, { label: string; html: string }> = {
+  rect: { label: "Rectangle", html: `<div style="width:280px;height:160px;background:currentColor;opacity:.9;border-radius:10px;margin:24px"></div>` },
+  circle: { label: "Circle", html: `<div style="width:200px;height:200px;background:currentColor;opacity:.9;border-radius:50%;margin:24px"></div>` },
+  line: { label: "Line", html: `<div style="width:360px;height:4px;background:currentColor;opacity:.85;margin:24px"></div>` },
+  arrow: { label: "Arrow", html: `<svg width="240" height="60" viewBox="0 0 240 60" style="margin:24px;color:currentColor"><path d="M0 30 H210 M188 12 L212 30 L188 48" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>` },
+  badge: { label: "Pill", html: `<span style="display:inline-block;padding:10px 22px;border-radius:999px;background:currentColor;color:#fff;mix-blend-mode:normal;font-weight:700;margin:24px">Label</span>` },
+};
+
+// Slide-wide font families (self-contained web-safe stacks — no CDN).
+const SLIDE_FONTS: Record<string, { label: string; stack: string }> = {
+  sans: { label: "Sans", stack: "'Segoe UI', system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif" },
+  serif: { label: "Serif", stack: "Georgia, 'Times New Roman', 'Apple SD Gothic Neo', serif" },
+  mono: { label: "Mono", stack: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace" },
+  rounded: { label: "Rounded", stack: "'Trebuchet MS', 'Segoe UI', 'Apple SD Gothic Neo', sans-serif" },
+  condensed: { label: "Condensed", stack: "'Arial Narrow', 'Helvetica Neue', 'Apple SD Gothic Neo', sans-serif" },
+};
+
+/** Quick, dependency-free accessibility scan of a page's HTML. Returns a list of
+ *  human-readable issues (empty = clean). Parsed in the host, not the iframe. */
+function checkA11y(html: string): string[] {
+  if (typeof DOMParser === "undefined") return [];
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const issues: string[] = [];
+  const count = (sel: string, keep: (el: Element) => boolean) =>
+    Array.from(doc.querySelectorAll(sel)).filter(keep).length;
+
+  const imgs = count("img", (el) => !el.getAttribute("alt"));
+  if (imgs) issues.push(`${imgs} image${imgs > 1 ? "s" : ""} missing alt text`);
+  const links = count("a", (el) => !el.textContent?.trim() && !el.getAttribute("aria-label"));
+  if (links) issues.push(`${links} link${links > 1 ? "s" : ""} with no text or aria-label`);
+  const btns = count("button", (el) => !el.textContent?.trim() && !el.getAttribute("aria-label"));
+  if (btns) issues.push(`${btns} button${btns > 1 ? "s" : ""} with no accessible label`);
+  const fields = count("input, textarea, select", (el) => {
+    const id = el.getAttribute("id");
+    const labelled = id && doc.querySelector(`label[for="${CSS.escape(id)}"]`);
+    return !labelled && !el.getAttribute("aria-label") && !el.getAttribute("placeholder");
+  });
+  if (fields) issues.push(`${fields} form field${fields > 1 ? "s" : ""} with no label`);
+  if (!doc.documentElement.getAttribute("lang")) issues.push("Missing a <html lang> attribute");
+  if (!doc.querySelector("h1")) issues.push("No <h1> — every page needs one top-level heading");
+  return issues;
+}
+
 const SLIDE_W = 1280;
+
+// Force a web artifact's document to scroll even when its own CSS says
+// `body{overflow:hidden}` (common in slide-derived templates). Injected only for
+// non-slide artifacts, as the very last <style> so `!important` wins the cascade.
+const SCROLL_FIX =
+  "<style>html,body{overflow:auto!important;height:auto!important;min-height:100%!important}</style>";
+function withScrollableBody(html: string): string {
+  const i = html.lastIndexOf("</body>");
+  return i === -1 ? html + SCROLL_FIX : html.slice(0, i) + SCROLL_FIX + html.slice(i);
+}
 
 /** Fit a fixed-aspect slide's design width into the available column, returning
  *  the scale factor and the design height for a given `ratio` (e.g. "16:9"). */
@@ -81,7 +323,15 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
     if (!ratio) return;
     const el = boxRef.current;
     if (!el) return;
-    const fit = () => setScale(Math.min(1, (el.clientWidth - 40) / SLIDE_W));
+    // Guard against an unmeasurable box: while the Design stage is unmounted (Code
+    // view) the ResizeObserver can fire at clientWidth 0, which would yield a
+    // negative scale and shrink the iframe to nothing — the returning Design view
+    // then renders blank. Keep the last good scale until the box is laid out again.
+    const fit = () => {
+      const w = el.clientWidth;
+      if (w <= 40) return;
+      setScale(Math.min(1, (w - 40) / SLIDE_W));
+    };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
@@ -94,6 +344,7 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
+  const bgFileRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const api = useCanvasStoreApi();
   const setSelections = useCanvasStore((s) => s.setSelections);
@@ -103,6 +354,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeCommand = useCanvasStore((s) => s.iframeCommand);
   const [device, setDevice] = useState<(typeof DEVICES)[number]["id"]>("desktop");
   const [mode, setMode] = useState<"design" | "code">("design");
+  const [a11y, setA11y] = useState<string[] | null>(null);
 
   // A single-node edit made *inside* the iframe is already reflected there, so we
   // keep the same srcDoc (no reload/flicker). Only tree-changing edits (structural
@@ -115,15 +367,31 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // blank. Keying srcDoc on `mode` rebuilds it whenever we come back to design.
   const lastSelfHtml = useRef<string | null>(null);
   const srcDocRef = useRef<string>("");
+  // A fixed-aspect slide keeps its own `overflow:hidden` (it's a 1280×720 page);
+  // a fluid web page must scroll, but agent templates often ship `body{overflow:
+  // hidden}`, which traps a tall page inside the iframe with no scrollbar. For the
+  // web case, force the document scrollable so it scrolls inside the panel.
+  const isFixedSlide = Boolean(artifact.meta?.ratio);
   const srcDoc = useMemo(() => {
     if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
-    srcDocRef.current = withInspector(artifact.data.html);
+    const base = withInspector(artifact.data.html);
+    srcDocRef.current = isFixedSlide ? base : withScrollableBody(base);
     lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html, mode]);
+  }, [artifact.data.html, mode, isFixedSlide]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
+
+  // Page outline — headings parsed from the source, for jump-to navigation.
+  const outline = useMemo(() => {
+    if (typeof DOMParser === "undefined") return [] as { level: number; text: string }[];
+    const doc = new DOMParser().parseFromString(artifact.data.html, "text/html");
+    return Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6")).map((h) => ({
+      level: Number(h.tagName[1]),
+      text: (h.textContent ?? "").trim().slice(0, 48) || "(untitled)",
+    }));
+  }, [artifact.data.html]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -195,6 +463,23 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
     reader.readAsDataURL(file); // embed as a data URI so the page stays self-contained
   };
 
+  // Set the slide's background image (embedded as a data URI, cover-fit).
+  const onSlideBg = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () =>
+      sendIframeCommand({
+        artifactId: artifact.id,
+        type: "set_slide_style",
+        style: { backgroundImage: `url("${String(reader.result)}")`, backgroundSize: "cover", backgroundPosition: "center" },
+      });
+    reader.readAsDataURL(file);
+  };
+
+  // Slide-wide edits (font, background) target the .slide-container root.
+  const setSlideStyle = (style: Record<string, string>) =>
+    sendIframeCommand({ artifactId: artifact.id, type: "set_slide_style", style });
+
   // A fixed-aspect slide (the agent set `meta.ratio`, e.g. "16:9") lays out at a
   // fixed design width (1280×ratio) and is scaled to fit its column. It stays
   // fully editable — a transform-scaled iframe still maps clicks to its own
@@ -206,6 +491,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   return (
     <div className="cv-html-wrap">
       <input ref={imgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onImgFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={bgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onSlideBg(e.target.files?.[0]); e.target.value = ""; }} />
       <div className="cv-html-bar cv-chrome">
         {mode === "design" && (
           <>
@@ -222,26 +508,130 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
               </>
             )}
             <span className="cv-html-bar__label">Add</span>
-            {BLOCKS.map((b) => (
+            {(ratio ? BLOCKS.filter((b) => SLIDE_BLOCK_TAGS.has(b.tag)) : BLOCKS).map((b) => (
               <button key={b.tag} className="cv-html-add" onClick={() => command("insert", { block: b.tag })}>
                 {b.label}
               </button>
             ))}
-            <select
-              className="cv-html-tpl"
-              value=""
-              title="Insert a section template"
-              onChange={(e) => {
-                const t = TEMPLATES[e.target.value];
-                if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
-                e.currentTarget.value = "";
-              }}
-            >
-              <option value="">Section…</option>
-              {Object.entries(TEMPLATES).map(([k, v]) => (
-                <option key={k} value={k}>{v.label}</option>
-              ))}
-            </select>
+            {/* Web section templates + full-page starters — only for fluid web pages. */}
+            {!ratio && (
+              <>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Start from a full page template (replaces the page)"
+                  onChange={(e) => {
+                    const s = STARTERS[e.target.value];
+                    if (s) applyEvent({ type: "canvas.patch", id: artifact.id, patch: { html: s.build() } });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Page…</option>
+                  {Object.entries(STARTERS).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a section template"
+                  onChange={(e) => {
+                    const t = TEMPLATES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Section…</option>
+                  {Object.entries(TEMPLATES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                {outline.length > 0 && (
+                  <select
+                    className="cv-html-tpl"
+                    value=""
+                    title="Jump to a heading"
+                    onChange={(e) => {
+                      const idx = Number(e.target.value);
+                      if (!Number.isNaN(idx)) sendIframeCommand({ artifactId: artifact.id, type: "scroll_to", index: idx });
+                      e.currentTarget.value = "";
+                    }}
+                  >
+                    <option value="">Outline…</option>
+                    {outline.map((h, i) => (
+                      <option key={i} value={i}>{" ".repeat((h.level - 1) * 2) + h.text}</option>
+                    ))}
+                  </select>
+                )}
+                <button className="cv-html-add" title="Accessibility check" onClick={() => setA11y(checkA11y(artifact.data.html))}>♿ Check</button>
+              </>
+            )}
+            {/* Slide-native layouts + one-click themes — only for fixed-aspect slides. */}
+            {ratio && (
+              <>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a slide layout"
+                  onChange={(e) => {
+                    const t = SLIDE_TEMPLATES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Layout…</option>
+                  {Object.entries(SLIDE_TEMPLATES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Apply a slide theme"
+                  onChange={(e) => {
+                    const t = SLIDE_THEMES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "set_slide_style", style: t.style });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Theme…</option>
+                  {Object.entries(SLIDE_THEMES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a shape"
+                  onChange={(e) => {
+                    const t = SLIDE_SHAPES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Shape…</option>
+                  {Object.entries(SLIDE_SHAPES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Slide font"
+                  onChange={(e) => {
+                    const f = SLIDE_FONTS[e.target.value];
+                    if (f) setSlideStyle({ fontFamily: f.stack });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Font…</option>
+                  {Object.entries(SLIDE_FONTS).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <button className="cv-html-add" title="Slide background image" onClick={() => bgFileRef.current?.click()}>🖼 BG</button>
+              </>
+            )}
 
             {selected.length >= 1 && (
               <>
@@ -273,6 +663,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                     </button>
                   </>
                 )}
+                {single && single.tag !== "img" && (
+                  <>
+                    <button className="cv-html-act" title="Align left" onClick={() => command("style_persist", { prop: "textAlign", value: "left" })}>⬅</button>
+                    <button className="cv-html-act" title="Align center" onClick={() => command("style_persist", { prop: "textAlign", value: "center" })}>⬌</button>
+                    <button className="cv-html-act" title="Align right" onClick={() => command("style_persist", { prop: "textAlign", value: "right" })}>➡</button>
+                    <button className="cv-html-act" title="Bold" onClick={() => command("style_persist", { prop: "fontWeight", value: "800" })}>B</button>
+                  </>
+                )}
                 {single && (
                   <>
                     <button className="cv-html-act" title="Duplicate" onClick={() => command("duplicate")}>⧉</button>
@@ -292,6 +690,20 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
           <button className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>Code</button>
         </div>
       </div>
+
+      {a11y !== null && (
+        <div className="cv-a11y" role="status">
+          <button className="cv-a11y__close" onClick={() => setA11y(null)} aria-label="Dismiss">×</button>
+          {a11y.length === 0 ? (
+            <span className="cv-a11y__ok">♿ No accessibility issues found</span>
+          ) : (
+            <>
+              <b>♿ {a11y.length} accessibility issue{a11y.length > 1 ? "s" : ""}</b>
+              <ul>{a11y.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            </>
+          )}
+        </div>
+      )}
 
       {mode === "design" ? (
         <div className={`cv-html-stage${ratio ? " cv-html-stage--slide" : ""}`} ref={stageRef}>

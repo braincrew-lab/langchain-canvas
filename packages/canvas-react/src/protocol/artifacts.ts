@@ -50,6 +50,8 @@ export interface ChartSeries {
 export interface ChartOptions {
   stacked?: boolean;
   yLabel?: string;
+  /** Chart title shown above the plot. */
+  title?: string;
   /** Per-slice colors for pie charts, index-aligned to `rows`. */
   colors?: string[];
 }
@@ -91,7 +93,7 @@ export interface TableData {
 /** A freely-positioned element on a "blank" slide (percent geometry, 0–100). */
 export interface SlideElement {
   id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "shape";
   x: number;
   y: number;
   w: number;
@@ -102,6 +104,10 @@ export interface SlideElement {
   bold?: boolean;
   color?: string;
   align?: "left" | "center" | "right";
+  /** Shape kind for `type: "shape"`. */
+  shape?: "rect" | "ellipse" | "line";
+  /** Fill (rect/ellipse) or stroke (line) color for a shape. */
+  fill?: string;
 }
 
 export interface Slide {
@@ -122,6 +128,9 @@ export interface Slide {
   textColor?: string;
   /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
   notes?: string;
+  /** Content padding as a percent of the slide width (a safe margin around the
+   *  free canvas). Applied in the editor, present view, thumbnails, and export. */
+  padding?: number;
 }
 
 export interface SlidesData {

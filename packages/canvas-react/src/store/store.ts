@@ -16,7 +16,28 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { StreamEvent } from "../protocol/events";
 import { isCanvasEvent } from "../protocol/events";
 import type { ElementSelection } from "../protocol/selection";
+import type { Artifact } from "../protocol/artifacts";
 import { type CanvasState, emptyCanvasState, reduceCanvas } from "../client/reconcile";
+
+/** Fired when the *user* edits an artifact in the canvas (a table cell, a chart
+ *  value, document text, a slide/HTML element). The host wires this to sync the
+ *  edit back to the agent/backend so the next turn sees it. */
+export type UserEditHandler = (artifact: Artifact) => void;
+
+/** The artifact id a user-edit event targets, or null for non-mutating events. */
+function editedArtifactId(event: StreamEvent): string | null {
+  switch (event.type) {
+    case "canvas.create":
+    case "canvas.replace":
+      return event.artifact.id;
+    case "canvas.append":
+    case "canvas.patch":
+    case "canvas.node_patch":
+      return event.id;
+    default:
+      return null;
+  }
+}
 
 export interface ChatMessage {
   id: string;
@@ -29,9 +50,9 @@ export interface ChatMessage {
 /** A command the editing UI forwards to the active html artifact's iframe. */
 export interface IframeCommand {
   artifactId: string;
-  /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · clear. */
+  /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · set_slide_style · clear. */
   type:
-    | "set_style" | "commit" | "clear" | "set_src"
+    | "set_style" | "style_persist" | "commit" | "clear" | "set_src" | "set_slide_style" | "scroll_to"
     | "duplicate" | "delete" | "move_up" | "move_down" | "insert" | "insert_html"
     | "group" | "ungroup";
   /** Target element (omitted for document-level inserts with no selection). */
@@ -40,6 +61,10 @@ export interface IframeCommand {
   cids?: string[];
   prop?: string;
   value?: string;
+  /** Style map to apply to the slide root for `set_slide_style` (e.g. background, color). */
+  style?: Record<string, string>;
+  /** Heading index to scroll into view for `scroll_to`. */
+  index?: number;
   /** Tag/block to insert for `insert` (e.g. "h2", "p", "button", "img", "hr", "section"). */
   block?: string;
   /** HTML fragment to insert for `insert_html` (a built-in section template). */
@@ -63,6 +88,9 @@ export interface CanvasStore {
   undoStack: CanvasState[];
   redoStack: CanvasState[];
 
+  /** Host callback fired after a user edit reconciles — the write-back hook. */
+  onUserEdit: UserEditHandler | null;
+
   // actions
   applyEvent: (event: StreamEvent) => void;
   /** Apply a batch of events in a single store write (one re-render per frame). */
@@ -76,6 +104,8 @@ export interface CanvasStore {
   setActiveArtifact: (id: string) => void;
   setSelections: (selections: ElementSelection[]) => void;
   sendIframeCommand: (command: Omit<IframeCommand, "seq">) => void;
+  /** Register (or clear) the user-edit write-back handler. */
+  setOnUserEdit: (handler: UserEditHandler | null) => void;
   reset: () => void;
 }
 
@@ -90,21 +120,29 @@ const initialState = () => ({
   iframeCommand: null as IframeCommand | null,
   undoStack: [] as CanvasState[],
   redoStack: [] as CanvasState[],
+  onUserEdit: null as UserEditHandler | null,
 });
 
 /** Create an isolated canvas store. */
 export function createCanvasStore(): StoreApi<CanvasStore> {
-  return createStore<CanvasStore>((set) => ({
+  return createStore<CanvasStore>((set, get) => ({
     ...initialState(),
 
     applyEvent: (event) => set((state) => foldEvent(state, event)),
     applyEvents: (events) => set((state) => events.reduce(foldEvent, state)),
 
-    applyUserEvent: (event) =>
+    applyUserEvent: (event) => {
       set((state) => {
         const undoStack = [...state.undoStack, state.canvas].slice(-UNDO_LIMIT);
         return { ...foldEvent(state, event), undoStack, redoStack: [] };
-      }),
+      });
+      // Notify the host of the write so it can sync it back to the agent/backend.
+      // Fires after the store settles, with the reconciled artifact.
+      const state = get();
+      const id = editedArtifactId(event);
+      const artifact = id ? state.canvas.artifacts[id] : undefined;
+      if (artifact) state.onUserEdit?.(artifact);
+    },
     undo: () =>
       set((state) => {
         if (!state.undoStack.length) return state;
@@ -139,6 +177,8 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
     setSelections: (selections) => set({ selections }),
     sendIframeCommand: (command) =>
       set((state) => ({ iframeCommand: { ...command, seq: (state.iframeCommand?.seq ?? 0) + 1 } })),
+
+    setOnUserEdit: (handler) => set({ onUserEdit: handler }),
 
     reset: () => set(initialState()),
   }));

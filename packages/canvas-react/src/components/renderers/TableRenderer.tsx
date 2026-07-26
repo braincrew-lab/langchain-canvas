@@ -182,21 +182,63 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   }, [dataKey, hasFormulas]);
 
   const hasSheet = !!artifact.data.sheet?.length;
-  // The workbook's data is frozen at mount (keyed by dataKey): a rich imported
-  // sheet is rendered as-is; agent-built columns/rows are converted once. In-sheet
-  // edits are owned by Fortune and mirrored back to the store via onChange — they
-  // must NOT feed back into this prop, or the workbook would reset mid-edit.
+
+  // Non-destructive sort / filter over the structured rows. Only offered for a
+  // rows-backed table — once the user edits into a Fortune sheet, that sheet is the
+  // source of truth and its own header menu owns sorting. The filter is debounced
+  // so the workbook doesn't remount on every keystroke.
+  const [sortCol, setSortCol] = useState("");
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const [filter, setFilter] = useState("");
+  const [appliedFilter, setAppliedFilter] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setAppliedFilter(filter), 300);
+    return () => clearTimeout(t);
+  }, [filter]);
+  const viewRows = useMemo(() => {
+    let r = rows;
+    const q = appliedFilter.trim().toLowerCase();
+    if (q) r = r.filter((row) => columns.some((c) => String(row[c.key] ?? "").toLowerCase().includes(q)));
+    if (sortCol) {
+      r = [...r].sort((a, b) => {
+        const av = a[sortCol];
+        const bv = b[sortCol];
+        const cmp =
+          typeof av === "number" && typeof bv === "number"
+            ? av - bv
+            : String(av ?? "").localeCompare(String(bv ?? ""));
+        return cmp * sortDir;
+      });
+    }
+    return r;
+  }, [rows, columns, appliedFilter, sortCol, sortDir]);
+  // A sort or filter takes over the view: the workbook renders the transformed
+  // rows (Fortune auto-serializes a `sheet` on mount, so we can't gate on that).
+  // With no sort/filter, normal behavior — a rich sheet as-is, else the rows.
+  const viewActive = !!appliedFilter.trim() || !!sortCol;
+  const wbKey = `${dataKey}:${viewActive ? `view-s${sortCol}${sortDir}-f${appliedFilter}` : hasSheet ? "sheet" : "rows"}`;
+
+  // The workbook's data is frozen at mount (keyed by wbKey). In-sheet edits are
+  // owned by Fortune and mirrored back via onChange — they must NOT feed back into
+  // this prop or it resets mid-edit.
   const initialData = useMemo(
-    () => (artifact.data.sheet?.length ? artifact.data.sheet : toWorkbook(columns, rows, formulas)),
+    () =>
+      viewActive
+        ? toWorkbook(columns, viewRows, formulas)
+        : hasSheet
+          ? artifact.data.sheet!
+          : toWorkbook(columns, rows, formulas),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataKey, formulasReady],
+    [wbKey, formulasReady],
   );
 
   // Persist in-sheet edits (cell values, inserted rows/columns, images, styling)
   // back onto the artifact so they survive re-renders and flow into exports.
   // Debounced, since Fortune fires onChange on every keystroke; writes only
   // `data.sheet` with no version bump, so the workbook is never remounted.
-  const applyEvent = useCanvasStore((s) => s.applyEvent);
+  // A user edit — routed through applyUserEvent so it lands on the undo stack and
+  // fires the host's onUserEdit write-back hook.
+  const applyEvent = useCanvasStore((s) => s.applyUserEvent);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleChange = useCallback(
     (sheets: unknown) => {
@@ -235,11 +277,39 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
       <div className="cv-sheet-tools">
         <button type="button" onClick={() => insert("column")}>＋ Column</button>
         <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        {columns.length > 0 && (
+          <>
+            <span className="cv-sheet-tools__sep" />
+            <select
+              className="cv-sheet-tools__sort"
+              value={sortCol}
+              title="Sort by column"
+              onChange={(e) => setSortCol(e.target.value)}
+            >
+              <option value="">Sort…</option>
+              {columns.map((c) => (
+                <option key={c.key} value={c.key}>{c.label ?? c.key}</option>
+              ))}
+            </select>
+            {sortCol && (
+              <button type="button" title={sortDir === 1 ? "Ascending" : "Descending"} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
+                {sortDir === 1 ? "▲" : "▼"}
+              </button>
+            )}
+            <input
+              className="cv-sheet-tools__filter"
+              value={filter}
+              placeholder="Filter…"
+              onChange={(e) => setFilter(e.target.value)}
+              title="Filter rows"
+            />
+          </>
+        )}
         <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
       </div>
       <div className="cv-sheet" ref={rootRef}>
         <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
-          <Workbook key={dataKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
+          <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
         </Suspense>
       </div>
     </div>

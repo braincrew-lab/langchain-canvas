@@ -11,7 +11,7 @@ import { useState } from "react";
 
 import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
-import { dataExporters, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
+import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
@@ -31,7 +31,11 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     if (artifact.type === "html") {
       // The artifact *is* a full HTML document — export the real source, not the
       // iframe wrapper (capturing the rendered DOM would yield an empty <iframe>).
-      downloadBlob(`${stem}.html`, "text/html", (artifact.data as HtmlData).html);
+      // A fixed-aspect slide gets slide sizing + an @page rule so the downloaded
+      // file both displays the slide correctly and prints to a slide-sized page.
+      const ratio = artifact.meta?.ratio as string | undefined;
+      const html = (artifact.data as HtmlData).html;
+      downloadBlob(`${stem}.html`, "text/html", ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;
@@ -50,13 +54,46 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     if (artifact.type === "slides") {
       printToPdf(slidesToPrintHtml(artifact.data as SlidesData, artifact.title));
     } else if (artifact.type === "html") {
-      printToPdf((artifact.data as HtmlData).html);
+      const ratio = artifact.meta?.ratio as string | undefined;
+      const html = (artifact.data as HtmlData).html;
+      // A fixed-aspect slide prints to a slide-sized landscape page (no A4 clip);
+      // a fluid web page prints as-is.
+      printToPdf(ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;
       printToPdf(toStandaloneHtml(artifact.title, html));
     }
     setOpen(false);
+  };
+
+  const openInTab = () => {
+    const html =
+      artifact.type === "html"
+        ? (artifact.data as HtmlData).html
+        : artifact.type === "slides"
+          ? slidesToPrintHtml(artifact.data as SlidesData, artifact.title)
+          : (() => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, h); })();
+    if (html == null) return;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    setOpen(false);
+  };
+
+  const [copied, setCopied] = useState(false);
+  const copyHtml = async () => {
+    const html = artifact.type === "html" ? (artifact.data as HtmlData).html : getRenderedHtml();
+    if (html == null) return;
+    try {
+      await navigator.clipboard.writeText(
+        artifact.type === "html" ? html : toStandaloneHtml(artifact.title, html),
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard blocked — no-op */
+    }
   };
 
   return (
@@ -74,6 +111,12 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
         <>
           <div className="cv-export__scrim" onClick={() => setOpen(false)} />
           <div className="cv-export__menu" role="menu">
+            <button role="menuitem" onClick={openInTab}>
+              Open in new tab ↗
+            </button>
+            <button role="menuitem" onClick={copyHtml}>
+              {copied ? "Copied ✓" : "Copy HTML"}
+            </button>
             <button role="menuitem" onClick={exportHtml}>
               HTML <span className="cv-export__ext">.html</span>
             </button>

@@ -165,14 +165,27 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
   const H = 5.625;
   for (const slide of data.slides) {
     const s = pptx.addSlide();
-    if (slide.background) s.background = { color: slide.background.replace("#", "") };
+    // Only a solid hex background maps to a pptx slide fill; url()/gradient
+    // backgrounds (e.g. an uploaded image) are skipped rather than corrupting it.
+    if (slide.background && /^#[0-9a-f]{3,8}$/i.test(slide.background)) s.background = { color: slide.background.replace("#", "") };
     const tc = slide.textColor ? slide.textColor.replace("#", "") : undefined;
 
+    // A slide `padding` (percent) insets the content area; map element geometry
+    // into that safe area so the PPTX matches the editor/PDF.
+    const pad = (slide.padding ?? 0) / 100;
+    const inset = (v: number) => pad + (v / 100) * (1 - 2 * pad);
     for (const el of resolveElements(slide)) {
-      const box = { x: (el.x / 100) * W, y: (el.y / 100) * H, w: (el.w / 100) * W, h: (el.h / 100) * H };
+      const box = { x: inset(el.x) * W, y: inset(el.y) * H, w: (el.w / 100) * (1 - 2 * pad) * W, h: (el.h / 100) * (1 - 2 * pad) * H };
       if (el.type === "text") {
         const color = el.color ? el.color.replace("#", "") : tc;
         s.addText(el.text ?? "", { ...box, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
+      } else if (el.type === "shape") {
+        const fill = (el.fill ?? "#5b5bd6").replace("#", "");
+        if (el.shape === "line") {
+          s.addShape(pptx.ShapeType.line, { ...box, line: { color: fill, width: 2 } });
+        } else {
+          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, fill: { color: fill } });
+        }
       } else if (el.src) {
         s.addImage({ data: el.src, ...box, sizing: { type: "contain", w: box.w, h: box.h } });
       }
@@ -201,14 +214,21 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           if (el.type === "text") {
             // box is numeric; color/align are escaped individually — the composed
             // style string is then safe to place in the attribute as-is.
-            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")}`;
+            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")};white-space:pre-wrap`;
             return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
+          }
+          if (el.type === "shape") {
+            const fill = escapeAttr(el.fill ?? fg);
+            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
+            return `<div class="el" style="${box};background:${fill};border-radius:${radius}"></div>`;
           }
           const src = safeSrc(el.src);
           return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
         })
         .join("");
-      return `<section class="slide" style="background:${escapeAttr(bg)}">${els}</section>`;
+      const pad = slide.padding ?? 0;
+      const inner = pad ? `<div style="position:absolute;inset:${pad}%">${els}</div>` : els;
+      return `<section class="slide" style="background:${escapeAttr(bg)}">${inner}</section>`;
     })
     .join("");
 
@@ -220,6 +240,26 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     .el { position: absolute; overflow: hidden; line-height: 1.25; }
     img.el { object-fit: contain; }
   </style></head><body>${pages}</body></html>`;
+}
+
+/**
+ * Wrap a single html-substrate slide (a full HTML document containing a
+ * `.slide-container`) for print/PDF: force the print page to the slide's own
+ * size (16:9 → 1280×720, 4:3 → 960×720) with zero margin, and pin the slide box
+ * to that page. Without this the browser prints the 1280px slide onto a default
+ * A4-portrait page and clips it — this makes the PDF one clean, full-bleed slide.
+ */
+export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
+  const w = ratio === "4:3" ? 960 : 1280;
+  const h = 720;
+  const style =
+    `<style>@page{size:${w}px ${h}px;margin:0}` +
+    `html,body{margin:0!important;padding:0!important;background:#fff}` +
+    `.slide-container{width:${w}px!important;height:${h}px!important;` +
+    `box-shadow:none!important;border-radius:0!important;overflow:hidden!important;` +
+    `page-break-after:avoid}</style>`;
+  const i = html.toLowerCase().lastIndexOf("</head>");
+  return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
 }
 
 // --- helpers --------------------------------------------------------------------

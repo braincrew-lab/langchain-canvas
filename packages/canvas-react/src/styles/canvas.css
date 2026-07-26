@@ -295,6 +295,21 @@
 
 /* --- Word viewer (document page) ---------------------------------------------- */
 
+.cv-doc-bar {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px;
+  max-width: 816px; margin: 0 auto 12px; padding: 6px 8px;
+  border: 1px solid var(--cv-border); border-radius: 10px; background: var(--cv-surface);
+  flex-wrap: wrap;
+}
+.cv-doc-bar button {
+  border: 0; background: transparent; color: var(--cv-text); font: inherit; font-size: 13px;
+  min-width: 28px; height: 28px; padding: 0 8px; border-radius: 6px; cursor: pointer;
+}
+.cv-doc-bar button:hover { background: var(--cv-surface-2, rgba(120,120,140,0.12)); }
+.cv-doc-bar__sep { width: 1px; height: 18px; background: var(--cv-border); margin: 0 4px; }
+.cv-doc-bar__spacer { flex: 1; }
+.cv-doc-bar__count { font-size: 12px; color: var(--cv-muted); white-space: nowrap; }
+.cv-doc-bar__done { background: var(--cv-accent) !important; color: #fff; font-weight: 600; }
 .cv-word { background: #edeef1; padding: 28px 16px; min-height: 100%; }
 .cv-word .cv-edit-toolbar { max-width: 816px; margin: 0 auto 12px; }
 .cv-word__page {
@@ -381,6 +396,13 @@
   border-radius: 6px; background: var(--cv-bg); color: var(--cv-text); cursor: pointer;
 }
 .cv-sheet-tools button:hover { border-color: var(--cv-accent, #6366f1); color: var(--cv-accent, #6366f1); }
+.cv-sheet-tools__sep { width: 1px; height: 18px; background: var(--cv-border); margin: 0 2px; }
+.cv-sheet-tools__sort, .cv-sheet-tools__filter {
+  font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--cv-border); background: var(--cv-bg); color: var(--cv-text);
+}
+.cv-sheet-tools__filter { min-width: 96px; max-width: 160px; }
+.cv-sheet-tools__sort:focus, .cv-sheet-tools__filter:focus { outline: none; border-color: var(--cv-accent); }
 .cv-sheet-tools__hint { margin-left: auto; font-size: 11px; color: var(--cv-muted); }
 .cv-sheet { position: relative; width: 100%; flex: 1; height: auto; min-height: 0; }
 .cv-sheet .fortune-container { height: 100% !important; width: 100% !important; }
@@ -596,6 +618,13 @@
   width: 30px; height: 30px; padding: 0;
   border: 1px solid var(--cv-border); border-radius: 7px; background: none; cursor: pointer;
 }
+.cv-deck__pad {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--cv-muted);
+}
+.cv-deck__pad input {
+  width: 48px; font: inherit; font-size: 12.5px; padding: 4px 6px;
+  border: 1px solid var(--cv-border); border-radius: 6px; background: var(--cv-bg); color: var(--cv-text);
+}
 .cv-deck__present {
   width: auto !important; padding: 0 12px !important;
   background: var(--cv-accent) !important; color: #fff !important;
@@ -617,6 +646,16 @@
 .cv-present__slide .cv-slide__subtitle { font-size: clamp(16px, 2.6vw, 30px); }
 .cv-present__slide .cv-slide__bullets li { font-size: clamp(16px, 2.4vw, 30px); }
 .cv-present__hint { color: #9aa4b2; font-size: 13px; }
+/* Fade each slide in as the presenter advances. */
+.cv-present__fade { animation: cv-present-fade 0.32s ease; }
+@keyframes cv-present-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .cv-present__fade { animation: none; } }
+/* Speaker notes shown to the presenter, below the slide. */
+.cv-present__notes {
+  max-width: min(92vw, 1280px); color: #cdd3de; font-size: 15px; line-height: 1.5;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px; padding: 12px 16px; cursor: default; white-space: pre-wrap;
+}
 
 /* in-place editing cues */
 .cv-word .cv-doc { cursor: text; }
@@ -680,6 +719,12 @@
 .cv-chart__types .cv-edit-btn { text-transform: capitalize; }
 .cv-chart__stack { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--cv-muted); cursor: pointer; }
 .cv-chart__spacer { flex: 1; }
+.cv-chart__title-input {
+  font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 7px;
+  border: 1px solid var(--cv-border); background: var(--cv-bg); color: var(--cv-text);
+  min-width: 120px; max-width: 220px;
+}
+.cv-chart__title-input:focus { outline: none; border-color: var(--cv-accent); }
 
 /* --- chart editor ------------------------------------------------------------- */
 .cv-chart__editor {
@@ -751,6 +796,17 @@
 /* --- html renderer (base substrate) ------------------------------------------- */
 
 .cv-html-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; }
+.cv-a11y {
+  position: relative; flex: none; padding: 12px 34px 12px 16px;
+  border: 1px solid var(--cv-border); border-radius: 10px; background: var(--cv-surface);
+  font-size: 13px; color: var(--cv-text);
+}
+.cv-a11y ul { margin: 8px 0 0; padding-left: 18px; color: var(--cv-muted); line-height: 1.7; }
+.cv-a11y__ok { color: var(--cv-good, #1f9d6b); font-weight: 600; }
+.cv-a11y__close {
+  position: absolute; top: 6px; right: 8px; border: 0; background: transparent;
+  color: var(--cv-muted); font-size: 18px; cursor: pointer; line-height: 1;
+}
 .cv-html-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
   padding: 7px 9px; border: 1px solid var(--cv-border); border-radius: 9px; background: var(--cv-surface);
@@ -784,6 +840,49 @@
 .cv-html-act:hover { background: var(--cv-surface); }
 .cv-html-act--del:hover { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
 .cv-html-bar__spacer { flex: 1; }
+
+/* ── Unified, polished toolbar controls ─────────────────────────────────────────
+   One button language across every renderer: a consistent 8px radius, a hairline
+   of depth, a soft hover lift, a tactile press, and a real focus ring. */
+.cv-html-add, .cv-html-tpl, .cv-html-act, .cv-deck__toolbar button, .cv-edit-btn,
+.cv-sheet-tools button, .cv-doc-bar button {
+  border-radius: 8px;
+  font-weight: 500;
+  box-shadow: 0 1px 0 rgba(17, 17, 26, 0.02);
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease, transform 0.06s ease;
+}
+.cv-html-add:hover, .cv-html-tpl:hover, .cv-html-act:hover,
+.cv-deck__toolbar button:hover:not(:disabled), .cv-edit-btn:hover,
+.cv-sheet-tools button:hover, .cv-doc-bar button:hover {
+  background: var(--cv-surface);
+  border-color: color-mix(in srgb, var(--cv-text) 22%, var(--cv-border));
+  color: var(--cv-text);
+  box-shadow: 0 1px 3px rgba(17, 17, 26, 0.07);
+}
+.cv-html-add:active, .cv-html-tpl:active, .cv-html-act:active,
+.cv-deck__toolbar button:active, .cv-edit-btn:active,
+.cv-sheet-tools button:active, .cv-doc-bar button:active { transform: translateY(0.5px); }
+.cv-html-add:focus-visible, .cv-html-tpl:focus-visible, .cv-html-act:focus-visible,
+.cv-deck__toolbar button:focus-visible, .cv-edit-btn:focus-visible,
+.cv-sheet-tools button:focus-visible, .cv-doc-bar button:focus-visible,
+.cv-html-seg button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cv-accent) 48%, transparent);
+  outline-offset: 1px;
+}
+/* Segmented controls (Design/Code · device preview) */
+.cv-html-seg { border-radius: 8px; box-shadow: 0 1px 0 rgba(17, 17, 26, 0.02); }
+.cv-html-seg button { font-weight: 500; transition: background 0.14s ease, color 0.14s ease; }
+.cv-html-seg button:hover:not(.is-on) { background: var(--cv-surface); }
+.cv-html-seg button.is-on { box-shadow: inset 0 -1.5px 0 color-mix(in srgb, #000 16%, var(--cv-accent)); }
+/* Primary actions (Present · chart done) get a little lift and gloss */
+.cv-edit-btn.is-primary, .cv-deck__present {
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.cv-edit-btn.is-primary:hover, .cv-deck__present:hover {
+  background: color-mix(in srgb, #000 8%, var(--cv-accent)) !important;
+  border-color: transparent;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
 .cv-html-stage {
   flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center;
   padding: 10px; background: var(--cv-surface); border-radius: 10px;

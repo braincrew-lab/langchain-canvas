@@ -151,7 +151,7 @@ const INSPECTOR_SCRIPT = `
     fmtBar.className = "lcx-fmt";
     fmtBar.style.left = Math.max(4, r.left) + "px";
     fmtBar.style.top = Math.max(4, r.top - 40) + "px";
-    var specs = [["<b>B</b>", "bold"], ["<i>I</i>", "italic"], ["<u>U</u>", "underline"], ["\\uD83D\\uDD17", "createLink"]];
+    var specs = [["<b>B</b>", "bold"], ["<i>I</i>", "italic"], ["<u>U</u>", "underline"], ["&bull;", "insertUnorderedList"], ["1.", "insertOrderedList"], ["\\uD83D\\uDD17", "createLink"]];
     for (var i = 0; i < specs.length; i++) {
       (function (spec) {
         var btn = document.createElement("button");
@@ -539,7 +539,19 @@ const INSPECTOR_SCRIPT = `
       var d = e.data;
       if (!d || d.source !== MARK) return;
       if (d.type === "clear") { clearSelected(); return; }
+      if (d.type === "scroll_to") {
+        var hs = document.querySelectorAll("h1,h2,h3,h4,h5,h6");
+        if (hs[d.index]) hs[d.index].scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
       if (d.type === "set_style") { var el = byCid(d.cid); if (el) el.style[d.prop] = d.value; return; }
+      if (d.type === "style_persist") { var elp = byCid(d.cid); if (elp) { elp.style[d.prop] = d.value; emitEdit(elp); } return; }
+      if (d.type === "set_slide_style") {
+        // Theme the whole slide: apply to the .slide-container (fallback body).
+        var root = document.querySelector(".slide-container") || document.body;
+        if (root && d.style) { for (var sk in d.style) { try { root.style[sk] = d.style[sk]; } catch (_e) {} } emitDoc(); }
+        return;
+      }
       if (d.type === "set_src") { var ei = byCid(d.cid); if (ei) { ei.setAttribute("src", d.value); emitEdit(ei); } return; }
       if (d.type === "commit") { var el2 = byCid(d.cid); if (el2) emitEdit(el2); return; }
 
