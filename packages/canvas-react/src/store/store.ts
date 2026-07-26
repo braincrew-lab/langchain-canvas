@@ -52,7 +52,7 @@ export interface IframeCommand {
   artifactId: string;
   /** style · structure (duplicate/delete/move/insert/insert_html) · group/ungroup · set_src · set_slide_style · clear. */
   type:
-    | "set_style" | "commit" | "clear" | "set_src" | "set_slide_style"
+    | "set_style" | "style_persist" | "commit" | "clear" | "set_src" | "set_slide_style"
     | "duplicate" | "delete" | "move_up" | "move_down" | "insert" | "insert_html"
     | "group" | "ungroup";
   /** Target element (omitted for document-level inserts with no selection). */

@@ -17,6 +17,13 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - **Slide themes.** A "Theme…" dropdown recolors the slide in one click (Light /
   Paper / Ink / Navy / Forest / Sunset / Brand), via a new `set_slide_style`
   iframe command that styles the `.slide-container` root.
+- **Shapes.** A "Shape…" dropdown drops in a rectangle, circle, line, arrow, or pill.
+- **Slide fonts.** A "Font…" dropdown sets the slide-wide typeface (Sans / Serif /
+  Mono / Rounded / Condensed) on the slide root.
+- **Background image.** A "🖼 BG" button embeds an uploaded image as the slide's
+  cover-fit background (data URI, self-contained).
+- **Text controls on selection.** Align left / center / right and Bold a selected
+  text element (a new persisting `style_persist` iframe command).
 
 ## [0.1.8] — 2026-07-26
 

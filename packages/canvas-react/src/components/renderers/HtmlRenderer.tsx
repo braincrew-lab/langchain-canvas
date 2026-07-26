@@ -165,6 +165,24 @@ const SLIDE_THEMES: Record<string, { label: string; style: Record<string, string
   brand: { label: "Brand", style: { background: "#ffffff", color: "#b01722" } },
 };
 
+// Drop-in shapes (self-contained inline SVG/div, sized in slide space).
+const SLIDE_SHAPES: Record<string, { label: string; html: string }> = {
+  rect: { label: "Rectangle", html: `<div style="width:280px;height:160px;background:currentColor;opacity:.9;border-radius:10px;margin:24px"></div>` },
+  circle: { label: "Circle", html: `<div style="width:200px;height:200px;background:currentColor;opacity:.9;border-radius:50%;margin:24px"></div>` },
+  line: { label: "Line", html: `<div style="width:360px;height:4px;background:currentColor;opacity:.85;margin:24px"></div>` },
+  arrow: { label: "Arrow", html: `<svg width="240" height="60" viewBox="0 0 240 60" style="margin:24px;color:currentColor"><path d="M0 30 H210 M188 12 L212 30 L188 48" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>` },
+  badge: { label: "Pill", html: `<span style="display:inline-block;padding:10px 22px;border-radius:999px;background:currentColor;color:#fff;mix-blend-mode:normal;font-weight:700;margin:24px">Label</span>` },
+};
+
+// Slide-wide font families (self-contained web-safe stacks — no CDN).
+const SLIDE_FONTS: Record<string, { label: string; stack: string }> = {
+  sans: { label: "Sans", stack: "'Segoe UI', system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif" },
+  serif: { label: "Serif", stack: "Georgia, 'Times New Roman', 'Apple SD Gothic Neo', serif" },
+  mono: { label: "Mono", stack: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace" },
+  rounded: { label: "Rounded", stack: "'Trebuchet MS', 'Segoe UI', 'Apple SD Gothic Neo', sans-serif" },
+  condensed: { label: "Condensed", stack: "'Arial Narrow', 'Helvetica Neue', 'Apple SD Gothic Neo', sans-serif" },
+};
+
 const SLIDE_W = 1280;
 
 // Force a web artifact's document to scroll even when its own CSS says
@@ -208,6 +226,7 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
+  const bgFileRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const api = useCanvasStoreApi();
   const setSelections = useCanvasStore((s) => s.setSelections);
@@ -315,6 +334,23 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
     reader.readAsDataURL(file); // embed as a data URI so the page stays self-contained
   };
 
+  // Set the slide's background image (embedded as a data URI, cover-fit).
+  const onSlideBg = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () =>
+      sendIframeCommand({
+        artifactId: artifact.id,
+        type: "set_slide_style",
+        style: { backgroundImage: `url("${String(reader.result)}")`, backgroundSize: "cover", backgroundPosition: "center" },
+      });
+    reader.readAsDataURL(file);
+  };
+
+  // Slide-wide edits (font, background) target the .slide-container root.
+  const setSlideStyle = (style: Record<string, string>) =>
+    sendIframeCommand({ artifactId: artifact.id, type: "set_slide_style", style });
+
   // A fixed-aspect slide (the agent set `meta.ratio`, e.g. "16:9") lays out at a
   // fixed design width (1280×ratio) and is scaled to fit its column. It stays
   // fully editable — a transform-scaled iframe still maps clicks to its own
@@ -326,6 +362,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   return (
     <div className="cv-html-wrap">
       <input ref={imgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onImgFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={bgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onSlideBg(e.target.files?.[0]); e.target.value = ""; }} />
       <div className="cv-html-bar cv-chrome">
         {mode === "design" && (
           <>
@@ -398,6 +435,37 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                     <option key={k} value={k}>{v.label}</option>
                   ))}
                 </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Insert a shape"
+                  onChange={(e) => {
+                    const t = SLIDE_SHAPES[e.target.value];
+                    if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Shape…</option>
+                  {Object.entries(SLIDE_SHAPES).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="cv-html-tpl"
+                  value=""
+                  title="Slide font"
+                  onChange={(e) => {
+                    const f = SLIDE_FONTS[e.target.value];
+                    if (f) setSlideStyle({ fontFamily: f.stack });
+                    e.currentTarget.value = "";
+                  }}
+                >
+                  <option value="">Font…</option>
+                  {Object.entries(SLIDE_FONTS).map(([k, v]) => (
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <button className="cv-html-add" title="Slide background image" onClick={() => bgFileRef.current?.click()}>🖼 BG</button>
               </>
             )}
 
@@ -429,6 +497,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                     >
                       🔗 URL
                     </button>
+                  </>
+                )}
+                {single && single.tag !== "img" && (
+                  <>
+                    <button className="cv-html-act" title="Align left" onClick={() => command("style_persist", { prop: "textAlign", value: "left" })}>⬅</button>
+                    <button className="cv-html-act" title="Align center" onClick={() => command("style_persist", { prop: "textAlign", value: "center" })}>⬌</button>
+                    <button className="cv-html-act" title="Align right" onClick={() => command("style_persist", { prop: "textAlign", value: "right" })}>➡</button>
+                    <button className="cv-html-act" title="Bold" onClick={() => command("style_persist", { prop: "fontWeight", value: "800" })}>B</button>
                   </>
                 )}
                 {single && (

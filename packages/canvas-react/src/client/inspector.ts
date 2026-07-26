@@ -540,6 +540,7 @@ const INSPECTOR_SCRIPT = `
       if (!d || d.source !== MARK) return;
       if (d.type === "clear") { clearSelected(); return; }
       if (d.type === "set_style") { var el = byCid(d.cid); if (el) el.style[d.prop] = d.value; return; }
+      if (d.type === "style_persist") { var elp = byCid(d.cid); if (elp) { elp.style[d.prop] = d.value; emitEdit(elp); } return; }
       if (d.type === "set_slide_style") {
         // Theme the whole slide: apply to the .slide-container (fallback body).
         var root = document.querySelector(".slide-container") || document.body;
