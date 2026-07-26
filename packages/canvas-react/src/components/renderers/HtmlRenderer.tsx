@@ -73,6 +73,87 @@ const TEMPLATES: Record<string, { label: string; html: string }> = {
   <a href="#" style="display:inline-block;padding:12px 24px;background:#fff;color:#4338ca;border-radius:10px;text-decoration:none;font-weight:700">Sign up</a>
 </section>`,
   },
+  navbar: {
+    label: "Nav bar",
+    html: `<nav style="display:flex;align-items:center;justify-content:space-between;padding:18px 32px;background:#0b1020;color:#e6e8ef;border-bottom:1px solid #232a44">
+  <strong style="font-size:18px;letter-spacing:-.01em">Brand</strong>
+  <div style="display:flex;gap:26px;align-items:center;font-size:15px">
+    <a href="#" style="color:#c7cddb;text-decoration:none">Product</a>
+    <a href="#" style="color:#c7cddb;text-decoration:none">Pricing</a>
+    <a href="#" style="color:#c7cddb;text-decoration:none">Docs</a>
+    <a href="#" style="padding:9px 18px;background:#6366f1;color:#fff;border-radius:9px;text-decoration:none;font-weight:600">Sign in</a>
+  </div>
+</nav>`,
+  },
+  pricing: {
+    label: "Pricing",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:960px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px">
+    <div style="background:#151a2e;border:1px solid #232a44;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Starter</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$0<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#9aa4b2;line-height:1.9"><li>1 project</li><li>Community support</li></ul></div>
+    <div style="background:#1b2140;border:1px solid #3a44f1;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Pro</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$29<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#c7cddb;line-height:1.9"><li>Unlimited projects</li><li>Priority support</li></ul></div>
+    <div style="background:#151a2e;border:1px solid #232a44;border-radius:16px;padding:28px"><h3 style="margin:0 0 6px">Team</h3><p style="font-size:34px;font-weight:800;margin:0 0 4px">$99<span style="font-size:15px;font-weight:400;color:#9aa4b2">/mo</span></p><ul style="margin:16px 0 0;padding-left:1.1em;color:#9aa4b2;line-height:1.9"><li>SSO &amp; roles</li><li>SLA</li></ul></div>
+  </div>
+</section>`,
+  },
+  stats: {
+    label: "Stats",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:900px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:24px;text-align:center">
+    <div><div style="font-size:44px;font-weight:800">12k+</div><div style="color:#9aa4b2">Customers</div></div>
+    <div><div style="font-size:44px;font-weight:800">99.9%</div><div style="color:#9aa4b2">Uptime</div></div>
+    <div><div style="font-size:44px;font-weight:800">4.9/5</div><div style="color:#9aa4b2">Rating</div></div>
+  </div>
+</section>`,
+  },
+  testimonial: {
+    label: "Testimonial",
+    html: `<section style="padding:64px 24px;background:#151a2e;color:#e6e8ef;text-align:center">
+  <p style="max-width:640px;margin:0 auto 20px;font-size:24px;line-height:1.5;font-weight:600">“This is the tool our team didn't know it was missing. Shipped a landing page in an afternoon.”</p>
+  <p style="margin:0;color:#9aa4b2">Jordan Lee · Head of Product, Acme</p>
+</section>`,
+  },
+  faq: {
+    label: "FAQ",
+    html: `<section style="padding:56px 24px;background:#0b1020;color:#e6e8ef">
+  <div style="max-width:720px;margin:0 auto">
+    <h2 style="margin:0 0 24px;font-size:26px">Frequently asked</h2>
+    <div style="border-top:1px solid #232a44;padding:18px 0"><h4 style="margin:0 0 6px">Is there a free plan?</h4><p style="margin:0;color:#9aa4b2">Yes — the Starter plan is free forever.</p></div>
+    <div style="border-top:1px solid #232a44;padding:18px 0"><h4 style="margin:0 0 6px">Can I cancel anytime?</h4><p style="margin:0;color:#9aa4b2">Absolutely, no questions asked.</p></div>
+  </div>
+</section>`,
+  },
+  gallery: {
+    label: "Gallery",
+    html: `<section style="padding:40px 24px;background:#0b1020">
+  <div style="max-width:960px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=1" alt="" style="width:100%;border-radius:12px;display:block" />
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=2" alt="" style="width:100%;border-radius:12px;display:block" />
+    <img src="https://placehold.co/400x300/1b2140/9aa4b2?text=3" alt="" style="width:100%;border-radius:12px;display:block" />
+  </div>
+</section>`,
+  },
+  contact: {
+    label: "Contact form",
+    html: `<section style="padding:56px 24px;background:#151a2e;color:#e6e8ef">
+  <form style="max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:12px">
+    <h2 style="margin:0 0 6px;font-size:24px">Get in touch</h2>
+    <input placeholder="Your name" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef" />
+    <input placeholder="Email" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef" />
+    <textarea placeholder="Message" rows="4" style="padding:12px 14px;border-radius:10px;border:1px solid #232a44;background:#0b1020;color:#e6e8ef"></textarea>
+    <button style="padding:12px;background:#6366f1;color:#fff;border:0;border-radius:10px;font-weight:700;cursor:pointer">Send</button>
+  </form>
+</section>`,
+  },
+  footer: {
+    label: "Footer",
+    html: `<footer style="padding:40px 32px;background:#080b16;color:#9aa4b2;display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;border-top:1px solid #232a44">
+  <div><strong style="color:#e6e8ef;font-size:16px">Brand</strong><p style="margin:8px 0 0;max-width:260px;font-size:14px">Build faster with confidence.</p></div>
+  <div style="display:flex;gap:48px;font-size:14px">
+    <div style="display:flex;flex-direction:column;gap:8px"><a href="#" style="color:#9aa4b2;text-decoration:none">Product</a><a href="#" style="color:#9aa4b2;text-decoration:none">Pricing</a></div>
+    <div style="display:flex;flex-direction:column;gap:8px"><a href="#" style="color:#9aa4b2;text-decoration:none">About</a><a href="#" style="color:#9aa4b2;text-decoration:none">Contact</a></div>
+  </div>
+</footer>`,
+  },
 };
 
 // Slide-native layouts (for fixed-aspect slides). Inline-styled so they read the

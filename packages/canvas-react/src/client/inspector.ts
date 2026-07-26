@@ -151,7 +151,7 @@ const INSPECTOR_SCRIPT = `
     fmtBar.className = "lcx-fmt";
     fmtBar.style.left = Math.max(4, r.left) + "px";
     fmtBar.style.top = Math.max(4, r.top - 40) + "px";
-    var specs = [["<b>B</b>", "bold"], ["<i>I</i>", "italic"], ["<u>U</u>", "underline"], ["\\uD83D\\uDD17", "createLink"]];
+    var specs = [["<b>B</b>", "bold"], ["<i>I</i>", "italic"], ["<u>U</u>", "underline"], ["&bull;", "insertUnorderedList"], ["1.", "insertOrderedList"], ["\\uD83D\\uDD17", "createLink"]];
     for (var i = 0; i < specs.length; i++) {
       (function (spec) {
         var btn = document.createElement("button");

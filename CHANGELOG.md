@@ -4,6 +4,17 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.10] — 2026-07-26
+
+### Added — web (HTML) authoring usability
+- **Bigger component library.** The section-insert menu grows from 3 to 11
+  ready-made sections: Hero, Features, Call to action, Nav bar, Pricing, Stats,
+  Testimonial, FAQ, Gallery, Contact form, Footer.
+- **Lists in the rich-text bar.** The in-place text toolbar adds bullet and
+  numbered lists alongside bold / italic / underline / link.
+- **Copy HTML** and **Open in new tab** in the Export menu — grab the markup or
+  preview the page full-size without downloading a file.
+
 ## [0.1.9] — 2026-07-26
 
 ### Added — slide (PPT) authoring
@@ -114,6 +125,8 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.10]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.10
+[0.1.9]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.9
 [0.1.8]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.8
 [0.1.7]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.7
 [0.1.6]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.6

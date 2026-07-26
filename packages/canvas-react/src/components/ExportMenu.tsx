@@ -67,6 +67,35 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     setOpen(false);
   };
 
+  const openInTab = () => {
+    const html =
+      artifact.type === "html"
+        ? (artifact.data as HtmlData).html
+        : artifact.type === "slides"
+          ? slidesToPrintHtml(artifact.data as SlidesData, artifact.title)
+          : (() => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, h); })();
+    if (html == null) return;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    setOpen(false);
+  };
+
+  const [copied, setCopied] = useState(false);
+  const copyHtml = async () => {
+    const html = artifact.type === "html" ? (artifact.data as HtmlData).html : getRenderedHtml();
+    if (html == null) return;
+    try {
+      await navigator.clipboard.writeText(
+        artifact.type === "html" ? html : toStandaloneHtml(artifact.title, html),
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard blocked — no-op */
+    }
+  };
+
   return (
     <div className="cv-export">
       <button
@@ -82,6 +111,12 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
         <>
           <div className="cv-export__scrim" onClick={() => setOpen(false)} />
           <div className="cv-export__menu" role="menu">
+            <button role="menuitem" onClick={openInTab}>
+              Open in new tab ↗
+            </button>
+            <button role="menuitem" onClick={copyHtml}>
+              {copied ? "Copied ✓" : "Copy HTML"}
+            </button>
             <button role="menuitem" onClick={exportHtml}>
               HTML <span className="cv-export__ext">.html</span>
             </button>
