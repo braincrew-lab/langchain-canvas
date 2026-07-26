@@ -25,6 +25,14 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - **Text controls on selection.** Align left / center / right and Bold a selected
   text element (a new persisting `style_persist` iframe command).
 
+### Fixed — slide export fidelity
+- **Accurate HTML/PDF export for slides.** An html-substrate slide previously
+  printed onto a default A4-portrait page and got clipped. `htmlSlideToPrintHtml`
+  now wraps a fixed-aspect slide with an `@page` rule sized to the slide
+  (16:9 → 1280×720, 4:3 → 960×720, zero margin) and pins the `.slide-container`
+  to it, so the PDF is one clean full-bleed slide. The HTML download carries the
+  same sizing, so it displays and prints correctly.
+
 ## [0.1.8] — 2026-07-26
 
 ### Added

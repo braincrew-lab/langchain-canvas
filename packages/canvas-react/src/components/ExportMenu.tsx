@@ -11,7 +11,7 @@ import { useState } from "react";
 
 import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
-import { dataExporters, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
+import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
@@ -31,7 +31,11 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     if (artifact.type === "html") {
       // The artifact *is* a full HTML document — export the real source, not the
       // iframe wrapper (capturing the rendered DOM would yield an empty <iframe>).
-      downloadBlob(`${stem}.html`, "text/html", (artifact.data as HtmlData).html);
+      // A fixed-aspect slide gets slide sizing + an @page rule so the downloaded
+      // file both displays the slide correctly and prints to a slide-sized page.
+      const ratio = artifact.meta?.ratio as string | undefined;
+      const html = (artifact.data as HtmlData).html;
+      downloadBlob(`${stem}.html`, "text/html", ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;
@@ -50,7 +54,11 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
     if (artifact.type === "slides") {
       printToPdf(slidesToPrintHtml(artifact.data as SlidesData, artifact.title));
     } else if (artifact.type === "html") {
-      printToPdf((artifact.data as HtmlData).html);
+      const ratio = artifact.meta?.ratio as string | undefined;
+      const html = (artifact.data as HtmlData).html;
+      // A fixed-aspect slide prints to a slide-sized landscape page (no A4 clip);
+      // a fluid web page prints as-is.
+      printToPdf(ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;

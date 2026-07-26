@@ -57,3 +57,22 @@ describe("dataExporters", () => {
     expect(out).toContain('"Ann, Jr"'); // comma-containing value is quoted
   });
 });
+
+import { htmlSlideToPrintHtml } from "./exporters";
+
+describe("htmlSlideToPrintHtml", () => {
+  const slide = `<!doctype html><html><head><style>.slide-container{width:1280px;height:720px}</style></head><body><div class="slide-container"><h1>Hi</h1></div></body></html>`;
+  it("adds a 16:9 slide-sized @page and pins the slide box", () => {
+    const out = htmlSlideToPrintHtml(slide, "16:9");
+    expect(out).toContain("@page{size:1280px 720px;margin:0}");
+    expect(out).toContain("width:1280px!important");
+    expect(out).toContain('<div class="slide-container">'); // content preserved
+  });
+  it("uses 960×720 for 4:3", () => {
+    expect(htmlSlideToPrintHtml(slide, "4:3")).toContain("@page{size:960px 720px;margin:0}");
+  });
+  it("injects before </head> when present", () => {
+    const out = htmlSlideToPrintHtml(slide, "16:9");
+    expect(out.indexOf("@page")).toBeLessThan(out.indexOf("</head>"));
+  });
+});

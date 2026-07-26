@@ -222,6 +222,26 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
   </style></head><body>${pages}</body></html>`;
 }
 
+/**
+ * Wrap a single html-substrate slide (a full HTML document containing a
+ * `.slide-container`) for print/PDF: force the print page to the slide's own
+ * size (16:9 → 1280×720, 4:3 → 960×720) with zero margin, and pin the slide box
+ * to that page. Without this the browser prints the 1280px slide onto a default
+ * A4-portrait page and clips it — this makes the PDF one clean, full-bleed slide.
+ */
+export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
+  const w = ratio === "4:3" ? 960 : 1280;
+  const h = 720;
+  const style =
+    `<style>@page{size:${w}px ${h}px;margin:0}` +
+    `html,body{margin:0!important;padding:0!important;background:#fff}` +
+    `.slide-container{width:${w}px!important;height:${h}px!important;` +
+    `box-shadow:none!important;border-radius:0!important;overflow:hidden!important;` +
+    `page-break-after:avoid}</style>`;
+  const i = html.toLowerCase().lastIndexOf("</head>");
+  return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
+}
+
 // --- helpers --------------------------------------------------------------------
 
 function escapeXml(value: string): string {
