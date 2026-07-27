@@ -153,6 +153,54 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
     reader.readAsDataURL(file);
   };
 
+  // Figma-style auto layout: tidy every element on the slide into an evenly-spaced
+  // vertical/horizontal stack, snap them to a shared edge, or distribute the gaps.
+  const arrange = (op: string) => {
+    const els = resolveElements(slide);
+    if (els.length === 0) return;
+    const GAP = 4;
+    const M = 6; // safe margin from the slide edge (percent)
+    let next: SlideElement[];
+    if (op === "stack-v") {
+      let y = M;
+      next = [...els].sort((a, b) => a.y - b.y).map((el) => {
+        const placed = { ...el, x: (100 - el.w) / 2, y };
+        y += el.h + GAP;
+        return placed;
+      });
+    } else if (op === "stack-h") {
+      let x = M;
+      next = [...els].sort((a, b) => a.x - b.x).map((el) => {
+        const placed = { ...el, x, y: (100 - el.h) / 2 };
+        x += el.w + GAP;
+        return placed;
+      });
+    } else if (op === "align-left") next = els.map((el) => ({ ...el, x: M }));
+    else if (op === "align-center") next = els.map((el) => ({ ...el, x: (100 - el.w) / 2 }));
+    else if (op === "align-right") next = els.map((el) => ({ ...el, x: 100 - M - el.w }));
+    else if (op === "align-top") next = els.map((el) => ({ ...el, y: M }));
+    else if (op === "align-middle") next = els.map((el) => ({ ...el, y: (100 - el.h) / 2 }));
+    else if (op === "align-bottom") next = els.map((el) => ({ ...el, y: 100 - M - el.h }));
+    else if (op === "dist-v" || op === "dist-h") {
+      if (els.length < 3) return;
+      const k: "x" | "y" = op === "dist-v" ? "y" : "x";
+      const sk: "w" | "h" = op === "dist-v" ? "h" : "w";
+      const sorted = [...els].sort((a, b) => a[k] - b[k]);
+      const start = sorted[0][k];
+      const end = sorted[sorted.length - 1][k] + sorted[sorted.length - 1][sk];
+      const total = sorted.reduce((acc, e) => acc + e[sk], 0);
+      const g = (end - start - total) / (sorted.length - 1);
+      let pos = start;
+      const placed = new Map<string, SlideElement>();
+      for (const el of sorted) {
+        placed.set(el.id, { ...el, [k]: pos });
+        pos += el[sk] + g;
+      }
+      next = els.map((e) => placed.get(e.id) ?? e);
+    } else return;
+    update({ elements: next });
+  };
+
   return (
     <div className="cv-deck">
       <aside className="cv-deck__rail cv-chrome">
@@ -210,6 +258,26 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             onChange={(e) => { if (e.target.value) applyLayout(e.target.value); e.currentTarget.value = ""; }}>
             <option value="">Layout…</option>
             {Object.entries(LAYOUTS).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
+          </select>
+          <select className="cv-deck__theme" value="" title="Auto layout — align & distribute elements"
+            onChange={(e) => { if (e.target.value) arrange(e.target.value); e.currentTarget.value = ""; }}>
+            <option value="">⤢ Arrange…</option>
+            <optgroup label="Auto layout">
+              <option value="stack-v">Stack vertical</option>
+              <option value="stack-h">Stack horizontal</option>
+            </optgroup>
+            <optgroup label="Align">
+              <option value="align-left">Left</option>
+              <option value="align-center">Center</option>
+              <option value="align-right">Right</option>
+              <option value="align-top">Top</option>
+              <option value="align-middle">Middle</option>
+              <option value="align-bottom">Bottom</option>
+            </optgroup>
+            <optgroup label="Distribute">
+              <option value="dist-v">Vertical gaps</option>
+              <option value="dist-h">Horizontal gaps</option>
+            </optgroup>
           </select>
           <select
             className="cv-deck__theme"

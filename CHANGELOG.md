@@ -4,6 +4,15 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.15] — 2026-07-28
+
+### Added
+- **Auto layout for slides (Figma-style).** An "⤢ Arrange…" menu on the deck
+  toolbar tidies every element on the slide: stack them into an evenly-spaced
+  vertical or horizontal column (sorted by position, centered on the cross axis),
+  snap them to a shared edge (align left / center / right / top / middle / bottom),
+  or distribute the gaps evenly (vertical / horizontal).
+
 ## [0.1.14] — 2026-07-26
 
 ### Changed
@@ -172,6 +181,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.1.15]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.15
 [0.1.14]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.14
 [0.1.13]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.13
 [0.1.12]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.12
