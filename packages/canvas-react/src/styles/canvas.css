@@ -1156,7 +1156,10 @@
 
 /* --- PDF viewer ---------------------------------------------------------------- */
 
-.cv-pdf-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Fills the flush body outright — `flex: 1` alone collapsed the iframe to its
+   content height (a thin strip of page) because `.cv-body` is a block, not a
+   flex container. */
+.cv-pdf-panel { display: flex; flex-direction: column; height: 100%; min-height: 480px; }
 .cv-pdf-tools {
   display: flex; align-items: center; gap: 6px; padding: 6px 10px;
   border-bottom: 1px solid var(--cv-border); background: var(--cv-bg); flex: 0 0 auto;

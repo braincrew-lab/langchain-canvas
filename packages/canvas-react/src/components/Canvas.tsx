@@ -194,7 +194,7 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
 
       {/* spreadsheets own their own scroll — give them a flush, non-scrolling body */}
       <div
-        className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}${isHistory ? " cv-body--history" : ""}`}
+        className={`cv-body${shown.type === "table" || shown.type === "pdf" ? " cv-body--flush" : ""}${isHistory ? " cv-body--history" : ""}`}
         ref={bodyRef}
         aria-readonly={isHistory || undefined}
       >
