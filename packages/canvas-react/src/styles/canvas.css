@@ -431,6 +431,29 @@
   border-radius: 6px; background: var(--cv-bg); cursor: pointer;
 }
 .cv-sheet-tools__color:disabled { opacity: 0.4; cursor: default; }
+.cv-sheet-tools__numfmt, .cv-sheet-tools__fx {
+  font: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid var(--cv-border); background: var(--cv-bg); color: var(--cv-text);
+}
+.cv-sheet-tools__numfmt:disabled, .cv-sheet-tools__fx:disabled { opacity: 0.4; }
+.cv-sheet-tools__numfmt:focus, .cv-sheet-tools__fx:focus { outline: none; border-color: var(--cv-accent); }
+
+/* formula bar — a hairline row between the toolbar and the grid */
+.cv-sheet-fxbar {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+  border-bottom: 1px solid var(--cv-border); background: var(--cv-bg); flex: 0 0 auto;
+}
+.cv-sheet-fxbar__cell {
+  min-width: 44px; text-align: center; font-size: 12px; font-weight: 600;
+  color: var(--cv-muted); font-variant-numeric: tabular-nums;
+  border-right: 1px solid var(--cv-border); padding-right: 8px;
+}
+.cv-sheet-fxbar__input {
+  flex: 1; font-family: var(--cv-mono); font-size: 12.5px; padding: 3px 8px;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--cv-text);
+}
+.cv-sheet-fxbar__input:focus { outline: none; border-color: var(--cv-accent); background: var(--cv-bg); }
+.cv-sheet-fxbar__input:disabled { opacity: 0.5; }
 .cv-sheet { position: relative; width: 100%; flex: 1; height: auto; min-height: 0; }
 .cv-sheet .fortune-container { height: 100% !important; width: 100% !important; }
 .cv-sheet--empty { display: grid; place-items: center; height: 200px; color: var(--cv-muted); font-size: 14px; }
@@ -664,6 +687,17 @@
 .cv-free__multibar button:hover { background: var(--cv-surface); }
 .cv-free__multibar button:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .cv-free__multibar-del:hover { background: #fee2e2 !important; color: #dc2626; }
+
+/* per-element control-bar inputs: rotation + corner radius */
+.cv-free__ctl-rot, .cv-free__ctl-radius {
+  width: 44px; height: 22px; font: inherit; font-size: 11.5px; padding: 0 4px;
+  border: 1px solid var(--cv-border); border-radius: 5px; background: var(--cv-bg); color: var(--cv-text);
+}
+.cv-free__ctl-rot:focus, .cv-free__ctl-radius:focus { outline: none; border-color: var(--cv-accent); }
+
+/* slide reorder: insertion indicator while dragging a thumbnail */
+.cv-deck__thumb-wrap--drop-before { box-shadow: 0 -2px 0 0 var(--cv-accent); }
+.cv-deck__thumb-wrap--drop-after { box-shadow: 0 2px 0 0 var(--cv-accent); }
 
 /* toolbar: background swatch + present button */
 .cv-deck__bg input[type="color"] {

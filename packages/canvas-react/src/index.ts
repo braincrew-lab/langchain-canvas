@@ -32,6 +32,10 @@ export { useArtifactPatch } from "./hooks/useArtifactPatch";
 export { scenarios } from "./fixtures/scenarios";
 export type { Scenario } from "./fixtures/scenarios";
 
+// i18n — canvas chrome locale ("en" | "ko")
+export { CanvasLocaleProvider, useT, useLocale } from "./i18n/i18n";
+export type { CanvasLocale, MessageKey } from "./i18n/i18n";
+
 // registry
 export { CanvasRegistryProvider, useRenderer, mergeRegistries } from "./registry/registry";
 export type { ArtifactRegistry, ArtifactRenderer, RendererProps } from "./registry/registry";

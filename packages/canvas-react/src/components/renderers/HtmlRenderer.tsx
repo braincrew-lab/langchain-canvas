@@ -23,12 +23,17 @@ import type { HtmlData } from "../../protocol/artifacts";
 import type { IframeCommand } from "../../store/store";
 import { useCanvasStore, useCanvasStoreApi } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
+import { useT, type MessageKey } from "../../i18n/i18n";
 
 const DEVICES = [
   { id: "desktop", label: "Desktop", width: "100%" },
   { id: "tablet", label: "Tablet", width: "768px" },
   { id: "mobile", label: "Mobile", width: "390px" },
 ] as const;
+
+// i18n keys for the insert palette / device segments (labels stay English in data).
+const BLOCK_KEYS: Record<string, MessageKey> = { h2: "heading", p: "text", button: "button", img: "image", hr: "divider" };
+const DEVICE_KEYS: Record<string, MessageKey> = { desktop: "desktop", tablet: "tablet", mobile: "mobile" };
 
 const BLOCKS = [
   { tag: "h2", label: "Heading" },
@@ -350,6 +355,7 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
 }
 
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
+  const t = useT();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
@@ -508,17 +514,17 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <div className="cv-html-seg" role="group" aria-label="Preview width">
                   {DEVICES.map((d) => (
                     <button key={d.id} className={device === d.id ? "is-on" : ""} onClick={() => setDevice(d.id)}>
-                      {d.label}
+                      {DEVICE_KEYS[d.id] ? t(DEVICE_KEYS[d.id]) : d.label}
                     </button>
                   ))}
                 </div>
                 <span className="cv-html-bar__sep" />
               </>
             )}
-            <span className="cv-html-bar__label">Add</span>
+            <span className="cv-html-bar__label">{t("add")}</span>
             {(ratio ? BLOCKS.filter((b) => SLIDE_BLOCK_TAGS.has(b.tag)) : BLOCKS).map((b) => (
               <button key={b.tag} className="cv-html-add" onClick={() => command("insert", { block: b.tag })}>
-                {b.label}
+                {BLOCK_KEYS[b.tag] ? t(BLOCK_KEYS[b.tag]) : b.label}
               </button>
             ))}
             {/* Web section templates + full-page starters — only for fluid web pages. */}
@@ -527,14 +533,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Start from a full page template (replaces the page)"
+                  title={t("pageTemplateTitle")}
                   onChange={(e) => {
                     const s = STARTERS[e.target.value];
                     if (s) applyEvent({ type: "canvas.patch", id: artifact.id, patch: { html: s.build() } });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Page…</option>
+                  <option value="">{t("pageMenu")}</option>
                   {Object.entries(STARTERS).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
@@ -542,14 +548,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Insert a section template"
+                  title={t("sectionTemplateTitle")}
                   onChange={(e) => {
                     const t = TEMPLATES[e.target.value];
                     if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Section…</option>
+                  <option value="">{t("sectionMenu")}</option>
                   {Object.entries(TEMPLATES).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
@@ -558,20 +564,20 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                   <select
                     className="cv-html-tpl"
                     value=""
-                    title="Jump to a heading"
+                    title={t("jumpToHeading")}
                     onChange={(e) => {
                       const idx = Number(e.target.value);
                       if (!Number.isNaN(idx)) sendIframeCommand({ artifactId: artifact.id, type: "scroll_to", index: idx });
                       e.currentTarget.value = "";
                     }}
                   >
-                    <option value="">Outline…</option>
+                    <option value="">{t("outlineMenu")}</option>
                     {outline.map((h, i) => (
                       <option key={i} value={i}>{" ".repeat((h.level - 1) * 2) + h.text}</option>
                     ))}
                   </select>
                 )}
-                <button className="cv-html-add" title="Accessibility check" onClick={() => setA11y(checkA11y(artifact.data.html))}>♿ Check</button>
+                <button className="cv-html-add" title={t("a11yTitle")} onClick={() => setA11y(checkA11y(artifact.data.html))}>♿ Check</button>
               </>
             )}
             {/* Slide-native layouts + one-click themes — only for fixed-aspect slides. */}
@@ -580,14 +586,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Insert a slide layout"
+                  title={t("insertSlideLayout")}
                   onChange={(e) => {
                     const t = SLIDE_TEMPLATES[e.target.value];
                     if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Layout…</option>
+                  <option value="">{t("layoutMenu")}</option>
                   {Object.entries(SLIDE_TEMPLATES).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
@@ -595,14 +601,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Apply a slide theme"
+                  title={t("applySlideTheme")}
                   onChange={(e) => {
                     const t = SLIDE_THEMES[e.target.value];
                     if (t) sendIframeCommand({ artifactId: artifact.id, type: "set_slide_style", style: t.style });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Theme…</option>
+                  <option value="">{t("themeMenu")}</option>
                   {Object.entries(SLIDE_THEMES).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
@@ -610,14 +616,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Insert a shape"
+                  title={t("insertShape")}
                   onChange={(e) => {
                     const t = SLIDE_SHAPES[e.target.value];
                     if (t) sendIframeCommand({ artifactId: artifact.id, type: "insert_html", cid: single?.cid, html: t.html });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Shape…</option>
+                  <option value="">{t("shapeMenu")}</option>
                   {Object.entries(SLIDE_SHAPES).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
@@ -625,19 +631,19 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <select
                   className="cv-html-tpl"
                   value=""
-                  title="Slide font"
+                  title={t("slideFont")}
                   onChange={(e) => {
                     const f = SLIDE_FONTS[e.target.value];
                     if (f) setSlideStyle({ fontFamily: f.stack });
                     e.currentTarget.value = "";
                   }}
                 >
-                  <option value="">Font…</option>
+                  <option value="">{t("fontMenu")}</option>
                   {Object.entries(SLIDE_FONTS).map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
                 </select>
-                <button className="cv-html-add" title="Slide background image" onClick={() => bgFileRef.current?.click()}>🖼 BG</button>
+                <button className="cv-html-add" title={t("slideBgImage")} onClick={() => bgFileRef.current?.click()}>🖼 BG</button>
               </>
             )}
 
@@ -673,18 +679,18 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 )}
                 {single && single.tag !== "img" && (
                   <>
-                    <button className="cv-html-act" title="Align left" onClick={() => command("style_persist", { prop: "textAlign", value: "left" })}>⬅</button>
-                    <button className="cv-html-act" title="Align center" onClick={() => command("style_persist", { prop: "textAlign", value: "center" })}>⬌</button>
-                    <button className="cv-html-act" title="Align right" onClick={() => command("style_persist", { prop: "textAlign", value: "right" })}>➡</button>
-                    <button className="cv-html-act" title="Bold" onClick={() => command("style_persist", { prop: "fontWeight", value: "800" })}>B</button>
+                    <button className="cv-html-act" title={t("alignLeft")} onClick={() => command("style_persist", { prop: "textAlign", value: "left" })}>⬅</button>
+                    <button className="cv-html-act" title={t("alignCenter")} onClick={() => command("style_persist", { prop: "textAlign", value: "center" })}>⬌</button>
+                    <button className="cv-html-act" title={t("alignRight")} onClick={() => command("style_persist", { prop: "textAlign", value: "right" })}>➡</button>
+                    <button className="cv-html-act" title={t("bold")} onClick={() => command("style_persist", { prop: "fontWeight", value: "800" })}>B</button>
                   </>
                 )}
                 {single && (
                   <>
-                    <button className="cv-html-act" title="Duplicate" onClick={() => command("duplicate")}>⧉</button>
-                    <button className="cv-html-act" title="Move up" onClick={() => command("move_up")}>↑</button>
-                    <button className="cv-html-act" title="Move down" onClick={() => command("move_down")}>↓</button>
-                    <button className="cv-html-act cv-html-act--del" title="Delete" onClick={() => command("delete")}>🗑</button>
+                    <button className="cv-html-act" title={t("duplicate")} onClick={() => command("duplicate")}>⧉</button>
+                    <button className="cv-html-act" title={t("moveUp")} onClick={() => command("move_up")}>↑</button>
+                    <button className="cv-html-act" title={t("moveDown")} onClick={() => command("move_down")}>↓</button>
+                    <button className="cv-html-act cv-html-act--del" title={t("delete")} onClick={() => command("delete")}>🗑</button>
                   </>
                 )}
               </>
@@ -694,8 +700,8 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
 
         <span className="cv-html-bar__spacer" />
         <div className="cv-html-seg" role="group" aria-label="View mode">
-          <button className={mode === "design" ? "is-on" : ""} onClick={() => setMode("design")}>Design</button>
-          <button className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>Code</button>
+          <button className={mode === "design" ? "is-on" : ""} onClick={() => setMode("design")}>{t("design")}</button>
+          <button className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>{t("code")}</button>
         </div>
       </div>
 
@@ -703,10 +709,10 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
         <div className="cv-a11y" role="status">
           <button className="cv-a11y__close" onClick={() => setA11y(null)} aria-label="Dismiss">×</button>
           {a11y.length === 0 ? (
-            <span className="cv-a11y__ok">♿ No accessibility issues found</span>
+            <span className="cv-a11y__ok">{t("a11yNone")}</span>
           ) : (
             <>
-              <b>♿ {a11y.length} accessibility issue{a11y.length > 1 ? "s" : ""}</b>
+              <b>♿ {a11y.length} {t("a11yIssues")}</b>
               <ul>{a11y.map((m, i) => <li key={i}>{m}</li>)}</ul>
             </>
           )}

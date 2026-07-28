@@ -15,15 +15,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import * as echarts from "echarts/core";
-import { BarChart, LineChart, PieChart } from "echarts/charts";
+import { BarChart, LineChart, PieChart, ScatterChart } from "echarts/charts";
 import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
 import type { ChartData, ChartSeries } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
+import { useT } from "../../i18n/i18n";
 
-echarts.use([BarChart, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 // Accessible, brand-neutral categorical palette (swap for your design system).
 const PALETTE = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#0ea5e9", "#a855f7"];
@@ -31,7 +32,7 @@ const PALETTE = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#0ea5e9", "#a855f7
 const seriesColor = (series: ChartSeries, index: number) => series.color ?? PALETTE[index % PALETTE.length];
 const sliceColor = (options: ChartData["options"], index: number) => options?.colors?.[index] ?? PALETTE[index % PALETTE.length];
 
-const CHART_TYPES: ChartData["chart"][] = ["bar", "line", "area", "pie"];
+const CHART_TYPES: ChartData["chart"][] = ["bar", "line", "area", "scatter", "pie", "donut"];
 
 /** Mount an ECharts instance and drive it from an `option`; resizes with its box. */
 function EChart({ option, height, onInst }: { option: Record<string, unknown>; height: number; onInst?: (inst: echarts.ECharts | null) => void }) {
@@ -55,6 +56,7 @@ function EChart({ option, height, onInst }: { option: Record<string, unknown>; h
 }
 
 export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
+  const t = useT();
   const { chart, rows, xKey, series, options, echartsOption } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [editing, setEditing] = useState(false);
@@ -80,7 +82,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
       <div className="cv-chart">
         <div className="cv-chart__toolbar cv-chrome">
           <span className="cv-chart__spacer" />
-          <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
+          <button className="cv-edit-btn" onClick={downloadPng} title={t("downloadPng")}>{t("downloadPng")}</button>
         </div>
         <EChart option={option} height={320} onInst={(i) => (instRef.current = i)} />
       </div>
@@ -88,10 +90,11 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
   }
 
   if (rows.length === 0) {
-    return <div className="cv-chart cv-chart--empty">Waiting for data…</div>;
+    return <div className="cv-chart cv-chart--empty">{t("waitingData")}</div>;
   }
 
-  const isPie = chart === "pie";
+  // Donut is the pie family: same per-slice colors and legend, different radius.
+  const isPie = chart === "pie" || chart === "donut";
 
   const setSeries = (i: number, partial: Partial<ChartSeries>) =>
     patch({ series: series.map((s, j) => (j === i ? { ...s, ...partial } : s)) });
@@ -122,20 +125,20 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
         {(chart === "bar" || chart === "area") && (
           <label className="cv-chart__stack">
             <input type="checkbox" checked={!!options?.stacked} onChange={(e) => patch({ options: { ...options, stacked: e.target.checked } })} />
-            Stacked
+            {t("stacked")}
           </label>
         )}
         <input
           className="cv-chart__title-input"
           value={options?.title ?? ""}
-          placeholder="Chart title…"
+          placeholder={t("chartTitle")}
           onChange={(e) => patch({ options: { ...options, title: e.target.value || undefined } })}
-          title="Chart title"
+          title={t("chartTitle")}
         />
         <span className="cv-chart__spacer" />
-        <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
+        <button className="cv-edit-btn" onClick={downloadPng} title={t("downloadPng")}>{t("downloadPng")}</button>
         <button className={`cv-edit-btn ${editing ? "is-primary" : ""}`} onClick={() => setEditing((v) => !v)}>
-          {editing ? "Done" : "Edit data"}
+          {editing ? t("doneEditing") : t("editData")}
         </button>
       </div>
 
@@ -151,12 +154,12 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
                 ))
               : series.map((s, i) => (
                   <span key={s.key} className="cv-chart__swatch">
-                    <input type="color" value={seriesColor(s, i)} onChange={(e) => setSeries(i, { color: e.target.value })} title="Series color" />
+                    <input type="color" value={seriesColor(s, i)} onChange={(e) => setSeries(i, { color: e.target.value })} title={t("seriesColor")} />
                     <input
                       className="cv-chart__series-name"
                       value={s.label ?? s.key}
                       onChange={(e) => setSeries(i, { label: e.target.value })}
-                      title="Series name"
+                      title={t("seriesName")}
                     />
                   </span>
                 ))}
@@ -215,6 +218,7 @@ function DataGrid({
   onAddRow: () => void;
   onRemoveRow: (i: number) => void;
 }) {
+  const t = useT();
   return (
     <div className="cv-chart__grid">
       <table>
@@ -239,7 +243,7 @@ function DataGrid({
                 </td>
               ))}
               <td>
-                <button className="cv-chart__row-del" onClick={() => onRemoveRow(i)} disabled={rows.length <= 1} title="Remove row">
+                <button className="cv-chart__row-del" onClick={() => onRemoveRow(i)} disabled={rows.length <= 1} title={t("removeRow")}>
                   ×
                 </button>
               </td>
@@ -248,7 +252,7 @@ function DataGrid({
         </tbody>
       </table>
       <button className="cv-chart__addrow" onClick={onAddRow}>
-        + Add row
+        {t("addRowBtn")}
       </button>
     </div>
   );
@@ -267,7 +271,7 @@ function toEChartsOption(
     ? { title: { text: options.title, left: "center", top: 2, textStyle: { color: AXIS, fontSize: 15, fontWeight: 600 } } }
     : {};
   const hasTitle = !!options?.title;
-  if (chart === "pie") {
+  if (chart === "pie" || chart === "donut") {
     const valueKey = series[0]?.key ?? "value";
     return {
       ...titleBlock,
@@ -276,7 +280,7 @@ function toEChartsOption(
       series: [
         {
           type: "pie",
-          radius: ["45%", "72%"],
+          radius: chart === "donut" ? ["45%", "70%"] : ["45%", "72%"],
           padAngle: 2,
           itemStyle: { borderRadius: 4 },
           label: { color: AXIS },
@@ -290,18 +294,30 @@ function toEChartsOption(
     };
   }
 
+  // Scatter with fully numeric x plots on a value axis ([x, y] pairs); a
+  // non-numeric xKey falls back to the shared category axis below.
+  const isNumeric = (v: string | number | undefined) => v !== undefined && v !== "" && Number.isFinite(Number(v));
+  const scatterOnValueAxis = chart === "scatter" && rows.length > 0 && rows.every((r) => isNumeric(r[xKey]));
+
   const stacked = (chart === "bar" || chart === "area") && !!options?.stacked;
   return {
     ...titleBlock,
-    tooltip: { trigger: "axis" },
+    tooltip: { trigger: chart === "scatter" ? "item" : "axis" },
     legend: { bottom: 0, textStyle: { color: AXIS } },
     grid: { left: 8, right: 16, top: hasTitle ? 44 : 24, bottom: 40, containLabel: true },
-    xAxis: {
-      type: "category",
-      data: rows.map((r) => String(r[xKey] ?? "")),
-      axisLabel: { color: AXIS, fontSize: 12 },
-      axisLine: { lineStyle: { color: "#d4d7dd" } },
-    },
+    xAxis: scatterOnValueAxis
+      ? {
+          type: "value",
+          axisLabel: { color: AXIS, fontSize: 12 },
+          axisLine: { lineStyle: { color: "#d4d7dd" } },
+          splitLine: { lineStyle: { color: "#e5e7eb", type: "dashed" } },
+        }
+      : {
+          type: "category",
+          data: rows.map((r) => String(r[xKey] ?? "")),
+          axisLabel: { color: AXIS, fontSize: 12 },
+          axisLine: { lineStyle: { color: "#d4d7dd" } },
+        },
     yAxis: {
       type: "value",
       name: options?.yLabel,
@@ -309,14 +325,26 @@ function toEChartsOption(
       axisLabel: { color: AXIS, fontSize: 12 },
       splitLine: { lineStyle: { color: "#e5e7eb", type: "dashed" } },
     },
-    series: series.map((s, i) => ({
-      name: s.label ?? s.key,
-      type: chart === "area" ? "line" : chart,
-      ...(chart === "area" ? { areaStyle: { opacity: 0.2 }, smooth: false } : {}),
-      ...(chart !== "bar" ? { showSymbol: false, lineStyle: { width: 2 } } : {}),
-      stack: stacked ? "total" : undefined,
-      itemStyle: { color: seriesColor(s, i) },
-      data: rows.map((r) => Number(r[s.key] ?? 0)),
-    })),
+    series: series.map((s, i) =>
+      chart === "scatter"
+        ? {
+            name: s.label ?? s.key,
+            type: "scatter",
+            symbolSize: 10,
+            itemStyle: { color: seriesColor(s, i) },
+            data: scatterOnValueAxis
+              ? rows.map((r) => [Number(r[xKey]), Number(r[s.key] ?? 0)])
+              : rows.map((r) => Number(r[s.key] ?? 0)),
+          }
+        : {
+            name: s.label ?? s.key,
+            type: chart === "area" ? "line" : chart,
+            ...(chart === "area" ? { areaStyle: { opacity: 0.2 }, smooth: false } : {}),
+            ...(chart !== "bar" ? { showSymbol: false, lineStyle: { width: 2 } } : {}),
+            stack: stacked ? "total" : undefined,
+            itemStyle: { color: seriesColor(s, i) },
+            data: rows.map((r) => Number(r[s.key] ?? 0)),
+          },
+    ),
   };
 }

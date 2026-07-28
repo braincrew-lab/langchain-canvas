@@ -149,3 +149,138 @@ describe("hwpxToMarkdown", () => {
     await expect(hwpxToMarkdown(zip)).rejects.toThrow(/section/i);
   });
 });
+
+/** Wrap OWPML body markup in a section root with the usual namespaces bound. */
+const sectionXml = (body: string) =>
+  enc.encode(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">${body}</hs:sec>`,
+  );
+
+/** A real 1×1 transparent PNG, inlined byte-by-byte. */
+const PNG_1PX = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+  0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+  0x42, 0x60, 0x82,
+]);
+
+const PNG_1PX_B64 = btoa(String.fromCharCode(...PNG_1PX));
+
+describe("hwpxToMarkdown images", () => {
+  it("inlines a picture as a data-URL image via the content.hpf manifest", async () => {
+    // The manifest maps the ref id to a differently-named BinData entry, so
+    // this passes only when the manifest (not the basename guess) resolves it.
+    const manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<opf:package xmlns:opf="http://www.idpf.org/2007/opf/">
+  <opf:manifest>
+    <opf:item id="image1" href="BinData/pic7.png" media-type="image/png"/>
+  </opf:manifest>
+</opf:package>`;
+    const zip = makeZip([
+      { name: "mimetype", data: enc.encode("application/hwp+zip"), method: 0 },
+      { name: "Contents/content.hpf", data: enc.encode(manifest), method: 0 },
+      { name: "BinData/pic7.png", data: PNG_1PX, method: 0 },
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(
+          `<hp:p><hp:run><hp:t>그림 앞</hp:t><hp:pic><hc:img binaryItemIDRef="image1"/></hp:pic></hp:run></hp:p>`,
+        ),
+        method: 0,
+      },
+    ]);
+    const md = await hwpxToMarkdown(zip);
+    expect(md).toContain(`![](data:image/png;base64,${PNG_1PX_B64})`);
+    // The image block follows the paragraph's own text.
+    expect(md.indexOf("그림 앞")).toBeLessThan(md.indexOf("![]("));
+  });
+
+  it("resolves a picture directly against BinData without a manifest, and skips unresolvable refs silently", async () => {
+    const zip = makeZip([
+      { name: "BinData/photo.jpg", data: PNG_1PX, method: 0 },
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(
+          `<hp:p><hp:run><hp:pic><hc:img binaryItemIDRef="photo"/></hp:pic><hp:pic><hc:img binaryItemIDRef="missing"/></hp:pic><hp:t>본문</hp:t></hp:run></hp:p>`,
+        ),
+        method: 0,
+      },
+    ]);
+    const md = await hwpxToMarkdown(zip);
+    // Mime comes from the entry's extension; the dangling ref emits nothing.
+    expect(md).toContain(`![](data:image/jpeg;base64,${PNG_1PX_B64})`);
+    expect(md.match(/!\[\]\(/g)).toHaveLength(1);
+    expect(md).toContain("본문");
+    expect(md).not.toContain("생략");
+  });
+
+  it("omits images past the base64 budget and appends a bilingual note", async () => {
+    // ~7 MiB of raw bytes → ~9.3 M base64 chars, over the 8 M budget; the tiny
+    // PNG after it still fits (the budget is spent per image, not slammed shut).
+    const huge = new Uint8Array(7 * 1024 * 1024);
+    const zip = makeZip([
+      { name: "BinData/huge.jpg", data: huge, method: 0 },
+      { name: "BinData/tiny.png", data: PNG_1PX, method: 0 },
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(
+          `<hp:p><hp:run><hp:pic><hc:img binaryItemIDRef="huge"/></hp:pic><hp:pic><hc:img binaryItemIDRef="tiny"/></hp:pic></hp:run></hp:p>`,
+        ),
+        method: 0,
+      },
+    ]);
+    const md = await hwpxToMarkdown(zip);
+    expect(md).not.toContain("image/jpeg");
+    expect(md).toContain(`![](data:image/png;base64,${PNG_1PX_B64})`);
+    expect(md).toContain("> (이미지 1장 생략 / 1 images omitted)");
+  });
+});
+
+describe("hwpxToMarkdown headings", () => {
+  it("maps outline/heading style names from header.xml to markdown headings", async () => {
+    const header = `<?xml version="1.0" encoding="UTF-8"?>
+<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">
+  <hh:refList>
+    <hh:styles>
+      <hh:style id="0" type="PARA" name="바탕글" paraPrIDRef="0"/>
+      <hh:style id="2" type="PARA" name="개요 1" paraPrIDRef="20"/>
+      <hh:style id="5" type="PARA" name="Heading 3" paraPrIDRef="23"/>
+    </hh:styles>
+  </hh:refList>
+</hh:head>`;
+    const zip = makeZip([
+      { name: "Contents/header.xml", data: enc.encode(header), method: 0 },
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(
+          `<hp:p styleIDRef="2" paraPrIDRef="20"><hp:run><hp:t>프로젝트 개요</hp:t></hp:run></hp:p>` +
+            `<hp:p styleIDRef="5"><hp:run><hp:t>세부 항목</hp:t></hp:run></hp:p>` +
+            `<hp:p paraPrIDRef="20"><hp:run><hp:t>스타일 없는 개요</hp:t></hp:run></hp:p>` +
+            `<hp:p styleIDRef="0" paraPrIDRef="0"><hp:run><hp:t>바탕글 본문</hp:t></hp:run></hp:p>` +
+            `<hp:p><hp:run><hp:t>속성 없는 본문</hp:t></hp:run></hp:p>`,
+        ),
+        method: 0,
+      },
+    ]);
+    const md = await hwpxToMarkdown(zip);
+    expect(md).toContain("# 프로젝트 개요");
+    expect(md).toContain("### 세부 항목");
+    // No styleIDRef: the style's paraPrIDRef still identifies the outline level.
+    expect(md).toContain("# 스타일 없는 개요");
+    // Non-heading styles (and style-less paragraphs) stay plain.
+    expect(md).toContain("\n\n바탕글 본문");
+    expect(md).toContain("\n\n속성 없는 본문");
+  });
+
+  it("falls back to plain paragraphs when header.xml is absent", async () => {
+    const zip = makeZip([
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(`<hp:p styleIDRef="2"><hp:run><hp:t>제목일 수도 있는 문단</hp:t></hp:run></hp:p>`),
+        method: 0,
+      },
+    ]);
+    const md = await hwpxToMarkdown(zip);
+    expect(md).toBe("제목일 수도 있는 문단");
+  });
+});

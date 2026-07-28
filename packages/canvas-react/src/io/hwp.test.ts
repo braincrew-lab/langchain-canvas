@@ -55,10 +55,35 @@ const record = (tag: number, level: number, payload: Uint8Array): Uint8Array => 
 
 const HWPTAG_PARA_HEADER = 0x10 + 50;
 const HWPTAG_PARA_TEXT = 0x10 + 51;
+const HWPTAG_CTRL_HEADER = 0x10 + 55;
+const HWPTAG_LIST_HEADER = 0x10 + 56;
+const HWPTAG_TABLE = 0x10 + 61;
+
+/** "tbl " packed as MAKE_4CHID('t','b','l',' ') — read back as a LE uint32. */
+const CTRL_ID_TABLE = 0x74626c20;
 
 /** One paragraph: text WCHARs + the 0x0D paragraph terminator. */
 const paraText = (level: number, ...parts: Uint8Array[]) =>
   record(HWPTAG_PARA_TEXT, level, concat(...parts, wchar(13)));
+
+/** Control header: uint32 LE ctrl id, then (here, dummy) control attributes. */
+const ctrlHeader = (level: number, ctrlId: number) => {
+  const payload = new Uint8Array(8);
+  new DataView(payload.buffer).setUint32(0, ctrlId, true);
+  return record(HWPTAG_CTRL_HEADER, level, payload);
+};
+
+/** Table body record: 4-byte attr, uint16 nRows, uint16 nCols, trailing fields. */
+const tableRecord = (level: number, nRows: number, nCols: number) => {
+  const payload = new Uint8Array(12);
+  const v = new DataView(payload.buffer);
+  v.setUint16(4, nRows, true);
+  v.setUint16(6, nCols, true);
+  return record(HWPTAG_TABLE, level, payload);
+};
+
+/** Cell list header — payload contents are irrelevant to the extractor. */
+const listHeader = (level: number) => record(HWPTAG_LIST_HEADER, level, new Uint8Array(6));
 
 /** 128-byte CFB directory entry. */
 const dirEntry = (name: string, type: number, start: number, size: number, child = FREESECT): Uint8Array => {
@@ -213,6 +238,48 @@ describe("hwpToText", () => {
     expect(compressed.length).toBeLessThan(4096); // must still fit the mini stream
     const text = await hwpToText(buildHwp(compressed, { flags: 0b1 }));
     expect(text).toBe(`${long}\n\n압축 확인`);
+  });
+
+  it("renders a table control as a GFM table between surrounding paragraphs", async () => {
+    const section = concat(
+      paraText(0, utf16le("표 앞 문단")),
+      // Table control: CTRL_HEADER("tbl ") → TABLE(2×2) → 4 cells, row-major,
+      // each a LIST_HEADER one level below the control plus its paragraphs.
+      ctrlHeader(1, CTRL_ID_TABLE),
+      tableRecord(2, 2, 2),
+      listHeader(2), paraText(3, utf16le("구분")),
+      listHeader(2), paraText(3, utf16le("내용 | 비고")),
+      listHeader(2), paraText(3, utf16le("기간")),
+      listHeader(2), paraText(3, utf16le("2026-07")),
+      paraText(0, utf16le("표 뒤 문단")),
+    );
+    const text = await hwpToText(buildHwp(section));
+    // Exact equality also proves the cell texts are not duplicated as flat
+    // paragraphs, and that pipes inside cells are escaped.
+    expect(text).toBe(
+      [
+        "표 앞 문단",
+        "| 구분 | 내용 \\| 비고 |\n| --- | --- |\n| 기간 | 2026-07 |",
+        "표 뒤 문단",
+      ].join("\n\n"),
+    );
+  });
+
+  it("falls back to plain paragraphs when the cell count contradicts the table record", async () => {
+    const section = concat(
+      ctrlHeader(1, CTRL_ID_TABLE),
+      tableRecord(2, 3, 2), // claims 6 cells…
+      listHeader(2), paraText(3, utf16le("하나")),
+      listHeader(2), paraText(3, utf16le("둘")),
+      listHeader(2), paraText(3, utf16le("셋")),
+      listHeader(2), paraText(3, utf16le("넷")), // …but only 4 exist
+      paraText(0, utf16le("본문 계속")),
+    );
+    const text = await hwpToText(buildHwp(section));
+    // Malformed structure must never throw or drop text — every cell paragraph
+    // survives as plain text, and no half-built table row is emitted.
+    expect(text).toBe("하나\n\n둘\n\n셋\n\n넷\n\n본문 계속");
+    expect(text).not.toContain("|");
   });
 
   it("throws a bilingual error for password-encrypted files", async () => {

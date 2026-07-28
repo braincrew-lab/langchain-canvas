@@ -16,6 +16,7 @@
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
 import { resolveElements } from "../client/slideElements";
+import { documentToHwpx } from "../io/hwpxWrite";
 import { loadOptional } from "../optionalImport";
 
 export interface FileExport {
@@ -42,6 +43,7 @@ export const dataExporters: Record<string, FileExport[]> = {
   document: [
     { label: "Markdown", extension: "md", mime: MIME.md, build: (a) => (a.data as DocumentData).content },
     { label: "Word", extension: "docx", mime: MIME.docx, build: (a) => documentToDocx(a.data as DocumentData) },
+    { label: "한글 (HWPX)", extension: "hwpx", mime: "application/vnd.hancom.hwpx", build: (a) => documentToHwpx(a.data as DocumentData) },
   ],
   table: [
     { label: "CSV", extension: "csv", mime: MIME.csv, build: (a) => tableToCsv(a.data as TableData) },
@@ -205,18 +207,34 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
     const inset = (v: number) => pad + (v / 100) * (1 - 2 * pad);
     for (const el of resolveElements(slide)) {
       const box = { x: inset(el.x) * W, y: inset(el.y) * H, w: (el.w / 100) * (1 - 2 * pad) * W, h: (el.h / 100) * (1 - 2 * pad) * H };
+      // pptx `rotate` is clockwise about the shape's center — same semantics as
+      // the editor's CSS rotation on the unrotated box; normalized to 0–359.
+      const spin = el.rotate ? { rotate: ((Math.round(el.rotate) % 360) + 360) % 360 } : {};
       if (el.type === "text") {
         const color = el.color ? el.color.replace("#", "") : tc;
-        s.addText(el.text ?? "", { ...box, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
+        s.addText(el.text ?? "", { ...box, ...spin, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
       } else if (el.type === "shape") {
         const fill = (el.fill ?? "#5b5bd6").replace("#", "");
         if (el.shape === "line") {
-          s.addShape(pptx.ShapeType.line, { ...box, line: { color: fill, width: 2 } });
+          s.addShape(pptx.ShapeType.line, { ...box, ...spin, line: { color: fill, width: 2 } });
+        } else if (el.shape !== "ellipse" && el.radius) {
+          // Rounded rect: `rectRadius` is in inches — editor radius is px on a
+          // 1280px-wide slide mapped to 10in, so px × 10/1280.
+          s.addShape(pptx.ShapeType.roundRect, { ...box, ...spin, fill: { color: fill }, rectRadius: (el.radius * W) / 1280 });
         } else {
-          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, fill: { color: fill } });
+          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, ...spin, fill: { color: fill } });
         }
       } else if (el.src) {
-        s.addImage({ data: el.src, ...box, sizing: { type: "contain", w: box.w, h: box.h } });
+        // `fit: "cover"` maps to pptx cover sizing (fill + crop). A px corner
+        // radius has no pptx equivalent for images; `rounding: true` (fully
+        // rounded) is the closest supported look, so any radius > 0 uses it.
+        s.addImage({
+          data: el.src,
+          ...box,
+          ...spin,
+          sizing: { type: el.fit === "cover" ? "cover" : "contain", w: box.w, h: box.h },
+          ...(el.radius ? { rounding: true } : {}),
+        });
       }
     }
 
@@ -239,7 +257,10 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
       const fg = slide.textColor ?? "#1f2328";
       const els = resolveElements(slide)
         .map((el) => {
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
+          // Rotation mirrors the editor: a visual transform about the center of
+          // the unrotated percent box (CSS transform-origin defaults to center).
+          const spin = el.rotate ? `;transform:rotate(${Number(el.rotate)}deg)` : "";
+          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%${spin}`;
           if (el.type === "text") {
             // box is numeric; color/align are escaped individually — the composed
             // style string is then safe to place in the attribute as-is.
@@ -248,11 +269,12 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           }
           if (el.type === "shape") {
             const fill = escapeAttr(el.fill ?? fg);
-            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
+            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : `${Number(el.radius ?? 8)}px`;
             return `<div class="el" style="${box};background:${fill};border-radius:${radius}"></div>`;
           }
           const src = safeSrc(el.src);
-          return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
+          const imgStyle = `${box};object-fit:${el.fit === "cover" ? "cover" : "contain"}${el.radius ? `;border-radius:${Number(el.radius)}px` : ""}`;
+          return src ? `<img class="el" style="${imgStyle}" src="${escapeAttr(src)}"/>` : "";
         })
         .join("");
       const pad = slide.padding ?? 0;

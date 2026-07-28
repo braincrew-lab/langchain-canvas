@@ -9,11 +9,13 @@
  * HWP file header, raw-deflate decompression, and the tagged record stream —
  * is implemented here from the published HWP 5.0 spec.
  *
- * Scope is deliberately v1-flat: every `HWPTAG_PARA_TEXT` record becomes one
- * paragraph regardless of nesting level (table cells, text boxes, …), joined
- * with blank lines. Encrypted, distribution (DRM), and pre-5.0 documents are
- * rejected with bilingual (한국어 / English) errors so the UI can surface them
- * to Korean users directly.
+ * Scope is deliberately pragmatic: every `HWPTAG_PARA_TEXT` record becomes one
+ * paragraph, except that table controls (`CTRL_HEADER` with ctrl id "tbl ")
+ * are recognized and their cell paragraphs re-assembled into GFM tables — any
+ * structural surprise falls back to emitting the cells as plain paragraphs so
+ * text is never dropped. Encrypted, distribution (DRM), and pre-5.0 documents
+ * are rejected with bilingual (한국어 / English) errors so the UI can surface
+ * them to Korean users directly.
  */
 
 /* ------------------------------------------------------------------------- *
@@ -245,11 +247,21 @@ function parseFileHeader(bytes: Uint8Array): HwpHeader {
 }
 
 /* ------------------------------------------------------------------------- *
- * Section record stream → paragraphs
+ * Section record stream → paragraphs and tables
  * ------------------------------------------------------------------------- */
 
 // HWPTAG_BEGIN (0x10) + 51 — the record that carries a paragraph's WCHARs.
 const HWPTAG_PARA_TEXT = 0x10 + 51;
+// HWPTAG_BEGIN + 55 — opens a control; the payload starts with its 4-byte id.
+const HWPTAG_CTRL_HEADER = 0x10 + 55;
+// HWPTAG_BEGIN + 56 — opens a paragraph list (one per table cell / caption).
+const HWPTAG_LIST_HEADER = 0x10 + 56;
+// HWPTAG_BEGIN + 61 — table body: 4-byte attr, then uint16 nRows / nCols.
+const HWPTAG_TABLE = 0x10 + 61;
+
+// Ctrl ids pack as MAKE_4CHID('t','b','l',' ') = 't'<<24|'b'<<16|'l'<<8|' ',
+// stored little-endian — so reading the uint32 LE yields this constant.
+const CTRL_ID_TABLE = 0x74626c20;
 
 /**
  * Decode one PARA_TEXT payload (UTF-16LE WCHARs) into paragraphs.
@@ -294,16 +306,24 @@ function decodeParaText(view: DataView, offset: number, byteLength: number): str
   return paragraphs;
 }
 
-/** Walk a section's record stream and collect every PARA_TEXT paragraph. */
-function extractSectionParagraphs(section: Uint8Array): string[] {
-  const view = new DataView(section.buffer, section.byteOffset, section.byteLength);
-  const paragraphs: string[] = [];
+/** One parsed record: tag/level from the header, payload location in bytes. */
+interface HwpRecord {
+  tag: number;
+  level: number;
+  start: number;
+  size: number;
+}
+
+/** Split a section's byte stream into its tagged records. */
+function parseRecords(section: Uint8Array, view: DataView): HwpRecord[] {
+  const records: HwpRecord[] = [];
   let off = 0;
   while (off + 4 <= section.length) {
     // Record header: tagId = bits 0–9, level = 10–19, size = 20–31.
     const header = view.getUint32(off, true);
     off += 4;
-    const tagId = header & 0x3ff;
+    const tag = header & 0x3ff;
+    const level = (header >>> 10) & 0x3ff;
     let size = (header >>> 20) & 0xfff;
     if (size === 0xfff) {
       // Sentinel: the real size didn't fit in 12 bits and follows as a uint32.
@@ -312,10 +332,81 @@ function extractSectionParagraphs(section: Uint8Array): string[] {
       off += 4;
     }
     if (off + size > section.length) throw new Error(ERR.corrupt("record overruns section"));
-    if (tagId === HWPTAG_PARA_TEXT) paragraphs.push(...decodeParaText(view, off, size));
+    records.push({ tag, level, start: off, size });
     off += size;
   }
-  return paragraphs;
+  return records;
+}
+
+/**
+ * Render a table control's subtree (every record deeper than the control) as
+ * one GFM table block. Each cell is a LIST_HEADER one level below the control,
+ * whose paragraphs follow it in row-major order. On any structural surprise —
+ * missing/short TABLE record, text before the first cell, cell count ≠
+ * nRows×nCols — the cell texts are returned as plain paragraphs instead, so
+ * nothing is ever dropped.
+ */
+function tableBlocks(view: DataView, subtree: HwpRecord[], ctrlLevel: number): string[] {
+  const tableRec = subtree.find((r) => r.tag === HWPTAG_TABLE);
+  const cellLevel = ctrlLevel + 1;
+
+  // Collect paragraphs per cell, and flat (stream order) for the fallback.
+  const cells: string[][] = [];
+  const flat: string[] = [];
+  let current: string[] | null = null;
+  let surprised = tableRec === undefined || tableRec.size < 8;
+  for (const rec of subtree) {
+    if (rec.tag === HWPTAG_LIST_HEADER && rec.level === cellLevel) {
+      current = [];
+      cells.push(current);
+    } else if (rec.tag === HWPTAG_PARA_TEXT) {
+      const paragraphs = decodeParaText(view, rec.start, rec.size);
+      flat.push(...paragraphs);
+      // Text before any cell list (unexpected here) can't be placed in a grid.
+      if (current) current.push(...paragraphs);
+      else surprised = true;
+    }
+  }
+
+  if (!surprised) {
+    const nRows = view.getUint16(tableRec!.start + 4, true);
+    const nCols = view.getUint16(tableRec!.start + 6, true);
+    if (nRows >= 1 && nCols >= 1 && cells.length === nRows * nCols) {
+      // Cell text flattens its paragraphs; pipes/newlines are escaped so they
+      // can't break the row — mirroring the HWPX table renderer.
+      const texts = cells.map((c) =>
+        c.filter((p) => p.length > 0).join(" ").replace(/\|/g, "\\|").replace(/\n/g, " ").trim(),
+      );
+      const line = (row: string[]) => `| ${row.join(" | ")} |`;
+      const rows = Array.from({ length: nRows }, (_, r) => texts.slice(r * nCols, (r + 1) * nCols));
+      const [head, ...body] = rows;
+      return [[line(head), `| ${Array(nCols).fill("---").join(" | ")} |`, ...body.map(line)].join("\n")];
+    }
+  }
+  return flat;
+}
+
+/** Walk a section's records and collect its blocks: paragraphs in stream
+ *  order, with recognized table controls rendered as GFM tables in place. */
+function extractSectionBlocks(section: Uint8Array): string[] {
+  const view = new DataView(section.buffer, section.byteOffset, section.byteLength);
+  const records = parseRecords(section, view);
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < records.length) {
+    const rec = records[i];
+    if (rec.tag === HWPTAG_CTRL_HEADER && rec.size >= 4 && view.getUint32(rec.start, true) === CTRL_ID_TABLE) {
+      // The control owns every following record at a deeper level.
+      let end = i + 1;
+      while (end < records.length && records[end].level > rec.level) end++;
+      blocks.push(...tableBlocks(view, records.slice(i + 1, end), rec.level));
+      i = end;
+      continue;
+    }
+    if (rec.tag === HWPTAG_PARA_TEXT) blocks.push(...decodeParaText(view, rec.start, rec.size));
+    i++;
+  }
+  return blocks;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -358,8 +449,8 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 
 /**
  * Extract the document text of a binary HWP 5.x file as markdown-ish plain
- * text (paragraphs separated by blank lines). Throws a descriptive bilingual
- * Error for encrypted, DRM'd, or pre-5.0 files.
+ * text (paragraphs separated by blank lines, tables as GFM). Throws a
+ * descriptive bilingual Error for encrypted, DRM'd, or pre-5.0 files.
  */
 export async function hwpToText(buffer: ArrayBuffer): Promise<string> {
   const cfb = parseCfb(new Uint8Array(buffer));
@@ -380,7 +471,7 @@ export async function hwpToText(buffer: ArrayBuffer): Promise<string> {
     let bytes = cfb.readStream(entry);
     if (header.compressed) bytes = await inflateRaw(bytes);
     // Drop empty paragraphs: blank-line spacing already comes from the join.
-    paragraphs.push(...extractSectionParagraphs(bytes).filter((p) => p.length > 0));
+    paragraphs.push(...extractSectionBlocks(bytes).filter((p) => p.length > 0));
   }
 
   return paragraphs.join("\n\n").replace(/\s+$/, "");

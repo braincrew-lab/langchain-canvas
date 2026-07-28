@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { SlideElement } from "../../protocol/artifacts";
+import { useT } from "../../i18n/i18n";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
@@ -19,8 +20,23 @@ export function shapeStyle(el: SlideElement): CSSProperties {
   const fill = el.fill ?? "currentColor";
   if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
   if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
-  return { width: "100%", height: "100%", background: fill, borderRadius: 8 };
+  return { width: "100%", height: "100%", background: fill, borderRadius: el.radius ?? 8 };
 }
+
+/**
+ * CSS transform for an element's rotation — shared by the editor, thumbnails,
+ * present, and export paths so a rotated element looks the same everywhere.
+ * Applied to the element wrapper with the default transform-origin (center).
+ */
+export function rotateStyle(el: SlideElement): CSSProperties {
+  return el.rotate ? { transform: `rotate(${el.rotate}deg)` } : {};
+}
+
+/** Normalize a rotation to 0–359°, dropping 0 (no rotation stored). */
+const normalizeDeg = (deg: number): number | undefined => {
+  const d = ((deg % 360) + 360) % 360;
+  return d === 0 ? undefined : d;
+};
 
 interface FreeSlideProps {
   elements: SlideElement[];
@@ -83,6 +99,7 @@ function boundsOf(els: SlideElement[]) {
 }
 
 export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
+  const t = useT();
   const slideRef = useRef<HTMLDivElement>(null);
   const [els, setEls] = useState(elements);
   const [selected, setSelected] = useState<string[]>([]);
@@ -497,11 +514,15 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
           }}
         />
       )}
+      {/* Rotation is a visual transform on the wrapper only: drag, nudge, snap
+          guides, marquee hit-testing, and resize all keep operating on the
+          stored (unrotated) x/y/w/h box, so the pointer math above needs no
+          angle awareness. Note the selection chrome rotates with the element. */}
       {els.map((el) => (
         <div
           key={el.id}
           className={`cv-free__el ${selectedSet.has(el.id) ? "is-selected cv-free__el--selected" : ""}`}
-          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}
+          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, ...rotateStyle(el) }}
           onPointerDown={(e) => onDown(e, el, "move")}
           onDoubleClick={(e) => {
             if (el.type === "text") {
@@ -532,12 +553,18 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
           ) : el.type === "shape" ? (
             <div style={shapeStyle(el)} />
           ) : (
-            <img className="cv-free__img" src={el.src} alt="" draggable={false} />
+            <img
+              className="cv-free__img"
+              src={el.src}
+              alt=""
+              draggable={false}
+              style={{ objectFit: el.fit ?? "contain", ...(el.radius ? { borderRadius: el.radius } : {}) }}
+            />
           )}
 
           {soloId === el.id && el.type === "text" && (
             <div className={`cv-free__fmt ${el.y < 16 ? "cv-free__fmt--below" : ""}`} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <button className={el.bold ? "is-on" : ""} onClick={() => updateEl(el.id, { bold: !el.bold })} title="Bold">
+              <button className={el.bold ? "is-on" : ""} onClick={() => updateEl(el.id, { bold: !el.bold })} title={t("bold")}>
                 <b>B</b>
               </button>
               <input
@@ -546,28 +573,64 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
                 max={120}
                 value={el.fontSize ?? 24}
                 onChange={(e) => updateEl(el.id, { fontSize: Number(e.target.value) })}
-                title="Font size"
+                title={t("fontSize")}
               />
-              <input type="color" value={el.color ?? "#1f2328"} onChange={(e) => updateEl(el.id, { color: e.target.value })} title="Text color" />
-              <button onClick={() => updateEl(el.id, { align: "left" })} title="Align left">⟸</button>
-              <button onClick={() => updateEl(el.id, { align: "center" })} title="Align center">≡</button>
-              <button onClick={() => updateEl(el.id, { align: "right" })} title="Align right">⟹</button>
+              <input type="color" value={el.color ?? "#1f2328"} onChange={(e) => updateEl(el.id, { color: e.target.value })} title={t("textColor")} />
+              <button onClick={() => updateEl(el.id, { align: "left" })} title={t("alignLeft")}>⟸</button>
+              <button onClick={() => updateEl(el.id, { align: "center" })} title={t("alignCenter")}>≡</button>
+              <button onClick={() => updateEl(el.id, { align: "right" })} title={t("alignRight")}>⟹</button>
             </div>
           )}
 
           {soloId === el.id && (
             <>
-              <span className="cv-free__resize" title="Resize (hold Shift to lock aspect)" onPointerDown={(e) => onDown(e, el, "resize")} />
+              <span className="cv-free__resize" title={t("resizeTip")} onPointerDown={(e) => onDown(e, el, "resize")} />
               <div className={`cv-free__ctl ${el.y < 16 ? "cv-free__ctl--below" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
                 {el.type === "shape" && (
-                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title="Fill color" />
+                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title={t("fillColor")} />
                 )}
-                <button onClick={(e) => { e.stopPropagation(); duplicateSelection(); }} title="Duplicate (⌘D)">⧉</button>
-                <button onClick={(e) => { e.stopPropagation(); reorderSelection(1, true); }} title="Bring to front">⤒</button>
-                <button onClick={(e) => { e.stopPropagation(); reorderSelection(1); }} title="Bring forward (⌘])">↑</button>
-                <button onClick={(e) => { e.stopPropagation(); reorderSelection(-1); }} title="Send backward (⌘[)">↓</button>
-                <button onClick={(e) => { e.stopPropagation(); reorderSelection(-1, true); }} title="Send to back">⤓</button>
-                <button className="cv-free__ctl-del" onClick={(e) => { e.stopPropagation(); deleteSelection(); }} title="Delete">×</button>
+                {el.type === "image" && (
+                  <button
+                    className={el.fit === "cover" ? "is-on" : ""}
+                    onClick={(e) => { e.stopPropagation(); updateEl(el.id, { fit: el.fit === "cover" ? undefined : "cover" }); }}
+                    title={t("fitToggle")}
+                  >⛶</button>
+                )}
+                {(el.type === "image" || el.shape === "rect") && (
+                  <input
+                    className="cv-free__ctl-radius"
+                    type="number"
+                    min={0}
+                    max={32}
+                    value={el.radius ?? (el.type === "shape" ? 8 : 0)}
+                    onChange={(e) => updateEl(el.id, { radius: clamp(Number(e.target.value) || 0, 0, 32) })}
+                    onClick={(e) => e.stopPropagation()}
+                    title={t("cornerRadius")}
+                  />
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); updateEl(el.id, { rotate: normalizeDeg((el.rotate ?? 0) + (e.shiftKey ? -15 : 15)) }); }}
+                  title={t("rotateStep")}
+                >⟳</button>
+                <input
+                  className="cv-free__ctl-rot"
+                  type="number"
+                  min={-360}
+                  max={360}
+                  value={Math.round(el.rotate ?? 0)}
+                  onChange={(e) => {
+                    const deg = Number(e.target.value);
+                    updateEl(el.id, { rotate: Number.isFinite(deg) && deg !== 0 ? clamp(deg, -360, 360) : undefined });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  title={t("rotationDeg")}
+                />
+                <button onClick={(e) => { e.stopPropagation(); duplicateSelection(); }} title={t("duplicateShort")}>⧉</button>
+                <button onClick={(e) => { e.stopPropagation(); reorderSelection(1, true); }} title={t("bringToFront")}>⤒</button>
+                <button onClick={(e) => { e.stopPropagation(); reorderSelection(1); }} title={t("bringForward")}>↑</button>
+                <button onClick={(e) => { e.stopPropagation(); reorderSelection(-1); }} title={t("sendBackward")}>↓</button>
+                <button onClick={(e) => { e.stopPropagation(); reorderSelection(-1, true); }} title={t("sendToBack")}>⤓</button>
+                <button className="cv-free__ctl-del" onClick={(e) => { e.stopPropagation(); deleteSelection(); }} title={t("delete")}>×</button>
               </div>
             </>
           )}
@@ -584,16 +647,16 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <button onClick={groupSelection} title="Group (⌘G)">⊞</button>
-          <button onClick={ungroupSelection} disabled={!selEls.some((el) => el.group)} title="Ungroup (⌘⇧G)">⊟</button>
-          <button onClick={() => alignSelection("left")} title="Align left edges">⇤</button>
-          <button onClick={() => alignSelection("center")} title="Align horizontal centers">↔</button>
-          <button onClick={() => alignSelection("right")} title="Align right edges">⇥</button>
-          <button onClick={() => alignSelection("top")} title="Align top edges">⤒</button>
-          <button onClick={() => alignSelection("middle")} title="Align vertical centers">↕</button>
-          <button onClick={() => alignSelection("bottom")} title="Align bottom edges">⤓</button>
-          <button onClick={duplicateSelection} title="Duplicate (⌘D)">⧉</button>
-          <button className="cv-free__multibar-del" onClick={deleteSelection} title="Delete selection">×</button>
+          <button onClick={groupSelection} title={t("groupShort")}>⊞</button>
+          <button onClick={ungroupSelection} disabled={!selEls.some((el) => el.group)} title={t("ungroupShort")}>⊟</button>
+          <button onClick={() => alignSelection("left")} title={t("alignLeftEdges")}>⇤</button>
+          <button onClick={() => alignSelection("center")} title={t("alignHCenters")}>↔</button>
+          <button onClick={() => alignSelection("right")} title={t("alignRightEdges")}>⇥</button>
+          <button onClick={() => alignSelection("top")} title={t("alignTopEdges")}>⤒</button>
+          <button onClick={() => alignSelection("middle")} title={t("alignVCenters")}>↕</button>
+          <button onClick={() => alignSelection("bottom")} title={t("alignBottomEdges")}>⤓</button>
+          <button onClick={duplicateSelection} title={t("duplicateShort")}>⧉</button>
+          <button className="cv-free__multibar-del" onClick={deleteSelection} title={t("deleteSelection")}>×</button>
         </div>
       )}
     </div>

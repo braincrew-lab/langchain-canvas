@@ -57,7 +57,7 @@ export interface ChartOptions {
 }
 
 export interface ChartData {
-  chart: "line" | "bar" | "area" | "pie";
+  chart: "line" | "bar" | "area" | "pie" | "scatter" | "donut";
   /** Tidy/long-form rows, consumed directly by the charting library. */
   rows: Array<Record<string, string | number>>;
   /** Category / x-axis field. */
@@ -119,6 +119,14 @@ export interface SlideElement {
   shape?: "rect" | "ellipse" | "line";
   /** Fill (rect/ellipse) or stroke (line) color for a shape. */
   fill?: string;
+  /** Rotation in degrees, clockwise, about the element's center. Purely visual:
+   *  `x`/`y`/`w`/`h` always describe the unrotated box. */
+  rotate?: number;
+  /** How an image fills its box — "contain" (default, letterboxed) or "cover"
+   *  (fill and crop). */
+  fit?: "contain" | "cover";
+  /** Corner radius in px (0–32) for images and rect shapes. */
+  radius?: number;
   /** Editor-only grouping: elements sharing a `group` id select and move as
    *  one. Purely additive — exporters and the presenter ignore it. */
   group?: string;

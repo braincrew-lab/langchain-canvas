@@ -3,7 +3,10 @@
  *
  * An HWPX file is a ZIP of XML parts (the OOXML model): the document body lives
  * in `Contents/section*.xml` as OWPML — `<hp:p>` paragraphs of `<hp:run>`s whose
- * `<hp:t>` nodes carry the text, with `<hp:tbl>` tables nested inside runs.
+ * `<hp:t>` nodes carry the text, with `<hp:tbl>` tables and `<hp:pic>` pictures
+ * nested inside runs. Pictures reference `BinData/*` ZIP entries (via the
+ * `Contents/content.hpf` manifest) and are inlined as data-URL images; heading
+ * paragraphs are recognized by their style name in `Contents/header.xml`.
  *
  * Everything here is built on platform primitives so the import costs zero
  * bundle bytes: the ZIP is parsed by hand (central directory + local headers)
@@ -105,7 +108,161 @@ export async function readZip(buffer: ArrayBuffer): Promise<Map<string, Uint8Arr
   return entries;
 }
 
+// --- shared XML helper ---------------------------------------------------------
+
+/** Parse an XML part, returning null (instead of throwing) when it's invalid —
+ *  auxiliary parts like the manifest degrade gracefully to "no data". */
+function parseXml(xml: string): Document | null {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  return doc.querySelector("parsererror") ? null : doc;
+}
+
+// --- binary items (embedded images) --------------------------------------------
+
+/** Cap on the total base64 characters emitted for images — scanned originals
+ *  can be tens of MB and would balloon the markdown; images past the budget
+ *  are skipped and counted so the document can note the omission. */
+const IMAGE_BASE64_BUDGET = 8 * 1024 * 1024;
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  bmp: "image/bmp",
+};
+
+/** Uint8Array → base64, chunked so String.fromCharCode never hits the platform
+ *  argument-count limit on large images. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+  }
+  return btoa(bin);
+}
+
+/**
+ * Resolves picture `binaryItemIDRef`s to markdown image blocks, spending a
+ * shared base64 budget across the whole document. Unresolvable references
+ * yield null (skipped silently); budget-skipped images are counted in
+ * `omitted` so the caller can append a note.
+ */
+class ImageResolver {
+  omitted = 0;
+  private used = 0;
+  private readonly index = new Map<string, string>(); // ref id → ZIP entry name
+
+  constructor(private readonly entries: Map<string, Uint8Array>) {
+    // Direct BinData entries first: both "image1.png" and "image1" address
+    // them, so manifest-less references still resolve.
+    for (const name of entries.keys()) {
+      const m = /^(?:Contents\/)?BinData\/([^/]+)$/i.exec(name);
+      if (!m) continue;
+      this.index.set(m[1], name);
+      this.index.set(m[1].replace(/\.[^.]+$/, ""), name);
+    }
+    // The content.hpf manifest maps item ids to hrefs — it wins over guesses.
+    const hpfName = [...entries.keys()].find((n) => /(^|\/)content\.hpf$/i.test(n));
+    const doc = hpfName ? parseXml(new TextDecoder().decode(entries.get(hpfName)!)) : null;
+    if (!doc) return;
+    for (const item of Array.from(doc.getElementsByTagNameNS("*", "item"))) {
+      const id = item.getAttribute("id");
+      const href = item.getAttribute("href");
+      if (!id || !href) continue;
+      // hrefs are ZIP paths, usually rooted ("BinData/x.png") but occasionally
+      // relative to Contents/ — try both spellings.
+      const target = this.entries.has(href) ? href : this.entries.has(`Contents/${href}`) ? `Contents/${href}` : null;
+      if (target) this.index.set(id, target);
+    }
+  }
+
+  /** Markdown image block for a binary item id, or null when unresolvable /
+   *  over budget. */
+  markdown(refId: string): string | null {
+    const name = this.index.get(refId);
+    const bytes = name ? this.entries.get(name) : undefined;
+    if (!name || !bytes) return null;
+    // Pre-check with the exact base64 length (4 chars per 3 bytes, padded) so
+    // an over-budget image is never even encoded.
+    const base64Length = Math.ceil(bytes.length / 3) * 4;
+    if (this.used + base64Length > IMAGE_BASE64_BUDGET) {
+      this.omitted++;
+      return null;
+    }
+    this.used += base64Length;
+    const ext = /\.([^.]+)$/.exec(name)?.[1]?.toLowerCase() ?? "";
+    return `![](data:${MIME_BY_EXT[ext] ?? "image/png"};base64,${bytesToBase64(bytes)})`;
+  }
+}
+
+/** The binary item a `<hp:pic>` references: the `binaryItemIDRef` of its
+ *  `<hc:img>` (checked first), or of any descendant — producers vary in where
+ *  and how (casing, hyphenation) they spell the attribute. */
+function binaryItemRef(pic: Element): string | null {
+  const refOf = (el: Element): string | null => {
+    for (const attr of Array.from(el.attributes)) {
+      if (/^(binaryitemidref|bin-item-id|binitemidref)$/i.test(attr.localName)) return attr.value || null;
+    }
+    return null;
+  };
+  const descendants = [pic, ...Array.from(pic.getElementsByTagNameNS("*", "*"))];
+  for (const el of descendants) {
+    if (el.localName === "img") {
+      const ref = refOf(el);
+      if (ref) return ref;
+    }
+  }
+  for (const el of descendants) {
+    const ref = refOf(el);
+    if (ref) return ref;
+  }
+  return null;
+}
+
+// --- heading styles (header.xml) -----------------------------------------------
+
+/** Style names that mark outline/heading paragraphs, capturing the level. */
+const HEADING_STYLE_NAME = /^(개요|Outline|Heading|제목)\s*([1-6])/i;
+
+interface HeadingIndex {
+  /** style id → heading level (1–6). */
+  byStyle: Map<string, number>;
+  /** paraPr id → heading level, for paragraphs that omit `styleIDRef`. */
+  byParaPr: Map<string, number>;
+}
+
+/** Build the heading index from `Contents/header.xml` style names. When the
+ *  part is missing or unparseable the maps stay empty and every paragraph
+ *  falls back to plain text — level is never guessed from formatting. */
+function buildHeadingIndex(entries: Map<string, Uint8Array>): HeadingIndex {
+  const byStyle = new Map<string, number>();
+  const byParaPr = new Map<string, number>();
+  const name = [...entries.keys()].find((n) => /^Contents\/header\.xml$/i.test(n));
+  const doc = name ? parseXml(new TextDecoder().decode(entries.get(name)!)) : null;
+  if (doc) {
+    for (const style of Array.from(doc.getElementsByTagNameNS("*", "style"))) {
+      const match = HEADING_STYLE_NAME.exec(style.getAttribute("name") ?? "");
+      if (!match) continue;
+      const level = Number(match[2]);
+      const id = style.getAttribute("id");
+      if (id !== null) byStyle.set(id, level);
+      const paraPr = style.getAttribute("paraPrIDRef");
+      if (paraPr !== null) byParaPr.set(paraPr, level);
+    }
+  }
+  return { byStyle, byParaPr };
+}
+
 // --- OWPML → markdown ----------------------------------------------------------
+
+/** Per-document context the section walker consults for style/binary lookups. */
+interface SectionContext {
+  /** Heading level of a paragraph (0 = plain paragraph). */
+  headingLevel(p: Element): number;
+  /** Markdown image block for a `<hp:pic>`, or null to skip it. */
+  imageBlock(pic: Element): string | null;
+}
 
 /** Text of a paragraph: its `<hp:t>` descendants, skipping any nested table
  *  (tables are emitted separately, after the paragraph's own text). */
@@ -151,10 +308,27 @@ function tableToMarkdown(tbl: Element): string {
   return [line(head), `| ${Array(width).fill("---").join(" | ")} |`, ...body.map(line)].join("\n");
 }
 
+/** Emit a paragraph's embedded tables and pictures as blocks, in document
+ *  order. Recursion stops at `tbl` (its cells flatten to text in the GFM
+ *  table), so nested tables and cell pictures never surface twice. */
+function collectEmbedded(el: Element, blocks: string[], ctx: SectionContext): void {
+  for (const child of Array.from(el.children)) {
+    if (child.localName === "tbl") {
+      const md = tableToMarkdown(child);
+      if (md) blocks.push(md);
+    } else if (child.localName === "pic") {
+      const md = ctx.imageBlock(child);
+      if (md) blocks.push(md);
+    } else {
+      collectEmbedded(child, blocks, ctx);
+    }
+  }
+}
+
 /** One section document → markdown blocks, in document order. */
-function sectionToMarkdown(xml: string): string[] {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (doc.querySelector("parsererror")) {
+function sectionToMarkdown(xml: string, ctx: SectionContext): string[] {
+  const doc = parseXml(xml);
+  if (!doc) {
     throw new Error("HWPX 본문 XML을 해석할 수 없습니다 (invalid section XML).");
   }
   const blocks: string[] = [];
@@ -163,14 +337,12 @@ function sectionToMarkdown(xml: string): string[] {
       const tag = child.localName;
       if (tag === "p") {
         const text = paragraphText(child).trim();
-        if (text) blocks.push(text);
-        // Tables nested in this paragraph's runs follow its text.
-        for (const tbl of Array.from(child.getElementsByTagNameNS("*", "tbl"))) {
-          if ((tbl.parentElement?.closest("tbl") ?? null) === null) {
-            const md = tableToMarkdown(tbl as Element);
-            if (md) blocks.push(md);
-          }
+        if (text) {
+          const level = ctx.headingLevel(child);
+          blocks.push(level ? `${"#".repeat(level)} ${text.replace(/\n/g, " ")}` : text);
         }
+        // Tables and pictures nested in this paragraph's runs follow its text.
+        collectEmbedded(child, blocks, ctx);
       } else if (tag !== "tbl") {
         walk(child);
       }
@@ -180,7 +352,8 @@ function sectionToMarkdown(xml: string): string[] {
   return blocks;
 }
 
-/** Convert a `.hwpx` buffer to markdown (paragraphs + tables, all sections). */
+/** Convert a `.hwpx` buffer to markdown (headings, paragraphs, tables, and
+ *  embedded images as data URLs — all sections, in document order). */
 export async function hwpxToMarkdown(buffer: ArrayBuffer): Promise<string> {
   const entries = await readZip(buffer);
 
@@ -192,10 +365,28 @@ export async function hwpxToMarkdown(buffer: ArrayBuffer): Promise<string> {
     throw new Error("HWPX 문서가 아닙니다 — 본문(section XML)이 없습니다 (no Contents/section*.xml).");
   }
 
+  const headings = buildHeadingIndex(entries);
+  const images = new ImageResolver(entries);
+  const ctx: SectionContext = {
+    headingLevel: (p) => {
+      const styleId = p.getAttribute("styleIDRef");
+      if (styleId !== null && headings.byStyle.has(styleId)) return headings.byStyle.get(styleId)!;
+      const paraPrId = p.getAttribute("paraPrIDRef");
+      return (paraPrId !== null && headings.byParaPr.get(paraPrId)) || 0;
+    },
+    imageBlock: (pic) => {
+      const ref = binaryItemRef(pic);
+      return ref ? images.markdown(ref) : null;
+    },
+  };
+
   const decoder = new TextDecoder();
   const blocks: string[] = [];
   for (const name of sections) {
-    blocks.push(...sectionToMarkdown(decoder.decode(entries.get(name)!)));
+    blocks.push(...sectionToMarkdown(decoder.decode(entries.get(name)!), ctx));
+  }
+  if (images.omitted > 0) {
+    blocks.push(`> (이미지 ${images.omitted}장 생략 / ${images.omitted} images omitted)`);
   }
   return blocks.join("\n\n").trim();
 }

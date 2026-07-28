@@ -9,17 +9,18 @@
 
 import type { Artifact } from "../protocol/artifacts";
 import { useCanvasStore } from "../hooks/useCanvasStore";
+import { useT, type MessageKey } from "../i18n/i18n";
 
-type CardMeta = { icon: string; label: string };
+type CardMeta = { icon: string; label: MessageKey };
 
-// Keyed on the artifact's renderer `type`.
+// Keyed on the artifact's renderer `type`. Labels are i18n keys.
 const TYPE_META: Record<string, CardMeta> = {
-  html: { icon: "🌐", label: "Web page" },
-  document: { icon: "📄", label: "Word document" },
-  chart: { icon: "📊", label: "Chart" },
-  table: { icon: "🔢", label: "Excel sheet" },
-  slides: { icon: "📽️", label: "PowerPoint deck" },
-  pdf: { icon: "📕", label: "PDF" },
+  html: { icon: "🌐", label: "kindWeb" },
+  document: { icon: "📄", label: "kindDocument" },
+  chart: { icon: "📊", label: "kindChart" },
+  table: { icon: "🔢", label: "kindTable" },
+  slides: { icon: "📽️", label: "kindSlides" },
+  pdf: { icon: "📕", label: "kindPdf" },
 };
 
 // Keyed on a producer-supplied logical kind (`meta.kind`). A host that renders
@@ -40,13 +41,14 @@ const KIND_META: Record<string, CardMeta> = {
 
 /** Resolve the card's icon + label, preferring the producer's logical `meta.kind`
  *  over the renderer `type` so HTML-substrate slides/tables aren't all "Web page". */
-function resolveCardMeta(artifact: Artifact): CardMeta {
+function resolveCardMeta(artifact: Artifact): { icon: string; label?: MessageKey } {
   const kind = typeof artifact.meta?.kind === "string" ? artifact.meta.kind : undefined;
   const byKind = kind ? KIND_META[kind] : undefined;
-  return byKind ?? TYPE_META[artifact.type] ?? { icon: "📎", label: artifact.type };
+  return byKind ?? TYPE_META[artifact.type] ?? { icon: "📎" };
 }
 
 export function ArtifactCard({ artifactId }: { artifactId: string }) {
+  const t = useT();
   const artifact = useCanvasStore((s) => s.canvas.artifacts[artifactId]);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
 
@@ -59,7 +61,7 @@ export function ArtifactCard({ artifactId }: { artifactId: string }) {
       <span className="cv-card__meta">
         <b>{artifact.title}</b>
         <span>
-          {meta.label} · {artifact.status === "streaming" ? "writing…" : "open →"}
+          {meta.label ? t(meta.label) : artifact.type} · {artifact.status === "streaming" ? t("writing") : t("open")}
         </span>
       </span>
     </button>

@@ -460,3 +460,11 @@ body {
   color: var(--cv-text);
   border: 1px solid var(--cv-border);
 }
+
+/* replay: canvas-language toggle */
+.replay__locale { display: inline-flex; gap: 0; margin-left: auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+.replay__locale button {
+  padding: 5px 12px; border: 0; background: #fff; font: 600 12.5px/1 inherit; color: #6b7280; cursor: pointer;
+}
+.replay__locale button + button { border-left: 1px solid #e5e7eb; }
+.replay__locale button.is-on { background: #eef2ff; color: #4338ca; }

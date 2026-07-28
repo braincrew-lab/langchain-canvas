@@ -13,6 +13,7 @@ import remarkGfm from "remark-gfm";
 import type { DocumentData } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
+import { useT } from "../../i18n/i18n";
 
 function wordStats(text: string): { words: number; minutes: number } {
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -20,6 +21,7 @@ function wordStats(text: string): { words: number; minutes: number } {
 }
 
 export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
+  const t = useT();
   const { content } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [draft, setDraft] = useState<string | null>(null);
@@ -64,19 +66,19 @@ export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
     <div className="cv-word">
       {editing && (
         <div className="cv-doc-bar cv-chrome" onMouseDown={(e) => e.preventDefault()}>
-          <button title="Bold" onMouseDown={(e) => { e.preventDefault(); wrap("**"); }}><b>B</b></button>
-          <button title="Italic" onMouseDown={(e) => { e.preventDefault(); wrap("*"); }}><i>I</i></button>
-          <button title="Inline code" onMouseDown={(e) => { e.preventDefault(); wrap("`"); }}>{"<>"}</button>
+          <button title={t("bold")} onMouseDown={(e) => { e.preventDefault(); wrap("**"); }}><b>B</b></button>
+          <button title={t("italic")} onMouseDown={(e) => { e.preventDefault(); wrap("*"); }}><i>I</i></button>
+          <button title={t("inlineCode")} onMouseDown={(e) => { e.preventDefault(); wrap("`"); }}>{"<>"}</button>
           <span className="cv-doc-bar__sep" />
           <button title="Heading 1" onMouseDown={(e) => { e.preventDefault(); prefixLines("# "); }}>H1</button>
           <button title="Heading 2" onMouseDown={(e) => { e.preventDefault(); prefixLines("## "); }}>H2</button>
-          <button title="Bullet list" onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>•</button>
-          <button title="Numbered list" onMouseDown={(e) => { e.preventDefault(); prefixLines("1. "); }}>1.</button>
-          <button title="Quote" onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
-          <button title="Link" onMouseDown={(e) => { e.preventDefault(); link(); }}>🔗</button>
+          <button title={t("bulletList")} onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>•</button>
+          <button title={t("numberedList")} onMouseDown={(e) => { e.preventDefault(); prefixLines("1. "); }}>1.</button>
+          <button title={t("quote")} onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
+          <button title={t("link")} onMouseDown={(e) => { e.preventDefault(); link(); }}>🔗</button>
           <span className="cv-doc-bar__spacer" />
-          <span className="cv-doc-bar__count">{words} words · {minutes} min read</span>
-          <button className="cv-doc-bar__done" onMouseDown={(e) => { e.preventDefault(); commit(); }}>Done</button>
+          <span className="cv-doc-bar__count">{words} {t("words")} · {minutes} {t("minRead")}</span>
+          <button className="cv-doc-bar__done" onMouseDown={(e) => { e.preventDefault(); commit(); }}>{t("doneEditing")}</button>
         </div>
       )}
       <div className="cv-word__page">

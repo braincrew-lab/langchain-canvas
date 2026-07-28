@@ -13,7 +13,8 @@ import type { Slide, SlideElement, SlidesData } from "../../protocol/artifacts";
 import { resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
-import { FreeSlide, shapeStyle } from "./FreeSlide";
+import { useT } from "../../i18n/i18n";
+import { FreeSlide, rotateStyle, shapeStyle } from "./FreeSlide";
 
 /**
  * Theme presets. Each is a complete art direction — background, ink, one accent,
@@ -112,10 +113,13 @@ let elementSeq = 0;
 const newElementId = () => `el_${Date.now().toString(36)}_${elementSeq++}`;
 
 export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
+  const t = useT();
   const slides = artifact.data.slides ?? [];
   const patch = useArtifactPatch(artifact.id);
   const [index, setIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Thumbnail the dragged slide would land at — drives the insertion indicator.
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [presenting, setPresenting] = useState(false);
   const imgRef = useRef<HTMLInputElement>(null);
   const bgRef = useRef<HTMLInputElement>(null);
@@ -257,18 +261,35 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   return (
     <div className="cv-deck">
       <aside className="cv-deck__rail cv-chrome">
+        {/* Drag a thumbnail to reorder. The insertion indicator is a pure
+            className hook — `--drop-before` (moving up) / `--drop-after`
+            (moving down) on the hovered thumb — styled by the stylesheet. */}
         {slides.map((s, i) => (
           <div
             key={i}
-            className={`cv-deck__thumb-wrap ${i === at ? "is-active" : ""} ${dragIndex === i ? "is-dragging" : ""}`}
+            className={`cv-deck__thumb-wrap ${i === at ? "is-active" : ""} ${dragIndex === i ? "is-dragging" : ""} ${
+              dragIndex !== null && dropIndex === i && i !== dragIndex
+                ? i < dragIndex
+                  ? "cv-deck__thumb-wrap--drop-before"
+                  : "cv-deck__thumb-wrap--drop-after"
+                : ""
+            }`}
             draggable
             onDragStart={() => setDragIndex(i)}
-            onDragOver={(e) => e.preventDefault()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (dragIndex !== null && i !== dragIndex) setDropIndex(i);
+            }}
+            onDragLeave={() => setDropIndex((cur) => (cur === i ? null : cur))}
             onDrop={() => {
               if (dragIndex !== null) reorder(dragIndex, i);
               setDragIndex(null);
+              setDropIndex(null);
             }}
-            onDragEnd={() => setDragIndex(null)}
+            onDragEnd={() => {
+              setDragIndex(null);
+              setDropIndex(null);
+            }}
           >
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
@@ -284,14 +305,14 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   el.type === "text" ? (
                     <span
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * 0.12, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap" }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * 0.12, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap", ...rotateStyle(el) }}
                     >
                       {el.text}
                     </span>
                   ) : el.type === "shape" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el) }} />
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...rotateStyle(el), ...shapeStyle(el) }} />
                   ) : (
-                    <img key={el.id} src={el.src} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
+                    <img key={el.id} src={el.src} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: el.fit ?? "contain", ...(el.radius ? { borderRadius: el.radius } : {}), ...rotateStyle(el) }} />
                   ),
                 )}
                 </div>
@@ -304,23 +325,23 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
 
       <div className="cv-deck__main">
         <div className="cv-deck__toolbar cv-chrome">
-          <button onClick={addTextEl} title="Add text box">+ Text</button>
-          <button onClick={() => imgRef.current?.click()} title="Add image">+ Image</button>
+          <button onClick={addTextEl} title={t("addTextBox")}>{t("addText")}</button>
+          <button onClick={() => imgRef.current?.click()} title={t("addImageTip")}>{t("addImage")}</button>
           <input ref={imgRef} type="file" accept="image/*" hidden onChange={(e) => addImageEl(e.target.files?.[0])} />
           <input ref={bgRef} type="file" accept="image/*" hidden onChange={(e) => setSlideBgImage(e.target.files?.[0])} />
-          <select className="cv-deck__theme" value="" title="Add a shape"
+          <select className="cv-deck__theme" value="" title={t("addShapeTip")}
             onChange={(e) => { if (e.target.value) addShapeEl(e.target.value as NonNullable<SlideElement["shape"]>); e.currentTarget.value = ""; }}>
-            <option value="">+ Shape</option>
+            <option value="">{t("addShape")}</option>
             {SHAPES.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
           </select>
-          <select className="cv-deck__theme" value="" title="Apply a layout"
+          <select className="cv-deck__theme" value="" title={t("applyLayout")}
             onChange={(e) => { if (e.target.value) applyLayout(e.target.value); e.currentTarget.value = ""; }}>
-            <option value="">Layout…</option>
+            <option value="">{t("layoutMenu")}</option>
             {Object.entries(LAYOUTS).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
           </select>
-          <select className="cv-deck__theme" value="" title="Auto layout — align & distribute elements"
+          <select className="cv-deck__theme" value="" title={t("autoLayoutTip")}
             onChange={(e) => { if (e.target.value) arrange(e.target.value); e.currentTarget.value = ""; }}>
-            <option value="">⤢ Arrange…</option>
+            <option value="">{t("arrangeMenu")}</option>
             <optgroup label="Auto layout">
               <option value="stack-v">Stack vertical</option>
               <option value="stack-h">Stack horizontal</option>
@@ -341,32 +362,31 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           <select
             className="cv-deck__theme"
             value=""
-            title="Theme"
+            title={t("theme")}
             onChange={(e) => {
               const t = THEMES.find((x) => x.id === e.target.value);
               if (t) update({ background: t.bg, textColor: t.text, accent: t.accent, fontFamily: t.font });
               e.currentTarget.value = "";
             }}
           >
-            <option value="">Theme…</option>
+            <option value="">{t("themeMenu")}</option>
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>{t.label}</option>
             ))}
           </select>
-          <label className="cv-deck__bg" title="Background color">
+          <label className="cv-deck__bg" title={t("bgColor")}>
             <input type="color" value={/^#/.test(slide.background ?? "") ? slide.background : "#ffffff"} onChange={(e) => update({ background: e.target.value })} />
           </label>
-          <button onClick={() => bgRef.current?.click()} title="Background image">🖼 BG</button>
-          <label className="cv-deck__pad" title="Content padding (% of slide)">
-            Pad
+          <button onClick={() => bgRef.current?.click()} title={t("bgImageTip")}>{t("bgImage")}</button>
+          <label className="cv-deck__pad" title={t("padTip")}>{t("padding")}
             <input type="number" min={0} max={20} value={slide.padding ?? 0} onChange={(e) => update({ padding: Number(e.target.value) || undefined })} />
           </label>
           <span className="cv-deck__spacer" />
-          <button className="cv-deck__present" onClick={() => setPresenting(true)} title="Present (full screen)">▶ Present</button>
-          <button onClick={() => moveSlide(-1)} title="Move up" disabled={at === 0}>▲</button>
-          <button onClick={() => moveSlide(1)} title="Move down" disabled={at === slides.length - 1}>▼</button>
-          <button onClick={duplicateSlide} title="Duplicate slide">⧉</button>
-          <button onClick={deleteSlide} title="Delete slide" disabled={slides.length === 1}>🗑</button>
+          <button className="cv-deck__present" onClick={() => setPresenting(true)} title={t("presentTip")}>▶ {t("present")}</button>
+          <button onClick={() => moveSlide(-1)} title={t("moveUp")} disabled={at === 0}>▲</button>
+          <button onClick={() => moveSlide(1)} title={t("moveDown")} disabled={at === slides.length - 1}>▼</button>
+          <button onClick={duplicateSlide} title={t("duplicateSlide")}>⧉</button>
+          <button onClick={deleteSlide} title={t("deleteSlide")} disabled={slides.length === 1}>🗑</button>
         </div>
 
         <div className="cv-slide cv-slide--blank" style={slideStyle}>
@@ -382,7 +402,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         <textarea
           className="cv-deck__notes cv-chrome"
           value={slide.notes ?? ""}
-          placeholder="Speaker notes…"
+          placeholder={t("speakerNotes")}
           onChange={(e) => update({ notes: e.target.value })}
         />
       </div>
@@ -394,18 +414,18 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide).map((el) =>
                 el.type === "text" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, ...rotateStyle(el) }}>
                     <div className="cv-free__text" style={{ fontSize: el.fontSize ?? 24, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap" }}>
                       {el.text}
                     </div>
                   </div>
                 ) : el.type === "shape" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor, ...rotateStyle(el) }}>
                     <div style={shapeStyle(el)} />
                   </div>
                 ) : (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
-                    <img className="cv-free__img" src={el.src} alt="" />
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, ...rotateStyle(el) }}>
+                    <img className="cv-free__img" src={el.src} alt="" style={{ objectFit: el.fit ?? "contain", ...(el.radius ? { borderRadius: el.radius } : {}) }} />
                   </div>
                 ),
               )}
@@ -420,7 +440,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <span className="cv-present__progress-fill" style={{ width: `${((at + 1) / slides.length) * 100}%` }} />
           </div>
           <div className="cv-present__count">{at + 1} / {slides.length}</div>
-          <div className="cv-present__hint">← → to navigate · Esc to exit</div>
+          <div className="cv-present__hint">{t("presentHint")}</div>
         </div>
       )}
     </div>

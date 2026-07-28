@@ -22,6 +22,7 @@ import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
+import { useT } from "../../i18n/i18n";
 
 const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
 
@@ -108,7 +109,45 @@ type FortuneOp = Parameters<WorkbookInstance["applyOp"]>[0][number];
 /** A rectangular cell range, `row`/`column` as inclusive `[start, end]` pairs. */
 type SheetSelection = { row: number[]; column: number[] };
 
+/** Quick number formats (Fortune `ct.fa` patterns) offered in the Fmt… menu. */
+const NUMBER_FORMATS = [
+  { label: "일반", fa: "General" },
+  { label: "통화 ₩#,##0", fa: "₩#,##0" },
+  { label: "통화 $#,##0.00", fa: "$#,##0.00" },
+  { label: "퍼센트 0.0%", fa: "0.0%" },
+  { label: "천단위 #,##0", fa: "#,##0" },
+  { label: "소수 0.00", fa: "0.00" },
+  { label: "날짜 yyyy-mm-dd", fa: "yyyy-mm-dd" },
+] as const;
+
+/** AutoSum-style quick functions offered in the Σ menu. */
+const QUICK_FUNCTIONS = ["SUM", "AVERAGE", "COUNT", "MAX", "MIN"] as const;
+
+/** 0-based column index → spreadsheet letters (0 → "A", 26 → "AA"). */
+const colToLetters = (c: number): string => {
+  let s = "";
+  for (let n = c; n >= 0; n = Math.floor(n / 26) - 1) s = String.fromCharCode(65 + (n % 26)) + s;
+  return s;
+};
+
+/** 0-based cell coordinates → A1 notation ("B3"). */
+const toA1 = (r: number, c: number) => `${colToLetters(c)}${r + 1}`;
+
+/** Does the selection contain a merged cell? Merged cells carry `mc`; the scan is
+ *  capped so a whole-sheet selection can't stall the selection-change hook. */
+const selectionHasMerge = (wb: WorkbookInstance, sel: SheetSelection): boolean => {
+  let scanned = 0;
+  for (let r = sel.row[0]; r <= sel.row[1]; r++) {
+    for (let c = sel.column[0]; c <= sel.column[1]; c++) {
+      if (scanned++ >= 400) return false;
+      if (wb.getCellValue?.(r, c, { type: "mc" })) return true;
+    }
+  }
+  return false;
+};
+
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
+  const t = useT();
   const rows = artifact.data.rows;
   // Fall back to deriving columns from the row keys, so a table that arrives with
   // rows but no explicit `columns` still renders instead of "Waiting for data".
@@ -276,10 +315,24 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   const [boldOn, setBoldOn] = useState(false);
   const [fillColor, setFillColor] = useState("#fef3c7");
   const [textColor, setTextColor] = useState("#111827");
+  // Whether the selection touches a merged cell — enables Unmerge.
+  const [selHasMerge, setSelHasMerge] = useState(false);
+  // Formula bar: the anchor cell's formula (or value), plus the user's in-progress
+  // draft. The draft overlays the mirrored value and commits on Enter only.
+  const [fxValue, setFxValue] = useState("");
+  const [fxDraft, setFxDraft] = useState<string | null>(null);
   const handleSelectionChange = useCallback((_sheetId: string, sel: SheetSelection) => {
     setSelection({ row: [...sel.row], column: [...sel.column] });
-    const bl = wbRef.current?.getCellValue?.(sel.row[0], sel.column[0], { type: "bl" });
+    const wb = wbRef.current;
+    const [r, c] = [sel.row[0], sel.column[0]];
+    const bl = wb?.getCellValue?.(r, c, { type: "bl" });
     setBoldOn(bl === 1 || bl === "1");
+    // The formula bar mirrors the anchor cell: its formula if it has one, else its value.
+    const f = wb?.getCellValue?.(r, c, { type: "f" });
+    const v = wb?.getCellValue?.(r, c);
+    setFxValue(typeof f === "string" && f ? f : v == null ? "" : String(v));
+    setFxDraft(null);
+    setSelHasMerge(wb ? selectionHasMerge(wb, sel) : false);
   }, []);
   const workbookHooks = useMemo(() => ({ afterSelectionChange: handleSelectionChange }), [handleSelectionChange]);
 
@@ -293,6 +346,73 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   const toggleBold = () => {
     applyFormat("bl", boldOn ? 0 : 1);
     setBoldOn((b) => !b);
+  };
+
+  // Number format for the selection. `setCellFormat("ct", {fa, t})` recomputes the
+  // display string itself (`m = SSF.format(fa, v)`), so cells re-render formatted.
+  // `t` is derived per cell exactly like Fortune's own format menu (updateFormatCell):
+  // dates are "d", General keeps text cells as "g", every numeric format is "n" —
+  // batched through batchCallApis so the whole range is one context update.
+  const applyNumberFormat = (fa: string) => {
+    const wb = wbRef.current;
+    const sel = wb?.getSelection?.();
+    if (!wb || !sel?.length) return;
+    const isDate = fa === "yyyy-mm-dd";
+    const calls: { name: string; args: unknown[] }[] = [];
+    sel.forEach((s) => {
+      for (let r = s.row[0]; r <= s.row[1]; r++) {
+        for (let c = s.column[0]; c <= s.column[1]; c++) {
+          const v = wb.getCellValue?.(r, c);
+          const numeric = v != null && v !== "" && Number.isFinite(Number(v));
+          const t = isDate ? "d" : fa === "General" ? (numeric ? "n" : "g") : "n";
+          calls.push({ name: "setCellFormat", args: [r, c, "ct", { fa, t }] });
+        }
+      }
+    });
+    wb.batchCallApis(calls);
+  };
+
+  // Merge / unmerge the selection. Fortune's API takes the same `{row, column}[]`
+  // ranges getSelection returns; "merge-all" keeps the first non-empty value at
+  // the anchor, "merge-cancel" (via cancelMerge) restores independent cells.
+  const mergeSelection = () => {
+    const sel = wbRef.current?.getSelection?.();
+    if (!sel?.length) return;
+    wbRef.current?.mergeCells(sel, "merge-all");
+    setSelHasMerge(true);
+  };
+  const unmergeSelection = () => {
+    const sel = wbRef.current?.getSelection?.();
+    if (!sel?.length) return;
+    wbRef.current?.cancelMerge(sel);
+    setSelHasMerge(false);
+  };
+
+  // AutoSum-style quick function: write "=FN(range)" just below the selection —
+  // or to its right when the selection is a single row. setCellValue routes a
+  // "=…" string through Fortune's own commit path (updateCell → execfunction),
+  // so the result is computed and rendered immediately, no remount.
+  const insertQuickFormula = (fn: string) => {
+    const wb = wbRef.current;
+    const sel = wb?.getSelection?.()?.[0];
+    if (!wb || !sel) return;
+    const [r1, r2] = [sel.row[0], sel.row[1]];
+    const [c1, c2] = [sel.column[0], sel.column[1]];
+    const singleRow = r1 === r2;
+    const [tr, tc] = singleRow ? [r1, c2 + 1] : [r2 + 1, c1];
+    const sheet = wb.getSheet?.();
+    if (tr >= (sheet?.row ?? 0) || tc >= (sheet?.column ?? 0)) return; // no cell beyond the grid
+    wb.setCellValue(tr, tc, `=${fn}(${toA1(r1, c1)}:${toA1(r2, c2)})`);
+  };
+
+  // Commit the formula-bar draft to the anchor cell. A "=…" string commits as a
+  // live formula (same updateCell path as above); anything else as a literal.
+  const commitFormulaBar = () => {
+    const wb = wbRef.current;
+    if (!wb || !selection || fxDraft == null) return;
+    wb.setCellValue(selection.row[0], selection.column[0], fxDraft);
+    setFxValue(fxDraft);
+    setFxDraft(null);
   };
 
   // One-click de-garishing: strip every per-cell fill (`bg`) and font color
@@ -348,33 +468,36 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     setFrozen(!viewActive && hasSheet && !!artifact.data.sheet?.[0]?.frozen);
     setSelection(null);
     setBoldOn(false);
+    setSelHasMerge(false);
+    setFxValue("");
+    setFxDraft(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wbKey]);
 
   if (!mounted) {
-    return <div className="cv-sheet cv-sheet--empty">Loading spreadsheet…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{t("loadingSheet")}</div>;
   }
   if (!hasSheet && columns.length === 0) {
-    return <div className="cv-sheet cv-sheet--empty">Waiting for data…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{t("waitingData")}</div>;
   }
   // Wait for formula pre-computation before mounting, so the workbook mounts once
   // with final values — no remount that could interrupt an in-progress edit.
   if (!hasSheet && !formulasReady) {
-    return <div className="cv-sheet cv-sheet--empty">Calculating…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{t("calculating")}</div>;
   }
 
   return (
     <div className="cv-sheet-panel">
       <div className="cv-sheet-tools">
-        <button type="button" onClick={() => insert("column")}>＋ Column</button>
-        <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        <button type="button" onClick={() => insert("column")}>{t("addColumn")}</button>
+        <button type="button" onClick={() => insert("row")}>{t("addRow")}</button>
         <span className="cv-sheet-tools__sep" />
         {/* Selection formatting — enabled once a range is selected in the grid. */}
         <span className="cv-sheet-tools__fmt">
           <button
             type="button"
             className={`cv-sheet-tools__bold${boldOn ? " cv-sheet-tools__bold--on" : ""}`}
-            title="Bold"
+            title={t("bold")}
             aria-pressed={boldOn}
             disabled={!selection}
             onClick={toggleBold}
@@ -384,7 +507,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
           <input
             type="color"
             className="cv-sheet-tools__color cv-sheet-tools__color--fill"
-            title="Fill color"
+            title={t("fillColor")}
             disabled={!selection}
             value={fillColor}
             onChange={(e) => { setFillColor(e.target.value); applyFormat("bg", e.target.value); }}
@@ -392,28 +515,71 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
           <input
             type="color"
             className="cv-sheet-tools__color cv-sheet-tools__color--text"
-            title="Text color"
+            title={t("textColor")}
             disabled={!selection}
             value={textColor}
             onChange={(e) => { setTextColor(e.target.value); applyFormat("fc", e.target.value); }}
           />
           {/* Fortune's `ht` codes: 1 = left (default), 0 = center, 2 = right. */}
-          <button type="button" className="cv-sheet-tools__align" title="Align left" disabled={!selection} onClick={() => applyFormat("ht", 1)}>⇤</button>
-          <button type="button" className="cv-sheet-tools__align" title="Align center" disabled={!selection} onClick={() => applyFormat("ht", 0)}>↔</button>
-          <button type="button" className="cv-sheet-tools__align" title="Align right" disabled={!selection} onClick={() => applyFormat("ht", 2)}>⇥</button>
+          <button type="button" className="cv-sheet-tools__align" title={t("alignLeft")} disabled={!selection} onClick={() => applyFormat("ht", 1)}>⇤</button>
+          <button type="button" className="cv-sheet-tools__align" title={t("alignCenter")} disabled={!selection} onClick={() => applyFormat("ht", 0)}>↔</button>
+          <button type="button" className="cv-sheet-tools__align" title={t("alignRight")} disabled={!selection} onClick={() => applyFormat("ht", 2)}>⇥</button>
+          {/* Renders as a menu: value stays "" so it snaps back to the label. */}
+          <select
+            className="cv-sheet-tools__numfmt"
+            value=""
+            title={t("numberFormatTip")}
+            disabled={!selection}
+            onChange={(e) => { if (e.target.value) applyNumberFormat(e.target.value); }}
+          >
+            <option value="">{t("numberFormat")}</option>
+            {NUMBER_FORMATS.map((f) => (
+              <option key={f.fa} value={f.fa}>{f.label}</option>
+            ))}
+          </select>
+          <select
+            className="cv-sheet-tools__fx"
+            value=""
+            title={t("quickFunctionTip")}
+            disabled={!selection}
+            onChange={(e) => { if (e.target.value) insertQuickFormula(e.target.value); }}
+          >
+            <option value="">{t("quickFunction")}</option>
+            {QUICK_FUNCTIONS.map((fn) => (
+              <option key={fn} value={fn}>{fn}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="cv-sheet-tools__merge"
+            title={t("mergeTip")}
+            disabled={!selection || (selection.row[0] === selection.row[1] && selection.column[0] === selection.column[1])}
+            onClick={mergeSelection}
+          >
+            {t("mergeCells")}
+          </button>
+          <button
+            type="button"
+            className="cv-sheet-tools__unmerge"
+            title={t("unmergeTip")}
+            disabled={!selHasMerge}
+            onClick={unmergeSelection}
+          >
+            {t("unmergeCells")}
+          </button>
         </span>
         <span className="cv-sheet-tools__sep" />
-        <button type="button" className="cv-sheet-tools__clean" title="Remove all cell fills and font colors" onClick={cleanStyling}>
-          Clean styling
+        <button type="button" className="cv-sheet-tools__clean" title={t("cleanStylingTip")} onClick={cleanStyling}>
+          {t("cleanStyling")}
         </button>
         <button
           type="button"
           className={`cv-sheet-tools__freeze${frozen ? " cv-sheet-tools__freeze--on" : ""}`}
-          title={frozen ? "Unfreeze the header row" : "Keep the header row visible while scrolling"}
+          title={frozen ? t("freezeOffTip") : t("freezeOnTip")}
           aria-pressed={frozen}
           onClick={toggleFreeze}
         >
-          Freeze header
+          {t("freezeHeader")}
         </button>
         {columns.length > 0 && (
           <>
@@ -421,32 +587,55 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
             <select
               className="cv-sheet-tools__sort"
               value={sortCol}
-              title="Sort by column"
+              title={t("sortByColumn")}
               onChange={(e) => setSortCol(e.target.value)}
             >
-              <option value="">Sort…</option>
+              <option value="">{t("sortBy")}</option>
               {columns.map((c) => (
                 <option key={c.key} value={c.key}>{c.label ?? c.key}</option>
               ))}
             </select>
             {sortCol && (
-              <button type="button" title={sortDir === 1 ? "Ascending" : "Descending"} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
+              <button type="button" title={sortDir === 1 ? t("ascending") : t("descending")} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
                 {sortDir === 1 ? "▲" : "▼"}
               </button>
             )}
             <input
               className="cv-sheet-tools__filter"
               value={filter}
-              placeholder="Filter…"
+              placeholder={t("filterRows")}
               onChange={(e) => setFilter(e.target.value)}
-              title="Filter rows"
+              title={t("filterTip")}
             />
           </>
         )}
-        <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
+        <span className="cv-sheet-tools__hint">{t("sheetHint")}</span>
+      </div>
+      {/* Formula bar: mirrors the anchor cell (formula over value); Enter commits,
+          Escape drops the draft back to the mirrored value. */}
+      <div className="cv-sheet-fxbar">
+        <span className="cv-sheet-fxbar__cell">
+          {selection ? toA1(selection.row[0], selection.column[0]) : "—"}
+        </span>
+        <input
+          className="cv-sheet-fxbar__input"
+          value={fxDraft ?? fxValue}
+          placeholder="=수식 또는 값 입력"
+          disabled={!selection}
+          onChange={(e) => setFxDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitFormulaBar();
+            } else if (e.key === "Escape") {
+              setFxDraft(null);
+            }
+          }}
+          title="Formula bar"
+        />
       </div>
       <div className="cv-sheet" ref={rootRef}>
-        <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
+        <Suspense fallback={<div className="cv-sheet--empty">{t("loading")}</div>}>
           <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} hooks={workbookHooks} />
         </Suspense>
       </div>

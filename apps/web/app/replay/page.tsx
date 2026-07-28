@@ -8,10 +8,13 @@
  * a fixture drives it exactly as a real LangGraph agent would.
  */
 
-import { Canvas, scenarios, useCanvasReplay } from "@braincrew-lab/langchain-canvas";
+import { useState } from "react";
+
+import { Canvas, scenarios, useCanvasReplay, type CanvasLocale } from "@braincrew-lab/langchain-canvas";
 
 export default function ReplayPage() {
   const { play, isPlaying } = useCanvasReplay();
+  const [locale, setLocale] = useState<CanvasLocale>("en");
 
   return (
     <main className="app">
@@ -19,6 +22,11 @@ export default function ReplayPage() {
         <div className="replay">
           <header className="chat__header">
             <h1>Schema replay</h1>
+            {/* Canvas chrome locale — the wire data is untouched. */}
+            <div className="replay__locale" role="group" aria-label="Canvas language">
+              <button className={locale === "en" ? "is-on" : ""} onClick={() => setLocale("en")}>EN</button>
+              <button className={locale === "ko" ? "is-on" : ""} onClick={() => setLocale("ko")}>한국어</button>
+            </div>
           </header>
           <p className="replay__lead">
             Render the canvas from wire-event fixtures — no backend, no API key. Each scenario is
@@ -38,7 +46,7 @@ export default function ReplayPage() {
         </div>
       </section>
       <section className="app__canvas">
-        <Canvas />
+        <Canvas locale={locale} />
       </section>
     </main>
   );

@@ -18,11 +18,12 @@ import { loadOptional } from "../optionalImport";
 import { xlsxToSheets } from "./xlsx";
 import { hwpxToMarkdown } from "./hwpx";
 import { hwpToText } from "./hwp";
+import { docxToMarkdown } from "./docx";
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
 export const IMPORTABLE_EXTENSIONS = [
   ".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx",
-  ".pdf", ".hwpx", ".hwp",
+  ".pdf", ".hwpx", ".hwp", ".docx",
 ] as const;
 
 const extensionOf = (name: string) => {
@@ -89,6 +90,11 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
     case ".hwpx": {
       // OWPML (ZIP of XML) → markdown, parsed with platform primitives only.
       const content = await hwpxToMarkdown(await file.arrayBuffer());
+      return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
+    }
+    case ".docx": {
+      // WordprocessingML (ZIP of XML) → markdown, parsed with platform primitives only.
+      const content = await docxToMarkdown(await file.arrayBuffer());
       return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
     }
     case ".hwp": {

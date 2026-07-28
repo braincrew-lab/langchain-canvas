@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { PdfData } from "../../protocol/artifacts";
 import type { RendererProps } from "../../registry/registry";
+import { useT } from "../../i18n/i18n";
 
 /**
  * Decode a data: URL into a Blob (handles base64 and percent-encoded bodies).
@@ -39,6 +40,7 @@ function dataUrlToBlob(url: string): Blob | null {
 }
 
 export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
+  const t = useT();
   const src = artifact.data.src;
   const isData = typeof src === "string" && src.startsWith("data:");
 
@@ -87,10 +89,10 @@ export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
   };
 
   if (!src || broken) {
-    return <div className="cv-pdf cv-pdf--empty">Waiting for PDF…</div>;
+    return <div className="cv-pdf cv-pdf--empty">{t("waitingPdf")}</div>;
   }
   if (!viewUrl) {
-    return <div className="cv-pdf cv-pdf--empty">Loading PDF…</div>;
+    return <div className="cv-pdf cv-pdf--empty">{t("loading")}</div>;
   }
 
   return (
@@ -99,25 +101,25 @@ export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
         <span className="cv-pdf-tools__name" title={filename}>{filename}</span>
         <span className="cv-pdf-tools__spacer" />
         <span className="cv-pdf-tools__zoom">
-          <button type="button" onClick={zoomOut} title="Zoom out">−</button>
+          <button type="button" onClick={zoomOut} title={t("zoomOut")}>−</button>
           <button
             type="button"
             className="cv-pdf-tools__zoom-label"
             onClick={() => setZoom("fit")}
-            title="Fit to width"
+            title={t("fitWidth")}
           >
-            {zoom === "fit" ? "Fit" : `${zoom}%`}
+            {zoom === "fit" ? t("fitWidth") : `${zoom}%`}
           </button>
-          <button type="button" onClick={zoomIn} title="Zoom in">＋</button>
+          <button type="button" onClick={zoomIn} title={t("zoomIn")}>＋</button>
         </span>
         <span className="cv-pdf-tools__sep" />
-        <button type="button" onClick={download} title="Download PDF">⤓ Download</button>
+        <button type="button" onClick={download} title={t("download")}>{t("download")}</button>
         <button
           type="button"
           onClick={() => window.open(viewUrl, "_blank", "noopener")}
-          title="Open in a new tab"
+          title={t("openBtn")}
         >
-          ↗ Open
+          {t("openBtn")}
         </button>
       </div>
       <div className="cv-pdf">

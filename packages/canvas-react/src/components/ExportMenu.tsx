@@ -13,6 +13,7 @@ import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
 import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
+import { useT } from "../i18n/i18n";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
 const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
@@ -27,6 +28,7 @@ interface ExportMenuProps {
 }
 
 export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const stem = slugify(artifact.title);
   const dataOptions = dataExporters[artifact.type] ?? [];
@@ -117,7 +119,7 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        Export ▾
+        {t("export")}
       </button>
 
       {open && (
@@ -125,10 +127,10 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
           <div className="cv-export__scrim" onClick={() => setOpen(false)} />
           <div className="cv-export__menu" role="menu">
             <button role="menuitem" onClick={openInTab}>
-              Open in new tab ↗
+              {t("openInTab")}
             </button>
             <button role="menuitem" onClick={copyHtml}>
-              {copied ? "Copied ✓" : "Copy HTML"}
+              {copied ? t("copied") : t("copyHtml")}
             </button>
             <button role="menuitem" onClick={exportHtml}>
               HTML <span className="cv-export__ext">.html</span>

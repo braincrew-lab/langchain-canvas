@@ -20,12 +20,15 @@ import { SelectionBar } from "./SelectionBar";
 import { StylePanel } from "./StylePanel";
 import { useCanvasImport } from "../hooks/useCanvasImport";
 import { useCanvasStore } from "../hooks/useCanvasStore";
+import { CanvasLocaleProvider, useT, type CanvasLocale } from "../i18n/i18n";
 
 const ACCEPT = IMPORTABLE_EXTENSIONS.join(",");
 
 export interface CanvasProps {
   /** Renderer map. Defaults to the built-in html/document/chart/table renderers. */
   registry?: ArtifactRegistry;
+  /** UI language for the canvas chrome (toolbars, menus, states). Default "en". */
+  locale?: CanvasLocale;
   /** Rendered when no artifact has been opened yet. */
   emptyState?: ReactNode;
   /**
@@ -44,15 +47,18 @@ export interface CanvasProps {
   onUserEdit?: (artifact: Artifact) => void;
 }
 
-export function Canvas({ registry = builtinRenderers, emptyState, onEditElement, onUserEdit }: CanvasProps) {
+export function Canvas({ registry = builtinRenderers, locale, emptyState, onEditElement, onUserEdit }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
-      <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} />
+      <CanvasLocaleProvider locale={locale}>
+        <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} />
+      </CanvasLocaleProvider>
     </CanvasRegistryProvider>
   );
 }
 
 function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps, "emptyState" | "onEditElement" | "onUserEdit">) {
+  const t = useT();
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
@@ -96,7 +102,7 @@ function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps
       if (e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
     },
   };
-  const dropOverlay = dropping ? <div className="cv-canvas__drop">Drop to open on the canvas</div> : null;
+  const dropOverlay = dropping ? <div className="cv-canvas__drop">{t("dropToOpen")}</div> : null;
 
   if (!active) {
     return (
@@ -146,6 +152,7 @@ function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps
 
 /** Header (title + status + version rail) plus the resolved renderer body. */
 function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Artifact[] }) {
+  const t = useT();
   const [viewIndex, setViewIndex] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // Clamp against a shrunken history: a re-emitted `canvas.create` resets the
@@ -200,19 +207,19 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
       >
         {isHistory && (
           <div className="cv-history-note" role="status">
-            Viewing v{Math.min(viewIndex! + 1, versions.length)} (read-only) — select the latest version to edit
+            v{Math.min(viewIndex! + 1, versions.length)} · {t("historyNote")}
           </div>
         )}
         {Renderer ? (
           <RendererBoundary resetKey={`${shown.id}:${shown.version}`}>
             {/* Structured renderers are lazy (recharts / react-markdown / fortune-sheet
                 split into on-demand chunks); Suspense covers their first load. */}
-            <Suspense fallback={<div className="cv-fallback">Loading…</div>}>
+            <Suspense fallback={<div className="cv-fallback">{t("loading")}</div>}>
               <Renderer artifact={shown} />
             </Suspense>
           </RendererBoundary>
         ) : (
-          <div className="cv-fallback">No renderer registered for type “{shown.type}”.</div>
+          <div className="cv-fallback">{t("noRenderer")} “{shown.type}”.</div>
         )}
       </div>
     </>
@@ -221,6 +228,7 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
 
 /** Undo / redo for user edits, plus the ⌘Z / ⌘⇧Z (Ctrl on Windows) shortcuts. */
 function UndoRedo() {
+  const t = useT();
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
@@ -244,16 +252,17 @@ function UndoRedo() {
 
   return (
     <div className="cv-undo" role="group" aria-label="Undo and redo">
-      <button onClick={undo} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">↶</button>
-      <button onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)" aria-label="Redo">↷</button>
+      <button onClick={undo} disabled={!canUndo} title={`${t("undo")} (⌘Z)`} aria-label={t("undo")}>↶</button>
+      <button onClick={redo} disabled={!canRedo} title={`${t("redo")} (⌘⇧Z)`} aria-label={t("redo")}>↷</button>
     </div>
   );
 }
 
 function VersionRail({ total, index, onSelect }: { total: number; index: number; onSelect: (i: number) => void }) {
+  const t = useT();
   return (
-    <div className="cv-versions" role="group" aria-label="Version history">
-      <button className="cv-versions__nav" disabled={index === 0} onClick={() => onSelect(index - 1)} aria-label="Previous version">
+    <div className="cv-versions" role="group" aria-label={t("versionHistory")}>
+      <button className="cv-versions__nav" disabled={index === 0} onClick={() => onSelect(index - 1)} aria-label={t("prevVersion")}>
         ‹
       </button>
       <span className="cv-versions__label">
@@ -263,7 +272,7 @@ function VersionRail({ total, index, onSelect }: { total: number; index: number;
         className="cv-versions__nav"
         disabled={index === total - 1}
         onClick={() => onSelect(index + 1)}
-        aria-label="Next version"
+        aria-label={t("nextVersion")}
       >
         ›
       </button>
