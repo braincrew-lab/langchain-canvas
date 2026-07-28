@@ -68,6 +68,16 @@ export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
     [artifact.data.filename, artifact.title],
   );
 
+  // The browser viewer's own chrome is hidden (`#toolbar=0`): it duplicates our
+  // Download/Open controls and titles the document with the blob URL's UUID.
+  // Zoom lives in our toolbar instead — changing the fragment re-fits the view.
+  const [zoom, setZoom] = useState<number | "fit">("fit");
+  const zoomOut = () => setZoom((z) => Math.max(50, (z === "fit" ? 100 : z) - 25));
+  const zoomIn = () => setZoom((z) => Math.min(300, (z === "fit" ? 100 : z) + 25));
+  const frameSrc = viewUrl
+    ? `${viewUrl}#toolbar=0&navpanes=0&zoom=${zoom === "fit" ? "page-width" : zoom}`
+    : null;
+
   const download = () => {
     if (!viewUrl) return;
     const a = document.createElement("a");
@@ -88,6 +98,19 @@ export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
       <div className="cv-pdf-tools">
         <span className="cv-pdf-tools__name" title={filename}>{filename}</span>
         <span className="cv-pdf-tools__spacer" />
+        <span className="cv-pdf-tools__zoom">
+          <button type="button" onClick={zoomOut} title="Zoom out">−</button>
+          <button
+            type="button"
+            className="cv-pdf-tools__zoom-label"
+            onClick={() => setZoom("fit")}
+            title="Fit to width"
+          >
+            {zoom === "fit" ? "Fit" : `${zoom}%`}
+          </button>
+          <button type="button" onClick={zoomIn} title="Zoom in">＋</button>
+        </span>
+        <span className="cv-pdf-tools__sep" />
         <button type="button" onClick={download} title="Download PDF">⤓ Download</button>
         <button
           type="button"
@@ -99,8 +122,9 @@ export function PdfRenderer({ artifact }: RendererProps<PdfData>) {
       </div>
       <div className="cv-pdf">
         {/* The browser's own viewer. `title` for a11y; no sandbox — same-origin
-            blob: content is the PDF bytes themselves, there is no script surface. */}
-        <iframe className="cv-pdf__frame" src={viewUrl} title={filename} />
+            blob: content is the PDF bytes themselves, there is no script surface.
+            Keyed by the fragment so a zoom change reloads with the new fit. */}
+        <iframe key={frameSrc!} className="cv-pdf__frame" src={frameSrc!} title={filename} />
       </div>
     </div>
   );
