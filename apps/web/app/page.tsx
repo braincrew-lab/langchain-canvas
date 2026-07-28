@@ -49,6 +49,7 @@ const LABELS: Record<string, string> = {
   chart: "Chart",
   table: "Excel",
   slides: "PowerPoint",
+  pdf: "PDF",
 };
 
 /** Per-scenario docs: the Python call, the `data` schema, and its properties. */
@@ -141,6 +142,21 @@ type SlidesData = { slides: Slide[] };`,
       { name: "slides", type: "Slide[]", required: true, desc: "Ordered slides. Each has a layout (title / content / section), title, optional subtitle/bullets, and speaker notes. Renders as an editable deck (add / duplicate / delete) and exports to .pptx." },
     ],
   },
+  pdf: {
+    type: "pdf",
+    pyCall: `pdf = canvas.open_pdf(title="Signed report")
+pdf.set_src("data:application/pdf;base64,…")  # or an https URL
+pdf.complete()`,
+    schema: `// type: "pdf"
+type PdfData = {
+  src: string;        // data:application/pdf;… , blob: or https URL
+  filename?: string;  // used for the download name
+};`,
+    props: [
+      { name: "src", type: "string", required: true, desc: "The PDF source. A data: URL keeps the artifact self-contained; the viewer serves it through a blob: URL pinned to application/pdf." },
+      { name: "filename", type: "string", required: false, desc: "Original filename — used when the viewer's Download button saves the file." },
+    ],
+  },
 };
 
 export default function ExplorerPage() {
@@ -148,7 +164,8 @@ export default function ExplorerPage() {
   const [activeId, setActiveId] = useState(scenarios[0].id);
 
   const active = useMemo(() => scenarios.find((s) => s.id === activeId)!, [activeId]);
-  const doc = DOCS[activeId];
+  // A scenario without a docs entry must never crash the explorer.
+  const doc = DOCS[activeId] ?? { type: activeId, pyCall: "\u2014", schema: "\u2014", props: [] };
 
   const [json, setJson] = useState(() => JSON.stringify(active.events, null, 2));
   const [error, setError] = useState<string | null>(null);

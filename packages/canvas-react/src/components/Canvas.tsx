@@ -148,7 +148,15 @@ function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps
 function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Artifact[] }) {
   const [viewIndex, setViewIndex] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const shown = viewIndex === null ? artifact : versions[viewIndex];
+  // Clamp against a shrunken history: a re-emitted `canvas.create` resets the
+  // version list to one entry while a stale viewIndex may still point past it —
+  // unclamped, `shown` goes undefined and the whole panel throws.
+  const shown =
+    viewIndex === null ? artifact : versions[Math.min(viewIndex, versions.length - 1)] ?? artifact;
+  // Browsing an old version is a preview, not an editing surface — renderers
+  // patch by artifact id, so edits made "in the past" would silently overwrite
+  // the live version (worse: node patches resolve v1 paths against v2 HTML).
+  const isHistory = viewIndex !== null && shown !== artifact;
   const Renderer = useRenderer(shown.type);
 
   // Rendered HTML for export, with editor chrome (toolbars, nav, contenteditable)
@@ -185,7 +193,16 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
       </header>
 
       {/* spreadsheets own their own scroll — give them a flush, non-scrolling body */}
-      <div className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}`} ref={bodyRef}>
+      <div
+        className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}${isHistory ? " cv-body--history" : ""}`}
+        ref={bodyRef}
+        aria-readonly={isHistory || undefined}
+      >
+        {isHistory && (
+          <div className="cv-history-note" role="status">
+            Viewing v{Math.min(viewIndex! + 1, versions.length)} (read-only) — select the latest version to edit
+          </div>
+        )}
         {Renderer ? (
           <RendererBoundary resetKey={`${shown.id}:${shown.version}`}>
             {/* Structured renderers are lazy (recharts / react-markdown / fortune-sheet

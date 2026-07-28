@@ -13,8 +13,9 @@ const ChartRenderer = lazy(() => import("./ChartRenderer").then((m) => ({ defaul
 const DocumentRenderer = lazy(() => import("./DocumentRenderer").then((m) => ({ default: m.DocumentRenderer })));
 const TableRenderer = lazy(() => import("./TableRenderer").then((m) => ({ default: m.TableRenderer })));
 const SlidesRenderer = lazy(() => import("./SlidesRenderer").then((m) => ({ default: m.SlidesRenderer })));
+const PdfRenderer = lazy(() => import("./PdfRenderer").then((m) => ({ default: m.PdfRenderer })));
 
-export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, SlidesRenderer };
+export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, SlidesRenderer, PdfRenderer };
 
 /**
  * The batteries-included renderers. `html` is the base substrate (sandboxed
@@ -28,4 +29,5 @@ export const builtinRenderers: ArtifactRegistry = {
   chart: ChartRenderer,
   table: TableRenderer,
   slides: SlidesRenderer,
+  pdf: PdfRenderer,
 };

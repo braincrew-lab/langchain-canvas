@@ -301,13 +301,18 @@ function checkA11y(html: string): string[] {
   return issues;
 }
 
-const SLIDE_W = 1280;
+// Slide design height is the constant; width derives from the aspect ratio
+// (16:9 → 1280×720, 4:3 → 960×720) so non-16:9 slides get their true canvas.
+const SLIDE_H = 720;
 
 // Force a web artifact's document to scroll even when its own CSS says
 // `body{overflow:hidden}` (common in slide-derived templates). Injected only for
 // non-slide artifacts, as the very last <style> so `!important` wins the cascade.
+// Tagged `data-lcx` so the inspector's persist scrub strips it — untagged, it
+// was serialized into the stored artifact on every structural edit and each
+// render appended another copy, leaking `!important` overrides into exports.
 const SCROLL_FIX =
-  "<style>html,body{overflow:auto!important;height:auto!important;min-height:100%!important}</style>";
+  "<style data-lcx>html,body{overflow:auto!important;height:auto!important;min-height:100%!important}</style>";
 function withScrollableBody(html: string): string {
   const i = html.lastIndexOf("</body>");
   return i === -1 ? html + SCROLL_FIX : html.slice(0, i) + SCROLL_FIX + html.slice(i);
@@ -318,7 +323,10 @@ function withScrollableBody(html: string): string {
 function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivElement | null>) {
   const [scale, setScale] = useState(1);
   const [rw, rh] = (ratio ?? "16:9").split(/[:x/]/).map(Number);
-  const height = rw && rh ? Math.round((SLIDE_W * rh) / rw) : 720;
+  // Height stays the slide-design constant; width follows the ratio, matching
+  // how hosts author `.slide-container` (16:9 → 1280×720, 4:3 → 960×720). A
+  // constant 1280 width used to leave a 4:3 slide floating in a 1280×960 card.
+  const width = rw && rh ? Math.round((SLIDE_H * rw) / rh) : 1280;
   useEffect(() => {
     if (!ratio) return;
     const el = boxRef.current;
@@ -330,15 +338,15 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
     const fit = () => {
       const w = el.clientWidth;
       if (w <= 40) return;
-      setScale(Math.min(1, (w - 40) / SLIDE_W));
+      setScale(Math.min(1, (w - 40) / width));
     };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ratio, height]);
-  return { scale, width: SLIDE_W, height };
+  }, [ratio, width]);
+  return { scale, width, height: SLIDE_H };
 }
 
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
@@ -733,15 +741,38 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
           )}
         </div>
       ) : (
-        <textarea
-          key={artifact.data.html}
-          className="cv-html-code"
-          defaultValue={artifact.data.html}
-          spellCheck={false}
-          onBlur={(e) => commitCode(e.target.value)}
-          aria-label="HTML source"
-        />
+        <CodePane html={artifact.data.html} onCommit={commitCode} />
       )}
     </div>
+  );
+}
+
+/** The Code view's source editor. Owns its draft so an external update (agent
+ *  deltas streaming in, an undo, a style-panel edit) doesn't remount the
+ *  textarea and wipe what the user is typing — the old `key={html}` +
+ *  `defaultValue` pairing did exactly that. Untouched, it follows the artifact;
+ *  once edited, the draft wins until it's committed on blur. */
+function CodePane({ html, onCommit }: { html: string; onCommit: (html: string) => void }) {
+  const [draft, setDraft] = useState(html);
+  const dirty = useRef(false);
+  useEffect(() => {
+    if (!dirty.current) setDraft(html);
+  }, [html]);
+  return (
+    <textarea
+      className="cv-html-code"
+      value={draft}
+      spellCheck={false}
+      onChange={(e) => {
+        dirty.current = true;
+        setDraft(e.target.value);
+      }}
+      onBlur={() => {
+        if (!dirty.current) return;
+        dirty.current = false;
+        onCommit(draft);
+      }}
+      aria-label="HTML source"
+    />
   );
 }

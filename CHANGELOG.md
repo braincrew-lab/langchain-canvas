@@ -4,6 +4,104 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-07-29
+
+A milestone release: Figma-grade slide editing, a real spreadsheet formatting
+toolbar, a native PDF viewer, Korean HWP/HWPX import, a rewritten Excel
+number-format engine, and eighteen verified bug fixes across the SDK.
+
+### Added — slides (PPT), Figma-grade editing
+- **Multi-select** — Shift+click toggles elements; dragging empty canvas draws a
+  marquee that selects everything it touches. A floating action bar on the
+  selection offers group/ungroup, align (left/center/right/top/middle/bottom),
+  duplicate, and delete.
+- **Group / ungroup** — ⌘G / ⌘⇧G (new optional `SlideElement.group` field);
+  grouped elements select and move as one, and survive reloads.
+- **Keyboard editing** — arrow-key nudge (0.5%, Shift = 2%), ⌘D duplicate,
+  ⌘C/⌘V copy/paste (works across slides), ⌘] / ⌘[ z-order, Delete, Esc.
+- **Aspect-lock resize** — hold Shift while resizing to keep the ratio.
+- **Smart guides on resize** — the existing drag snapping now also applies while
+  resizing (slide center, edges, and other elements' edges, 1.2% threshold).
+- **8 editorial themes** (Editorial, Gallery, Boardroom, Sage, Graphite,
+  Observatory, Ultramarine, Bordeaux) with per-theme accent + font stack (new
+  optional `Slide.accent` / `Slide.fontFamily`), and **7 accent-aware layouts**
+  (title, section divider, agenda, bullets, two-column, big stat, quote).
+- **Present-mode progress** — a slim progress bar and a "3 / 12" counter.
+
+### Added — tables (Excel)
+- **Clean styling** — one click strips every cell fill and font colour (agents
+  sometimes generate garishly coloured sheets; this restores a readable grid).
+- **Selection formatting** — bold, fill colour, text colour, and align
+  left/center/right for the selected range, in the sheet toolbar.
+- **Freeze header** — a toggle that pins the top row while scrolling.
+
+### Added — new formats
+- **PDF viewer** — new `type: "pdf"` artifact (`{ src, filename? }`) rendered in
+  the browser's built-in viewer (data:/blob:/https sources; data: URLs are
+  re-served through a blob: URL pinned to `application/pdf`). `.pdf` files can
+  also be dropped straight onto the canvas.
+- **HWPX import** — `.hwpx` (Hancom OWPML) opens as a document artifact:
+  paragraphs and tables → markdown, via a dependency-free ZIP reader
+  (`DecompressionStream`) and `DOMParser`.
+- **HWP import** — binary `.hwp` (HWP 5.x) text extraction: a from-scratch CFB
+  container parser + record-stream walker, zero dependencies; encrypted/DRM/
+  legacy files fail with clear bilingual guidance.
+
+### Fixed — Excel number formats (rewritten engine)
+- Quoted literals, `\`-escapes, and locale/colour groups no longer leak into
+  cell text — `yyyy"-"mm"-"dd` now renders `2026-07-01`, not `2026"-"07"-"01`.
+- **Time formats**: `m`/`mm` adjacent to hours/seconds now means minutes (was
+  always rendering the *month*), `AM/PM` works with a real 12-hour clock, and
+  elapsed formats (`[h]:mm`) render true durations.
+- Percent formats keep their thousands separators (`12,345.6%`), negative
+  sections render their parentheses (`(1,234.50)`), trailing currency stays
+  trailing (`1,234.50 €`), and rich-text cells import their text (previously
+  dropped, or `[object Object]` in the flat view).
+- Date/time cells use the file's own (UTC-anchored) calendar parts, so times no
+  longer shift by the viewer's timezone.
+
+### Fixed — security
+- **"Open in new tab" no longer runs artifact scripts in the host origin** — the
+  raw HTML blob was same-origin with the app; it now opens through a wrapper
+  page whose sandboxed iframe mirrors the canvas's own sandbox.
+- The PDF viewer pins data: sources to `application/pdf`, so a crafted
+  `data:text/html` artifact can't smuggle a scriptable same-origin frame.
+
+### Fixed — editing correctness
+- **CSV export includes user edits** — it read only the original stream shape
+  and silently discarded every in-grid edit (xlsx export already did this right).
+- **Old versions are read-only previews** — editing while viewing v1 silently
+  overwrote the live version (and node patches resolved v1 paths against v2
+  HTML); the version rail also no longer crashes when an agent re-`create`s an
+  artifact while an old version is open.
+- **Undo/redo now fire `onUserEdit`** — the host/backend stayed holding content
+  the user had just undone.
+- The editor's injected scroll-fix `<style>` no longer persists into the saved
+  artifact (it accumulated one copy per structural edit and leaked into exports).
+- Free-dragging a single element now persists its parent's `position:relative`
+  too — dropped elements no longer jump on the next reload.
+- Second and later element groups get fresh ids (they used to collide with "g0"
+  after a reload and merge with the first group).
+- On a fixed-aspect slide, inserting with nothing selected lands inside
+  `.slide-container` (was appended below the visible slide — invisible).
+- 4:3 slides render on a true 960×720 canvas (the stage assumed 1280 wide).
+- Chart cells accept typed negative numbers (the controlled input snapped "-"
+  back to 0); Code view keeps your in-progress source when agent deltas stream
+  in (it remounted and wiped the draft); outline indentation actually shows;
+  replaying a new scenario mid-replay no longer flips the playing state off.
+
+### Fixed — web (HTML) authoring
+- **Inserted blocks match the page's design.** A new Button (or heading/text)
+  now adopts the computed style of its existing peers — colours, radius,
+  padding, font — instead of landing as a bare UA-styled tag; on a page with no
+  buttons it falls back to a clean accent default.
+- **Free-drag positions are stable.** The vertical position commits in px (a
+  container's content-driven height reflows once the element leaves the flow,
+  so a %-of-height top landed somewhere else after every reload), and a static
+  `<body>` is pulled to `position:relative` so its absolute children stop
+  resolving against the page root. Dropped elements stay exactly where they
+  were dropped — verified Δ0.0px across a Code→Design reload.
+
 ## [0.1.15] — 2026-07-28
 
 ### Added
@@ -181,6 +279,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.2.0]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.2.0
 [0.1.15]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.15
 [0.1.14]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.14
 [0.1.13]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.13

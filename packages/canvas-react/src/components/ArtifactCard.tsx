@@ -19,6 +19,7 @@ const TYPE_META: Record<string, CardMeta> = {
   chart: { icon: "📊", label: "Chart" },
   table: { icon: "🔢", label: "Excel sheet" },
   slides: { icon: "📽️", label: "PowerPoint deck" },
+  pdf: { icon: "📕", label: "PDF" },
 };
 
 // Keyed on a producer-supplied logical kind (`meta.kind`). A host that renders
@@ -34,6 +35,7 @@ const KIND_META: Record<string, CardMeta> = {
   sheet: TYPE_META.table,
   slide: TYPE_META.slides,
   slides: TYPE_META.slides,
+  pdf: TYPE_META.pdf,
 };
 
 /** Resolve the card's icon + label, preferring the producer's logical `meta.kind`

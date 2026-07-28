@@ -37,7 +37,10 @@ export function useCanvasReplay() {
           api.getState().applyEvent(event);
         }
       } finally {
-        api.getState().setStreaming(false);
+        // An aborted run's finally can fire after a newer play() has started
+        // (mockStream notices the abort only once its pending delay resolves) —
+        // only the still-current run may clear the streaming flag.
+        if (abortRef.current === controller) api.getState().setStreaming(false);
       }
     },
     [api],

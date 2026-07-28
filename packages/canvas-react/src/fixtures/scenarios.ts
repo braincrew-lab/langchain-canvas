@@ -202,4 +202,32 @@ const slides: Scenario = {
   ],
 };
 
-export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides];
+// --- pdf: the browser's native viewer -------------------------------------------
+
+/** A complete one-page PDF (self-contained data: URL) for the native viewer. */
+const PDF_DATA_URL =
+  "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgNjEyIDc5Ml0vQ29udGVudHMgNCAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDUgMCBSPj4+Pj4+ZW5kb2JqCjQgMCBvYmo8PC9MZW5ndGggODA+PnN0cmVhbQpCVCAvRjEgMjggVGYgNzIgNzAwIFRkIChsYW5nY2hhaW4tY2FudmFzIFBERiB2aWV3ZXIpIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iajw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+ZW5kb2JqCnhyZWYKMCA2CnRyYWlsZXI8PC9TaXplIDYvUm9vdCAxIDAgUj4+CiUlRU9GCg==";
+
+const pdf: Scenario = {
+  id: "pdf",
+  title: "PDF viewer",
+  description: "A PDF artifact shown in the browser's built-in viewer — zero dependencies.",
+  events: [
+    { type: "message.delta", messageId: "m-pdf", text: "Here's the signed report as a PDF." },
+    {
+      type: "canvas.create",
+      artifact: {
+        id: "report-pdf",
+        type: "pdf",
+        title: "Signed report",
+        version: 1,
+        status: "complete",
+        data: { src: PDF_DATA_URL, filename: "signed-report.pdf" },
+      },
+    },
+    { type: "canvas.status", id: "report-pdf", status: "complete" },
+    { type: "done" },
+  ],
+};
+
+export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides, pdf];

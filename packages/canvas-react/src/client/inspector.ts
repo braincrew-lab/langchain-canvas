@@ -128,16 +128,47 @@ const INSPECTOR_SCRIPT = `
     for (var j = 0; j < marked.length; j++) scrub(marked[j]);
     parent.postMessage({ source: MARK, type: "doc_edit", self: !!selfApplied, html: "<!doctype html>\\n" + clone.outerHTML }, "*");
   }
+  // Copy the visual style of an existing element onto a new block, so inserts
+  // match the page's own design system instead of landing as bare UA-styled
+  // tags (a default grey <button> on a dark page reads as broken).
+  function adoptStyleFrom(el, sample) {
+    if (!sample) return false;
+    var cs = window.getComputedStyle(sample);
+    var props = ["background-color", "color", "border", "border-radius", "padding",
+      "font-family", "font-size", "font-weight", "letter-spacing", "box-shadow", "cursor"];
+    for (var i = 0; i < props.length; i++) el.style.setProperty(props[i], cs.getPropertyValue(props[i]));
+    return true;
+  }
   function newBlock(tag) {
     var el = document.createElement(tag);
     if (tag === "img") {
       el.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='270'%3E%3Crect width='100%25' height='100%25' fill='%23e5e7eb'/%3E%3Cpath d='M190 155l40-45 35 40 25-25 40 45z' fill='%23c3c8d0'/%3E%3Ccircle cx='300' cy='105' r='16' fill='%23c3c8d0'/%3E%3C/svg%3E";
       el.alt = "image"; el.style.maxWidth = "100%";
     }
-    else if (tag === "button") el.textContent = "Button";
+    else if (tag === "button") {
+      el.textContent = "Button";
+      // Match an existing button (skipping editor chrome); else a clean accent default.
+      var sampleBtn = null;
+      var btns = document.querySelectorAll("button");
+      for (var sb = 0; sb < btns.length; sb++) {
+        if (!btns[sb].closest("[data-lcx]")) { sampleBtn = btns[sb]; break; }
+      }
+      if (!adoptStyleFrom(el, sampleBtn)) {
+        el.style.cssText = "padding:10px 18px;border:0;border-radius:9px;background:#6366f1;color:#fff;font:600 15px/1.2 inherit;cursor:pointer";
+      }
+    }
     else if (tag === "hr") { /* no content */ }
     else if (tag === "section") { var p = document.createElement("p"); p.textContent = "New section"; el.appendChild(p); }
-    else el.textContent = tag === "h1" || tag === "h2" ? "New heading" : "New text";
+    else {
+      el.textContent = tag === "h1" || tag === "h2" ? "New heading" : "New text";
+      // Headings/text adopt an existing peer's look too (font, colour) so they
+      // don't appear in default serif-black on a styled page.
+      adoptStyleFrom(el, document.querySelector(tag === "p" ? "main p, section p, div p" : tag));
+      el.style.removeProperty("border");
+      el.style.removeProperty("box-shadow");
+      el.style.removeProperty("cursor");
+      el.style.removeProperty("background-color");
+    }
     return el;
   }
   // Floating rich-text toolbar shown while a text element is being edited.
@@ -234,16 +265,31 @@ const INSPECTOR_SCRIPT = `
     // into absolute positioning inside its own parent, and its final spot + size are
     // stored as percentages of that parent — so it stays put proportionally across
     // responsive breakpoints, instead of a fixed pixel offset that drifts off.
-    var dragEls = null, dragStart = null, dragBases = null, groupSeq = 0;
+    var dragEls = null, dragStart = null, dragBases = null, parentMutated = false;
 
     function ensurePositioned(parent) {
-      if (!parent || parent === document.body || parent === document.documentElement) return;
-      if (window.getComputedStyle(parent).position === "static") parent.style.position = "relative";
+      if (!parent || parent === document.documentElement) return;
+      // body included: a static body makes absolute children resolve against the
+      // initial containing block (html), so a body margin or html padding shifts
+      // every free-dragged element — relative pins them to the body box itself.
+      if (window.getComputedStyle(parent).position === "static") {
+        parent.style.position = "relative";
+        parentMutated = true; // the parent must be persisted too, not just the child
+      }
+    }
+    // Persist a completed free-drag. A single element normally commits as a cheap
+    // node_edit — but when its parent was pulled to position:relative that parent
+    // lives only in the live DOM, so a node-only patch would store an absolute
+    // child inside a still-static parent (it jumps on the next reload). In that
+    // case persist the whole document instead.
+    function commitDrag(els) {
+      if (els.length === 1 && !parentMutated) emitEdit(els[0]); else emitDoc(true);
     }
     // Pull each element out into absolute positioning at its current spot (no visual
     // jump), so it can then be moved freely.
     function beginFreeDrag(els) {
       dragBases = [];
+      parentMutated = false;
       for (var i = 0; i < els.length; i++) {
         var el = els[i], parent = el.parentElement || document.body;
         ensurePositioned(parent);
@@ -266,13 +312,16 @@ const INSPECTOR_SCRIPT = `
     }
     // Commit the current position (in px, as set live by moveFree) as % of the
     // parent — position and width — so it scales with the layout. Falls back to px
-    // only if the parent has collapsed to zero on that axis.
+    // only if the parent has collapsed to zero on that axis. The vertical axis is
+    // an exception: a container's *height* is content-driven and reflows once the
+    // dragged element leaves the flow, so a top stored as % of the old height
+    // lands somewhere else after reload — top always commits in px.
     function commitFree() {
       for (var i = 0; i < dragBases.length; i++) {
         var b = dragBases[i], pr = b.parent.getBoundingClientRect();
         var curLeft = parseFloat(b.el.style.left) || 0, curTop = parseFloat(b.el.style.top) || 0;
         b.el.style.left = pr.width ? ((curLeft / pr.width) * 100).toFixed(3) + "%" : curLeft + "px";
-        b.el.style.top = pr.height ? ((curTop / pr.height) * 100).toFixed(3) + "%" : curTop + "px";
+        b.el.style.top = Math.round(curTop) + "px";
         if (pr.width) b.el.style.width = ((b.w / pr.width) * 100).toFixed(3) + "%";
       }
     }
@@ -429,8 +478,8 @@ const INSPECTOR_SCRIPT = `
           positionResize();
           // The new position is already shown in the iframe with every cid intact,
           // so persist without a reload (no flicker): one element → node_edit,
-          // several → a self-applied doc_edit.
-          if (els.length === 1) emitEdit(els[0]); else emitDoc(true);
+          // several (or a repositioned parent) → a self-applied doc_edit.
+          commitDrag(els);
         }
         dragBases = null;
         return;
@@ -481,7 +530,7 @@ const INSPECTOR_SCRIPT = `
         // Pointer left the frame mid-drag: commit the move at its last position so
         // it isn't lost (the element is already placed absolutely in the iframe).
         var els = dragEls; dragEls = null;
-        if (moved && dragBases) { commitFree(); if (els.length === 1) emitEdit(els[0]); else emitDoc(true); }
+        if (moved && dragBases) { commitFree(); commitDrag(els); }
         dragBases = null;
       }
       if (dragging) {
@@ -555,6 +604,12 @@ const INSPECTOR_SCRIPT = `
       if (d.type === "set_src") { var ei = byCid(d.cid); if (ei) { ei.setAttribute("src", d.value); emitEdit(ei); } return; }
       if (d.type === "commit") { var el2 = byCid(d.cid); if (el2) emitEdit(el2); return; }
 
+      // No-selection inserts land in the slide root when there is one — a slide
+      // document is body > .slide-container (fixed 720px), so appending to body
+      // puts content below the visible slide where it silently never shows.
+      function insertRoot() {
+        return document.querySelector(".slide-container") || document.body;
+      }
       // Structural edits — mutate the tree, then persist the whole document.
       if (d.type === "insert") {
         var block = newBlock(d.block || "p");
@@ -562,7 +617,7 @@ const INSPECTOR_SCRIPT = `
         if (anchor && anchor.parentNode && anchor.parentNode !== document.documentElement) {
           anchor.parentNode.insertBefore(block, anchor.nextSibling);
         } else {
-          document.body.appendChild(block);
+          insertRoot().appendChild(block);
         }
         emitDoc();
         return;
@@ -570,7 +625,7 @@ const INSPECTOR_SCRIPT = `
       if (d.type === "insert_html") {
         // A built-in section template (trusted markup from the toolbar).
         var anc = d.cid ? byCid(d.cid) : null;
-        var container = (anc && anc.parentNode && anc.parentNode !== document.documentElement) ? anc.parentNode : document.body;
+        var container = (anc && anc.parentNode && anc.parentNode !== document.documentElement) ? anc.parentNode : insertRoot();
         var ref = (anc && anc.parentNode === container) ? anc.nextSibling : null;
         var frag = document.createElement("div");
         frag.innerHTML = d.html || "";
@@ -585,7 +640,16 @@ const INSPECTOR_SCRIPT = `
         var cids = d.cids || [];
         for (var g = 0; g < cids.length; g++) { var m = byCid(cids[g]); if (m) members.push(m); }
         if (members.length < 2) return;
-        var gid = "g" + (groupSeq++);
+        // Next free id is derived from the document, not a counter — the counter
+        // reset on every reload, so a second group session reused "g0" and merged
+        // with the previously-persisted group.
+        var maxGid = -1;
+        var existing = document.querySelectorAll("[data-group-id]");
+        for (var q = 0; q < existing.length; q++) {
+          var mm = /^g(\d+)$/.exec(existing[q].getAttribute("data-group-id") || "");
+          if (mm && Number(mm[1]) > maxGid) maxGid = Number(mm[1]);
+        }
+        var gid = "g" + (maxGid + 1);
         for (var w = 0; w < members.length; w++) members[w].setAttribute("data-group-id", gid);
         clearSelected();
         emitDoc();

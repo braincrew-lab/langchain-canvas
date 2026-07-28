@@ -178,6 +178,27 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
   );
 }
 
+/** A numeric cell that owns its in-progress text. A controlled `value={Number(…)}`
+ *  input can't be typed into naturally — "-" or "1e" coerce to 0/NaN and snap the
+ *  field back mid-keystroke, so negatives were impossible to enter. The draft
+ *  commits on change only when it parses, and resyncs from the row on blur. */
+function NumberCell({ value, onCommit }: { value: string | number | undefined; onCommit: (n: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? String(Number(value ?? 0));
+  return (
+    <input
+      type="number"
+      value={shown}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value !== "" && Number.isFinite(n)) onCommit(n);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 /** Editable long-form data table: the x-axis category plus one column per series. */
 function DataGrid({
   rows,
@@ -214,11 +235,7 @@ function DataGrid({
               </td>
               {series.map((s) => (
                 <td key={s.key}>
-                  <input
-                    type="number"
-                    value={Number(row[s.key] ?? 0)}
-                    onChange={(e) => onCell(i, s.key, e.target.value === "" ? 0 : Number(e.target.value))}
-                  />
+                  <NumberCell value={row[s.key]} onCommit={(n) => onCell(i, s.key, n)} />
                 </td>
               ))}
               <td>

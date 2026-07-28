@@ -170,7 +170,8 @@ Under the hood it rides LangChain 1.x's native custom-stream channel
   `data-cid` instead of resending the page.
 - 📝 **Streaming documents** — markdown rendered live, token-by-token.
 - 📊 **Charts** & 📋 **tables** — line/bar/area/pie and sticky-header grids over tidy rows.
-- 📦 **Export to files** — any artifact → self-contained **`.html`**, plus `.md` / `.csv` / `.json`.
+- 📦 **Export to files** — any artifact → self-contained **`.html`**, plus `.md` / `.csv` / `.json` / `.xlsx` / `.docx` / `.pptx` / PDF.
+- 📥 **Open real files** — drop `.xlsx` (fonts, fills, merges, formats), `.csv`, `.md`, `.html`, `.json`, **`.pdf`**, and Korean **`.hwpx` / `.hwp`** straight onto the canvas — the Office/HWP parsers are dependency-free or dynamically imported.
 - 🗂️ **Tabs + versioning** — switch between artifacts; page through every version.
 - 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`, or use the reconciler/SSE client with your own UI.
 - 🧵 **Typed on both ends** — Pydantic and TypeScript mirror one wire protocol.
@@ -188,6 +189,7 @@ you want** — a table wrapped in `html` renders as a web page, not a grid. One
 | `slides`   | PowerPoint deck   | `{ slides: [{ layout, title, bullets, … }] }`         |
 | `table`    | Excel-style grid  | `{ columns: [{ key, label }], rows: [{ … }] }`        |
 | `chart`    | line/bar/area/pie | `{ chart, xKey, rows, series: [{ key, label }] }`     |
+| `pdf`      | native PDF viewer | `{ src }` — a `data:application/pdf;…` or https URL   |
 
 ```json
 { "type": "canvas.create", "artifact": {

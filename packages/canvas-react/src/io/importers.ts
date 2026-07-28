@@ -12,13 +12,18 @@
  * dynamic import so it never touches the main bundle.
  */
 
-import type { Artifact, DocumentData, HtmlData, TableColumn, TableData } from "../protocol/artifacts";
+import type { Artifact, DocumentData, HtmlData, PdfData, TableColumn, TableData } from "../protocol/artifacts";
 import type { CanvasCreate, CanvasStatus, StreamEvent } from "../protocol/events";
 import { loadOptional } from "../optionalImport";
 import { xlsxToSheets } from "./xlsx";
+import { hwpxToMarkdown } from "./hwpx";
+import { hwpToText } from "./hwp";
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
-export const IMPORTABLE_EXTENSIONS = [".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx"] as const;
+export const IMPORTABLE_EXTENSIONS = [
+  ".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx",
+  ".pdf", ".hwpx", ".hwp",
+] as const;
 
 const extensionOf = (name: string) => {
   const dot = name.lastIndexOf(".");
@@ -75,6 +80,22 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
       const { sheets, columns, rows } = await xlsxToSheets(await file.arrayBuffer(), () => loadOptional("exceljs", () => import("exceljs")));
       return toEvents(artifact(id, "table", title, { columns, rows, sheet: sheets } satisfies TableData));
     }
+    case ".pdf": {
+      // Self-contained data: URL so the artifact stays serializable; the PDF
+      // renderer converts it to a blob: URL for the browser's native viewer.
+      const src = await fileToDataUrl(file);
+      return toEvents(artifact(id, "pdf", title, { src, filename: file.name } satisfies PdfData));
+    }
+    case ".hwpx": {
+      // OWPML (ZIP of XML) → markdown, parsed with platform primitives only.
+      const content = await hwpxToMarkdown(await file.arrayBuffer());
+      return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
+    }
+    case ".hwp": {
+      // Binary HWP 5.x → plain-text extraction (CFB + record streams).
+      const content = await hwpToText(await file.arrayBuffer());
+      return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
+    }
     default:
       throw new Error(`Unsupported file type "${ext || file.name}". Supported: ${IMPORTABLE_EXTENSIONS.join(", ")}`);
   }
@@ -83,6 +104,16 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
 /** Build a complete artifact envelope around type-specific data. */
 function artifact(id: string, type: Artifact["type"], title: string, data: unknown): Artifact {
   return { id, type, title, version: 1, status: "complete", data } as Artifact;
+}
+
+/** Read a File as a data: URL (FileReader does the base64 encoding natively). */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 /** A `.json` file may be an exported artifact, a raw data payload, or arbitrary

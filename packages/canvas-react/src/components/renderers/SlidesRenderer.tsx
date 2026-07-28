@@ -15,16 +15,33 @@ import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
 import { FreeSlide, shapeStyle } from "./FreeSlide";
 
-const THEMES: { id: string; label: string; bg: string; text: string }[] = [
-  { id: "light", label: "Light", bg: "#ffffff", text: "#1f2328" },
-  { id: "paper", label: "Paper", bg: "#f7f5ef", text: "#2b2a26" },
-  { id: "dark", label: "Dark", bg: "#14171f", text: "#f0f2f5" },
-  { id: "midnight", label: "Midnight", bg: "#0b1020", text: "#e6e8ef" },
-  { id: "navy", label: "Navy", bg: "#0d1b3e", text: "#eef2ff" },
-  { id: "forest", label: "Forest", bg: "#0f2a22", text: "#e6f2ec" },
-  { id: "sunset", label: "Sunset", bg: "#2b1a2e", text: "#ffe8d6" },
-  { id: "mint", label: "Mint", bg: "#0f2a24", text: "#d7f5ec" },
+/**
+ * Theme presets. Each is a complete art direction — background, ink, one accent,
+ * and a system font stack (no external loads) — rather than just a background
+ * swap. The accent feeds the quick layouts (rules, section numbers, stats) and
+ * new shapes; the font cascades from the slide container to every element.
+ */
+const THEMES: { id: string; label: string; bg: string; text: string; accent: string; font: string }[] = [
+  // Light — warm white + crimson serif, magazine front-of-book.
+  { id: "editorial", label: "Editorial", bg: "#f9f8f4", text: "#1c1a17", accent: "#a51c30", font: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif' },
+  // Light — pure white, pure black, no color at all: gallery-catalog restraint.
+  { id: "gallery", label: "Gallery", bg: "#ffffff", text: "#111111", accent: "#111111", font: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
+  // Light — cool paper + navy ink + cobalt, the quiet corporate default.
+  { id: "boardroom", label: "Boardroom", bg: "#f3f5f8", text: "#142743", accent: "#1f56c9", font: 'ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif' },
+  // Light — sage paper + moss ink + fern, humanist and unhurried.
+  { id: "sage", label: "Sage", bg: "#edf0e8", text: "#273428", accent: "#4c7a4f", font: 'Seravek, "Gill Sans", "Trebuchet MS", Verdana, sans-serif' },
+  // Dark — soft charcoal + amber, geometric grotesque; studio pitch deck.
+  { id: "graphite", label: "Graphite", bg: "#1e1f21", text: "#f1f0ed", accent: "#ecb22e", font: '"Avenir Next", Avenir, Futura, "Century Gothic", sans-serif' },
+  // Dark — midnight blue + starlight gold, high-contrast didone serif.
+  { id: "observatory", label: "Observatory", bg: "#0d1526", text: "#e2e8f4", accent: "#d4af6a", font: 'Didot, "Bodoni MT", "Bodoni 72", Georgia, serif' },
+  // Mid — Klein blue + signal yellow, Swiss poster energy.
+  { id: "ultramarine", label: "Ultramarine", bg: "#002fa7", text: "#f2f5ff", accent: "#ffd02f", font: '"Helvetica Neue", Helvetica, Arial, sans-serif' },
+  // Dark — wine-cellar aubergine + rosé, old-style serif; dinner-party keynote.
+  { id: "bordeaux", label: "Bordeaux", bg: "#241722", text: "#f0e8ee", accent: "#d98ca0", font: '"Hoefler Text", Baskerville, "Baskerville Old Face", Georgia, serif' },
 ];
+
+/** Accent used by layouts/shapes when the slide has no theme accent yet. */
+const FALLBACK_ACCENT = "#5b5bd6";
 
 // Shapes a "+ Shape" click can drop onto the slide.
 const SHAPES: { id: NonNullable<SlideElement["shape"]>; label: string; box: { w: number; h: number } }[] = [
@@ -33,27 +50,61 @@ const SHAPES: { id: NonNullable<SlideElement["shape"]>; label: string; box: { w:
   { id: "line", label: "— Line", box: { w: 40, h: 2 } },
 ];
 
-// Quick slide layouts — each replaces the current slide's elements.
-const LAYOUTS: Record<string, { label: string; els: Omit<SlideElement, "id">[] }> = {
-  title: { label: "Title", els: [
-    { type: "text", x: 12, y: 34, w: 76, h: 18, text: "Presentation title", fontSize: 54, bold: true, align: "center" },
-    { type: "text", x: 20, y: 56, w: 60, h: 10, text: "Subtitle or one-line summary", fontSize: 24, align: "center" },
+/**
+ * Quick slide layouts — each replaces the current slide's elements. Factories
+ * take the slide's theme accent so rules, section numbers, and stats pick up
+ * the active palette. Geometry is percent-of-slide; everything hangs off a
+ * left margin at 8% so slides share one grid instead of centering everything.
+ */
+const LAYOUTS: Record<string, { label: string; els: (accent: string) => Omit<SlideElement, "id">[] }> = {
+  title: { label: "Title", els: (accent) => [
+    { type: "shape", shape: "rect", x: 8, y: 30, w: 7, h: 1.4, fill: accent },
+    { type: "text", x: 8, y: 35, w: 72, h: 20, text: "Presentation title", fontSize: 52, bold: true },
+    { type: "text", x: 8, y: 57, w: 56, h: 8, text: "A one-line summary of the story", fontSize: 22 },
+    { type: "text", x: 8, y: 86, w: 50, h: 5, text: "Team name · Date", fontSize: 14 },
   ] },
-  section: { label: "Section", els: [
-    { type: "shape", shape: "rect", x: 10, y: 34, w: 8, h: 3, fill: "#5b5bd6" },
-    { type: "text", x: 10, y: 40, w: 80, h: 16, text: "Section title", fontSize: 46, bold: true },
+  section: { label: "Section divider", els: (accent) => [
+    { type: "text", x: 8, y: 12, w: 26, h: 26, text: "01", fontSize: 104, bold: true, color: accent },
+    { type: "shape", shape: "rect", x: 8, y: 50, w: 84, h: 0.5, fill: accent },
+    { type: "text", x: 8, y: 55, w: 76, h: 14, text: "Section title", fontSize: 44, bold: true },
+    { type: "text", x: 8, y: 71, w: 60, h: 7, text: "What this chapter covers, in one line", fontSize: 20 },
   ] },
-  bullets: { label: "Bullets", els: [
-    { type: "text", x: 10, y: 12, w: 80, h: 12, text: "Heading", fontSize: 36, bold: true },
-    { type: "text", x: 10, y: 30, w: 80, h: 50, text: "• First key point\n• Second key point\n• Third key point", fontSize: 26 },
+  agenda: { label: "Agenda", els: (accent) => [
+    { type: "text", x: 8, y: 10, w: 40, h: 10, text: "Agenda", fontSize: 40, bold: true },
+    { type: "shape", shape: "rect", x: 8, y: 22, w: 7, h: 1.2, fill: accent },
+    { type: "text", x: 8, y: 32, w: 7, h: 8, text: "01", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 17, y: 32, w: 66, h: 8, text: "First topic", fontSize: 24 },
+    { type: "text", x: 8, y: 46, w: 7, h: 8, text: "02", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 17, y: 46, w: 66, h: 8, text: "Second topic", fontSize: 24 },
+    { type: "text", x: 8, y: 60, w: 7, h: 8, text: "03", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 17, y: 60, w: 66, h: 8, text: "Third topic", fontSize: 24 },
+    { type: "text", x: 8, y: 74, w: 7, h: 8, text: "04", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 17, y: 74, w: 66, h: 8, text: "Fourth topic", fontSize: 24 },
   ] },
-  "two-column": { label: "Two column", els: [
-    { type: "text", x: 8, y: 16, w: 40, h: 60, text: "Left column\n\n• point\n• point", fontSize: 24 },
-    { type: "text", x: 52, y: 16, w: 40, h: 60, text: "Right column\n\n• point\n• point", fontSize: 24 },
+  bullets: { label: "Bullets", els: (accent) => [
+    { type: "text", x: 8, y: 9, w: 60, h: 5, text: "Where we are", fontSize: 14, bold: true, color: accent },
+    { type: "text", x: 8, y: 16, w: 80, h: 12, text: "Heading that states the takeaway", fontSize: 38, bold: true },
+    { type: "text", x: 8, y: 34, w: 78, h: 54, text: "•  First key point, one line each\n\n•  Second key point\n\n•  Third key point", fontSize: 22 },
   ] },
-  quote: { label: "Quote", els: [
-    { type: "text", x: 12, y: 30, w: 76, h: 30, text: "“A short, memorable quote.”", fontSize: 40, bold: true },
-    { type: "text", x: 12, y: 62, w: 50, h: 8, text: "— Attribution", fontSize: 22 },
+  "two-column": { label: "Two column", els: (accent) => [
+    { type: "text", x: 8, y: 10, w: 84, h: 10, text: "Two sides of the argument", fontSize: 36, bold: true },
+    { type: "shape", shape: "rect", x: 49.9, y: 28, w: 0.2, h: 54, fill: accent },
+    { type: "text", x: 8, y: 28, w: 36, h: 6, text: "Before", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 8, y: 37, w: 36, h: 45, text: "•  point\n\n•  point\n\n•  point", fontSize: 20 },
+    { type: "text", x: 56, y: 28, w: 36, h: 6, text: "After", fontSize: 20, bold: true, color: accent },
+    { type: "text", x: 56, y: 37, w: 36, h: 45, text: "•  point\n\n•  point\n\n•  point", fontSize: 20 },
+  ] },
+  stat: { label: "Big stat", els: (accent) => [
+    { type: "text", x: 8, y: 14, w: 60, h: 6, text: "The number that matters", fontSize: 14, bold: true },
+    { type: "text", x: 8, y: 24, w: 66, h: 32, text: "3.4×", fontSize: 116, bold: true, color: accent },
+    { type: "shape", shape: "rect", x: 8, y: 64, w: 10, h: 0.8, fill: accent },
+    { type: "text", x: 8, y: 69, w: 62, h: 12, text: "One line explaining what the number means and why it matters", fontSize: 24 },
+  ] },
+  quote: { label: "Quote", els: (accent) => [
+    { type: "text", x: 6, y: 6, w: 12, h: 18, text: "“", fontSize: 120, bold: true, color: accent },
+    { type: "text", x: 14, y: 28, w: 72, h: 30, text: "The quote — one strong sentence people will remember.", fontSize: 36, bold: true },
+    { type: "shape", shape: "rect", x: 14, y: 64, w: 8, h: 0.8, fill: accent },
+    { type: "text", x: 14, y: 68, w: 56, h: 7, text: "Name Surname — Role, Company", fontSize: 18 },
   ] },
 };
 
@@ -90,7 +141,9 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const slideStyle = {
     ...(slide.background ? { background: slide.background } : {}),
     ...(slide.textColor ? { color: slide.textColor } : {}),
+    ...(slide.fontFamily ? { fontFamily: slide.fontFamily } : {}),
   };
+  const accent = slide.accent ?? FALLBACK_ACCENT;
 
   const setSlides = (next: Slide[]) => patch({ slides: next });
   const update = (partial: Partial<Slide>) => setSlides(slides.map((s, i) => (i === at ? { ...s, ...partial } : s)));
@@ -140,11 +193,11 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   };
   const addShapeEl = (shape: NonNullable<SlideElement["shape"]>) => {
     const s = SHAPES.find((x) => x.id === shape);
-    if (s) addElement({ type: "shape", shape, x: 20, y: 20, w: s.box.w, h: s.box.h, fill: "#5b5bd6" });
+    if (s) addElement({ type: "shape", shape, x: 20, y: 20, w: s.box.w, h: s.box.h, fill: accent });
   };
   const applyLayout = (key: string) => {
     const l = LAYOUTS[key];
-    if (l) update({ elements: l.els.map((e) => ({ ...e, id: newElementId() })) });
+    if (l) update({ elements: l.els(accent).map((e) => ({ ...e, id: newElementId() })) });
   };
   const setSlideBgImage = (file: File | undefined) => {
     if (!file) return;
@@ -219,7 +272,13 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           >
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
-              <div className="cv-deck__thumb-slide" style={s.background ? { background: s.background } : undefined}>
+              <div
+                className="cv-deck__thumb-slide"
+                style={{
+                  ...(s.background ? { background: s.background } : {}),
+                  ...(s.fontFamily ? { fontFamily: s.fontFamily } : {}),
+                }}
+              >
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s).map((el) =>
                   el.type === "text" ? (
@@ -285,7 +344,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             title="Theme"
             onChange={(e) => {
               const t = THEMES.find((x) => x.id === e.target.value);
-              if (t) update({ background: t.bg, textColor: t.text });
+              if (t) update({ background: t.bg, textColor: t.text, accent: t.accent, fontFamily: t.font });
               e.currentTarget.value = "";
             }}
           >
@@ -355,9 +414,13 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           {slide.notes ? (
             <div className="cv-present__notes" onClick={(e) => e.stopPropagation()}>{slide.notes}</div>
           ) : null}
-          <div className="cv-present__hint">
-            {at + 1} / {slides.length} · ← → to navigate · Esc to exit
+          {/* Slim deck progress along the bottom edge; the fill width is the only
+              dynamic bit (fade/reduced-motion handled by the CSS on __fade). */}
+          <div className="cv-present__progress">
+            <span className="cv-present__progress-fill" style={{ width: `${((at + 1) / slides.length) * 100}%` }} />
           </div>
+          <div className="cv-present__count">{at + 1} / {slides.length}</div>
+          <div className="cv-present__hint">← → to navigate · Esc to exit</div>
         </div>
       )}
     </div>

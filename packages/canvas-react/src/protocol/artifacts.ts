@@ -90,6 +90,17 @@ export interface TableData {
   sheet?: Array<Record<string, unknown>>;
 }
 
+/**
+ * A PDF shown in the browser's native viewer. `src` is a `data:application/pdf`
+ * URL (self-contained, the common case for agent/file-sourced PDFs), a `blob:`
+ * URL, or an `https:` URL the host is allowed to frame.
+ */
+export interface PdfData {
+  src: string;
+  /** Optional original filename, used for the download attribute. */
+  filename?: string;
+}
+
 /** A freely-positioned element on a "blank" slide (percent geometry, 0–100). */
 export interface SlideElement {
   id: string;
@@ -108,6 +119,9 @@ export interface SlideElement {
   shape?: "rect" | "ellipse" | "line";
   /** Fill (rect/ellipse) or stroke (line) color for a shape. */
   fill?: string;
+  /** Editor-only grouping: elements sharing a `group` id select and move as
+   *  one. Purely additive — exporters and the presenter ignore it. */
+  group?: string;
 }
 
 export interface Slide {
@@ -126,6 +140,12 @@ export interface Slide {
   background?: string;
   /** Slide text color (hex). */
   textColor?: string;
+  /** Theme accent color (hex) — used by quick layouts and new shapes for rules,
+   *  section numbers, and stats. Set by the theme presets. */
+  accent?: string;
+  /** Font stack for the slide's text (system fonts only, no external loads).
+   *  Set by the theme presets; cascades to every element. */
+  fontFamily?: string;
   /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
   notes?: string;
   /** Content padding as a percent of the slide width (a safe margin around the
@@ -143,4 +163,5 @@ export type DocumentArtifact = Artifact<DocumentData> & { type: "document" };
 export type ChartArtifact = Artifact<ChartData> & { type: "chart" };
 export type TableArtifact = Artifact<TableData> & { type: "table" };
 export type SlidesArtifact = Artifact<SlidesData> & { type: "slides" };
-export type KnownArtifact = HtmlArtifact | DocumentArtifact | ChartArtifact | TableArtifact | SlidesArtifact;
+export type PdfArtifact = Artifact<PdfData> & { type: "pdf" };
+export type KnownArtifact = HtmlArtifact | DocumentArtifact | ChartArtifact | TableArtifact | SlidesArtifact | PdfArtifact;

@@ -17,6 +17,10 @@ import { printToPdf } from "../export/pdf";
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
 const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const escapeAttr = (s: string) => escapeHtml(s).replace(/"/g, "&quot;");
+
 interface ExportMenuProps {
   artifact: Artifact;
   getRenderedHtml: () => string | null;
@@ -75,7 +79,16 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
           ? slidesToPrintHtml(artifact.data as SlidesData, artifact.title)
           : (() => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, h); })();
     if (html == null) return;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    // A blob: URL is same-origin with the host app, so opening the raw artifact
+    // HTML would let untrusted (agent-generated / imported) scripts run with the
+    // host's cookies and storage — the exact thing the canvas's sandboxed iframe
+    // exists to prevent. Wrap it in a tiny host page whose sandboxed srcdoc
+    // iframe carries the artifact, mirroring the canvas's own sandbox.
+    const wrapper =
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(artifact.title)}</title>` +
+      `<style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style></head>` +
+      `<body><iframe sandbox="allow-scripts allow-popups allow-modals" srcdoc="${escapeAttr(html)}"></iframe></body></html>`;
+    const url = URL.createObjectURL(new Blob([wrapper], { type: "text/html" }));
     window.open(url, "_blank", "noopener");
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
     setOpen(false);

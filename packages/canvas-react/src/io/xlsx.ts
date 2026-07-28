@@ -91,6 +91,8 @@ function display(value: any): string {
   if (value == null) return "";
   if (typeof value === "object") {
     if (value.result != null) return display(value.result);
+    // Mixed-formatting cells arrive as { richText: [{ text, font? }, …] }.
+    if (Array.isArray(value.richText)) return value.richText.map((r: any) => r?.text ?? "").join("");
     if (typeof value.text === "string") return value.text;
     if (value instanceof Date) return formatDate(value, "yyyy-mm-dd");
     return "";
@@ -98,40 +100,177 @@ function display(value: any): string {
   return String(value);
 }
 
+/** Split an Excel number format into its up-to-four `;`-separated sections
+ *  (positive; negative; zero; text), ignoring `;` inside quoted literals or
+ *  `[...]` groups so a literal semicolon never splits the format. */
+function splitSections(fmt: string): string[] {
+  const sections: string[] = [];
+  let cur = "";
+  for (let i = 0; i < fmt.length; i++) {
+    const ch = fmt[i];
+    if (ch === '"') { cur += ch; i++; while (i < fmt.length && fmt[i] !== '"') cur += fmt[i++]; if (i < fmt.length) cur += fmt[i]; continue; }
+    if (ch === "[") { cur += ch; i++; while (i < fmt.length && fmt[i] !== "]") cur += fmt[i++]; if (i < fmt.length) cur += fmt[i]; continue; }
+    if (ch === "\\") { cur += ch + (fmt[i + 1] ?? ""); i++; continue; }
+    if (ch === ";") { sections.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  sections.push(cur);
+  return sections;
+}
+
+/** Strip an Excel format's non-numeric decorations so the digit skeleton
+ *  (`0`, `#`, `.`, `,`, `%`) can be analysed: drop quoted literals, `\`-escapes,
+ *  `_x` width spacers, `*x` fills, and `[...]` colour/locale/condition groups.
+ *  Returns the skeleton plus any currency symbol found (from a `[$SYM-locale]`
+ *  group or a bare/quoted currency character) and whether it trails the digits
+ *  (`#,##0.00" €"` places the symbol after the number). */
+function numberSkeleton(fmt: string): { skeleton: string; currency: string; currencyTrails: boolean } {
+  let currency = "";
+  let currencyTrails = false;
+  let skeleton = "";
+  let seenDigit = false;
+  const found = (sym: string) => {
+    if (currency) return;
+    currency = sym;
+    currencyTrails = seenDigit; // after a digit placeholder → renders after the number
+  };
+  for (let i = 0; i < fmt.length; i++) {
+    const ch = fmt[i];
+    if (ch === '"') {
+      // A quoted literal containing a currency symbol is used whole ("` €`"
+      // keeps its spacing); other quoted text is decoration and drops.
+      let lit = "";
+      i++;
+      while (i < fmt.length && fmt[i] !== '"') lit += fmt[i++];
+      if (/[$₩€£¥]/.test(lit)) found(lit);
+      continue;
+    }
+    if (ch === "\\") { const c = fmt[i + 1] ?? ""; if (/[$₩€£¥]/.test(c)) found(c); i++; continue; }
+    if (ch === "[") {
+      // [$₩-412] — currency symbol is the text between "$" and "-".
+      const end = fmt.indexOf("]", i);
+      const group = fmt.slice(i + 1, end === -1 ? undefined : end);
+      const cur = /^\$(.*?)-/.exec(group)?.[1] ?? (group.startsWith("$") ? group.slice(1) : "");
+      if (cur) found(cur);
+      i = end === -1 ? fmt.length : end;
+      continue;
+    }
+    if (ch === "_" || ch === "*") { i++; continue; } // width spacer / fill: skip the next char too
+    if (/[$₩€£¥]/.test(ch)) { found(ch); continue; }
+    if (ch === "0" || ch === "#") seenDigit = true;
+    skeleton += ch;
+  }
+  return { skeleton, currency, currencyTrails };
+}
+
 /** Render a number the way its Excel number format would — thousands separators,
  *  fixed decimals, percent, and a leading currency symbol. Not a full format
  *  engine, but it covers the everyday patterns so cells read like the source
  *  ("1,234.50", "15.6%", "$1,000") instead of a bare "1234.5". */
 function formatNumber(value: number, numFmt?: string): string {
-  const fmt = numFmt && numFmt !== "General" ? numFmt : "";
-  if (!fmt) return String(value);
-  const decimals = (fmt.match(/\.([0#]+)/)?.[1] ?? "").length;
-  if (fmt.includes("%")) return `${(value * 100).toFixed(decimals)}%`;
-  const thousands = /[#0],[#0]/.test(fmt);
+  const raw = numFmt && numFmt !== "General" ? numFmt : "";
+  if (!raw) return String(value);
+  const sections = splitSections(raw);
+  // A dedicated negative section carries its own sign decoration (parentheses
+  // or a leading "-" literal), so the value is formatted unsigned inside it.
+  const negSection = value < 0 && sections.length > 1 ? sections[1] : undefined;
+  const section = negSection ?? (value === 0 && sections[2] ? sections[2] : sections[0]);
+  const { skeleton, currency, currencyTrails } = numberSkeleton(section);
+  if (!/[0#]/.test(skeleton)) return String(value); // no digit placeholders — not a numeric format
+  const decimals = (skeleton.match(/\.([0#]+)/)?.[1] ?? "").length;
+  const thousands = /[#0],[#0]/.test(skeleton);
+  const n = negSection ? Math.abs(value) : value;
+  // Percent scales by 100; each literal "%" adds a factor (rare, but Excel does it).
+  const percents = (skeleton.match(/%/g) ?? []).length;
+  const scaled = percents ? n * 100 ** percents : n;
   let out = thousands
-    ? value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    : value.toFixed(decimals);
-  const currency = fmt.match(/[$₩€£¥]/);
-  if (currency) out = value < 0 ? `-${currency[0]}${out.slice(1)}` : `${currency[0]}${out}`;
+    ? scaled.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+    : scaled.toFixed(decimals);
+  if (percents) out += "%";
+  if (currency) {
+    if (currencyTrails) out = `${out}${currency}`;
+    else if (out.startsWith("-")) out = `-${currency}${out.slice(1)}`;
+    else out = `${currency}${out}`;
+  }
+  if (negSection && /\(/.test(skeleton)) out = `(${out})`;
   return out;
 }
 
-/** Format a Date by an Excel date pattern (yyyy/yy, mm/m, dd/d, hh/h, ss). Uses
- *  local parts so it matches the calendar day the author saw. Non-token text
- *  (e.g. Korean 년/월/일) passes through untouched. */
+// Excel's day-zero. exceljs converts serial dates to UTC-anchored `Date`s, so
+// both calendar parts and elapsed durations are derived with UTC getters — local
+// getters would shift a cell's time by the viewer's timezone.
+const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
+
+/** Format a Date by an Excel date/time pattern. A hand-rolled scanner so that
+ *  quoted literals (`"년"`), `\`-escapes (`\-`), and bracket groups are handled
+ *  the way Excel does: locale/colour groups (`[$-409]`, `[Red]`) drop, elapsed
+ *  groups (`[h]`, `[mm]`, `[ss]`) render total-since-epoch durations, and text
+ *  passes through untouched. `m`/`mm` means minutes when it follows an hours
+ *  token or precedes a seconds token, month otherwise — Excel's own rule. */
 function formatDate(d: Date, numFmt?: string): string {
-  const fmt = numFmt && numFmt !== "General" && /[ymdhs]/i.test(numFmt) ? numFmt : "yyyy-mm-dd";
+  const fmt = numFmt && numFmt !== "General" && /[ymdhs]/i.test(numFmt) ? splitSections(numFmt)[0] : "yyyy-mm-dd";
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
-  const map: Record<string, string> = {
-    yyyy: String(d.getFullYear()), yy: p(d.getFullYear() % 100),
-    mmmm: d.toLocaleString("en-US", { month: "long" }), mmm: d.toLocaleString("en-US", { month: "short" }),
-    mm: p(d.getMonth() + 1), m: String(d.getMonth() + 1),
-    dd: p(d.getDate()), d: String(d.getDate()),
-    hh: p(d.getHours()), h: String(d.getHours()),
-    ss: p(d.getSeconds()),
+
+  // 12-hour clock only when the format asks for a meridiem.
+  const meridiem = /AM\/PM|A\/P/i.test(fmt);
+  const H = d.getUTCHours();
+  const hour12 = H % 12 === 0 ? 12 : H % 12;
+  const hourText = (width: number) => (meridiem ? p(hour12, width) : p(H, width));
+  const elapsedMs = d.getTime() - EXCEL_EPOCH_MS;
+
+  const map: Record<string, () => string> = {
+    yyyy: () => String(d.getUTCFullYear()), yy: () => p(d.getUTCFullYear() % 100),
+    mmmm: () => d.toLocaleString("en-US", { month: "long", timeZone: "UTC" }),
+    mmm: () => d.toLocaleString("en-US", { month: "short", timeZone: "UTC" }),
+    dd: () => p(d.getUTCDate()), d: () => String(d.getUTCDate()),
+    hh: () => hourText(2), h: () => hourText(1),
+    ss: () => p(d.getUTCSeconds()), s: () => String(d.getUTCSeconds()),
   };
+  const month = (t: string) => (t === "mm" ? p(d.getUTCMonth() + 1) : String(d.getUTCMonth() + 1));
+  const minute = (t: string) => (t === "mm" ? p(d.getUTCMinutes()) : String(d.getUTCMinutes()));
   // Longest tokens first so "yyyy" wins over "yy", "mmmm" over "mm", etc.
-  return fmt.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d|hh|h|ss/g, (t) => map[t] ?? t);
+  const TOKEN = /AM\/PM|A\/P|yyyy|yy|mmmm|mmm|mm|m|dd|d|hh|h|ss|s/iy;
+
+  let out = "";
+  let lastWasHours = false; // an emitted h/hh makes the next m/mm minutes
+  for (let i = 0; i < fmt.length; ) {
+    const ch = fmt[i];
+    if (ch === '"') { i++; while (i < fmt.length && fmt[i] !== '"') out += fmt[i++]; i++; continue; }
+    if (ch === "\\") { out += fmt[i + 1] ?? ""; i += 2; continue; }
+    if (ch === "[") {
+      const end = fmt.indexOf("]", i);
+      const group = fmt.slice(i + 1, end === -1 ? fmt.length : end);
+      i = end === -1 ? fmt.length : end + 1;
+      // Elapsed totals: [h] hours since epoch, [mm] total minutes, [ss] total seconds.
+      if (/^h+$/i.test(group)) { out += p(Math.floor(elapsedMs / 3600000), group.length); lastWasHours = true; }
+      else if (/^m+$/i.test(group)) out += p(Math.floor(elapsedMs / 60000), group.length);
+      else if (/^s+$/i.test(group)) out += p(Math.floor(elapsedMs / 1000), group.length);
+      continue; // locale/colour/condition groups drop silently
+    }
+    if (ch === "_") { out += " "; i += 2; continue; } // width spacer → a space
+    if (ch === "*") { i += 2; continue; } // fill repeat → skip
+    TOKEN.lastIndex = i;
+    const m = TOKEN.exec(fmt);
+    if (m) {
+      const tok = m[0].toLowerCase();
+      i += m[0].length;
+      if (tok === "am/pm") { out += H < 12 ? "AM" : "PM"; continue; }
+      if (tok === "a/p") { out += H < 12 ? "A" : "P"; continue; }
+      if (tok === "m" || tok === "mm") {
+        // Minutes when adjacent to time: after hours, or with seconds ahead
+        // (skipping separator characters that aren't further tokens).
+        const minutes = lastWasHours || /^[\s:.,\-]*s/i.test(fmt.slice(i));
+        out += minutes ? minute(tok) : month(tok);
+        lastWasHours = false;
+        continue;
+      }
+      lastWasHours = tok === "h" || tok === "hh";
+      out += map[tok]();
+      continue;
+    }
+    out += ch; i++;
+  }
+  return out;
 }
 
 /** Build a Fortune cell `v` object from an exceljs cell, carrying its style.
@@ -372,6 +511,7 @@ function cellVal(v: any): string | number {
   if (typeof v === "number" || typeof v === "string") return v;
   if (typeof v === "object") {
     if (v.result != null) return cellVal(v.result);
+    if (Array.isArray(v.richText)) return v.richText.map((r: any) => r?.text ?? "").join("");
     if (typeof v.text === "string") return v.text;
     if (v instanceof Date) return v.toISOString().slice(0, 10);
   }

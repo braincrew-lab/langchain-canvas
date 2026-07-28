@@ -76,11 +76,40 @@ ${renderedHtml}
 // --- table → csv / xlsx ---------------------------------------------------------
 
 function tableToCsv(data: TableData): string {
+  // The edited Fortune-sheet state is the source of truth once present — user
+  // grid edits land only there (columns/rows keep the pre-edit stream), exactly
+  // as tableToXlsx already prefers it.
+  if (data.sheet?.length) return fortuneToCsv(data.sheet[0]);
   const header = data.columns.map((c) => csvCell(c.label ?? c.key)).join(",");
   const body = data.rows
     .map((row) => data.columns.map((c) => csvCell(String(row[c.key] ?? ""))).join(","))
     .join("\n");
   return `${header}\n${body}`;
+}
+
+/** First Fortune sheet → CSV: a dense grid of cell values (falling back to the
+ *  display text), sized to the extent of the populated cells. */
+function fortuneToCsv(sheet: Record<string, any>): string {
+  let maxR = -1;
+  let maxC = -1;
+  const grid = new Map<string, string>();
+  for (const cell of ((sheet.celldata as any[]) ?? [])) {
+    const v = cell?.v;
+    if (v == null) continue;
+    if (typeof v === "object" && v.mc && v.v == null && v.m == null) continue; // merged-cell shadow
+    const value = typeof v === "object" ? v.v ?? v.m ?? "" : v;
+    if (value === "" || value == null) continue;
+    grid.set(`${cell.r},${cell.c}`, String(value));
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  const lines: string[] = [];
+  for (let r = 0; r <= maxR; r++) {
+    const row: string[] = [];
+    for (let c = 0; c <= maxC; c++) row.push(csvCell(grid.get(`${r},${c}`) ?? ""));
+    lines.push(row.join(","));
+  }
+  return lines.join("\n");
 }
 
 async function tableToXlsx(data: TableData): Promise<BlobPart> {

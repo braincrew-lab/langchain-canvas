@@ -24,6 +24,18 @@ import { type CanvasState, emptyCanvasState, reduceCanvas } from "../client/reco
  *  edit back to the agent/backend so the next turn sees it. */
 export type UserEditHandler = (artifact: Artifact) => void;
 
+/** After undo/redo, tell the host about every artifact whose content changed —
+ *  the edit being undone already fired `onUserEdit`, so silence here would leave
+ *  the backend holding content the user no longer sees. */
+function notifyTimeTravel(store: { canvas: CanvasState; onUserEdit: UserEditHandler | null }, before: CanvasState): void {
+  const handler = store.onUserEdit;
+  if (!handler || store.canvas === before) return;
+  for (const id of Object.keys(store.canvas.artifacts)) {
+    const now = store.canvas.artifacts[id];
+    if (now && now !== before.artifacts[id]) handler(now);
+  }
+}
+
 /** The artifact id a user-edit event targets, or null for non-mutating events. */
 function editedArtifactId(event: StreamEvent): string | null {
   switch (event.type) {
@@ -143,7 +155,8 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
       const artifact = id ? state.canvas.artifacts[id] : undefined;
       if (artifact) state.onUserEdit?.(artifact);
     },
-    undo: () =>
+    undo: () => {
+      const before = get().canvas;
       set((state) => {
         if (!state.undoStack.length) return state;
         const previous = state.undoStack[state.undoStack.length - 1];
@@ -153,8 +166,11 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
           redoStack: [...state.redoStack, state.canvas].slice(-UNDO_LIMIT),
           selections: [],
         };
-      }),
-    redo: () =>
+      });
+      notifyTimeTravel(get(), before);
+    },
+    redo: () => {
+      const before = get().canvas;
       set((state) => {
         if (!state.redoStack.length) return state;
         const next = state.redoStack[state.redoStack.length - 1];
@@ -164,7 +180,9 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
           undoStack: [...state.undoStack, state.canvas].slice(-UNDO_LIMIT),
           selections: [],
         };
-      }),
+      });
+      notifyTimeTravel(get(), before);
+    },
 
     addUserMessage: (text) =>
       set((state) => ({

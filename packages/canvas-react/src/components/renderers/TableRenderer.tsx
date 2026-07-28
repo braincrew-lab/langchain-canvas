@@ -102,6 +102,12 @@ function deriveColumns(rows: TableData["rows"]): TableColumn[] {
 
 const EMPTY_FORMULAS: FormulaValues = new Map();
 
+// Fortune-sheet types derived from the mounted instance — only @fortune-sheet/react
+// is a declared dependency, so we can't import these from @fortune-sheet/core.
+type FortuneOp = Parameters<WorkbookInstance["applyOp"]>[0][number];
+/** A rectangular cell range, `row`/`column` as inclusive `[start, end]` pairs. */
+type SheetSelection = { row: number[]; column: number[] };
+
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
   const rows = artifact.data.rows;
   // Fall back to deriving columns from the row keys, so a table that arrives with
@@ -260,6 +266,91 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     wbRef.current?.insertRowOrColumn(type, Math.max(0, range[1]), 1, "rightbottom");
   };
 
+  // ── Cell formatting ────────────────────────────────────────────────────────
+  // The formatting controls mirror the live selection: Fortune reports every
+  // selection move via the `afterSelectionChange` hook, and we read the anchor
+  // cell's bold flag so the Bold button reflects what's under the cursor. All
+  // mutations below go through the instance API, which updates Fortune's own
+  // context — so onChange fires and the existing debounced persist picks it up.
+  const [selection, setSelection] = useState<SheetSelection | null>(null);
+  const [boldOn, setBoldOn] = useState(false);
+  const [fillColor, setFillColor] = useState("#fef3c7");
+  const [textColor, setTextColor] = useState("#111827");
+  const handleSelectionChange = useCallback((_sheetId: string, sel: SheetSelection) => {
+    setSelection({ row: [...sel.row], column: [...sel.column] });
+    const bl = wbRef.current?.getCellValue?.(sel.row[0], sel.column[0], { type: "bl" });
+    setBoldOn(bl === 1 || bl === "1");
+  }, []);
+  const workbookHooks = useMemo(() => ({ afterSelectionChange: handleSelectionChange }), [handleSelectionChange]);
+
+  /** Apply one cell attribute to every selected range (multi-select included). */
+  const applyFormat = (attr: "bl" | "bg" | "fc" | "ht", value: number | string) => {
+    const sel = wbRef.current?.getSelection?.();
+    if (!sel?.length) return;
+    const ranges = sel.map((s) => ({ row: [s.row[0], s.row[1]], column: [s.column[0], s.column[1]] }));
+    wbRef.current?.setCellFormatByRange(attr, value, ranges);
+  };
+  const toggleBold = () => {
+    applyFormat("bl", boldOn ? 0 : 1);
+    setBoldOn((b) => !b);
+  };
+
+  // One-click de-garishing: strip every per-cell fill (`bg`) and font color
+  // (`fc`) on the current sheet — values, bold, borders, and merges stay. Cells
+  // are removed via `applyOp` patches (not `setCellFormat(attr, undefined)`)
+  // so the keys are truly deleted: Fortune's renderer checks `"bg" in cell`,
+  // and a lingering `bg: undefined` would still hit that branch. Inline-string
+  // cells carry colors per text run (`ct.s[i]`), so those are cleared too.
+  const cleanStyling = () => {
+    const wb = wbRef.current;
+    const sheet = wb?.getSheet?.();
+    const sheetId = sheet?.id;
+    if (!wb || !sheet || !sheetId) return;
+    const ops: FortuneOp[] = [];
+    sheet.celldata.forEach(({ r, c, v }) => {
+      if (!v || typeof v !== "object") return;
+      const cell = v as Record<string, unknown>;
+      if (cell.bg != null) ops.push({ op: "remove", id: sheetId, path: ["data", r, c, "bg"] });
+      if (cell.fc != null) ops.push({ op: "remove", id: sheetId, path: ["data", r, c, "fc"] });
+      const spans = (cell.ct as { s?: unknown[] } | undefined)?.s;
+      if (!Array.isArray(spans)) return;
+      spans.forEach((span, i) => {
+        if (!span || typeof span !== "object") return;
+        const run = span as Record<string, unknown>;
+        if (run.bg != null) ops.push({ op: "remove", id: sheetId, path: ["data", r, c, "ct", "s", i, "bg"] });
+        if (run.fc != null) ops.push({ op: "remove", id: sheetId, path: ["data", r, c, "ct", "s", i, "fc"] });
+      });
+    });
+    if (ops.length) wb.applyOp(ops); // one batch → one context update → one persist
+  };
+
+  // Opt-in header freeze (OFF by default — an always-on freeze used to offset
+  // the initial scroll, see the toWorkbook comment). ON pins row 0 via the
+  // `freeze` API; OFF removes `sheet.frozen` with an `applyOp` patch, the same
+  // deletion Fortune's own "cancel freeze" menu performs (there's no public
+  // unfreeze method). Both mutate the sheet, so the toggle state persists.
+  const [frozen, setFrozen] = useState(false);
+  const toggleFreeze = () => {
+    const wb = wbRef.current;
+    if (!wb) return;
+    if (frozen) {
+      const sheetId = wb.getSheet?.()?.id;
+      if (sheetId) wb.applyOp([{ op: "remove", id: sheetId, path: ["frozen"] }]);
+    } else {
+      wb.freeze("row", { row: 0, column: 0 });
+    }
+    setFrozen((f) => !f);
+  };
+  // A remount (new data, sort/filter view, first persist) starts a fresh
+  // workbook: resync the freeze toggle from the mounting sheet's own frozen
+  // state and drop the stale selection.
+  useEffect(() => {
+    setFrozen(!viewActive && hasSheet && !!artifact.data.sheet?.[0]?.frozen);
+    setSelection(null);
+    setBoldOn(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wbKey]);
+
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">Loading spreadsheet…</div>;
   }
@@ -277,6 +368,53 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
       <div className="cv-sheet-tools">
         <button type="button" onClick={() => insert("column")}>＋ Column</button>
         <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        <span className="cv-sheet-tools__sep" />
+        {/* Selection formatting — enabled once a range is selected in the grid. */}
+        <span className="cv-sheet-tools__fmt">
+          <button
+            type="button"
+            className={`cv-sheet-tools__bold${boldOn ? " cv-sheet-tools__bold--on" : ""}`}
+            title="Bold"
+            aria-pressed={boldOn}
+            disabled={!selection}
+            onClick={toggleBold}
+          >
+            B
+          </button>
+          <input
+            type="color"
+            className="cv-sheet-tools__color cv-sheet-tools__color--fill"
+            title="Fill color"
+            disabled={!selection}
+            value={fillColor}
+            onChange={(e) => { setFillColor(e.target.value); applyFormat("bg", e.target.value); }}
+          />
+          <input
+            type="color"
+            className="cv-sheet-tools__color cv-sheet-tools__color--text"
+            title="Text color"
+            disabled={!selection}
+            value={textColor}
+            onChange={(e) => { setTextColor(e.target.value); applyFormat("fc", e.target.value); }}
+          />
+          {/* Fortune's `ht` codes: 1 = left (default), 0 = center, 2 = right. */}
+          <button type="button" className="cv-sheet-tools__align" title="Align left" disabled={!selection} onClick={() => applyFormat("ht", 1)}>⇤</button>
+          <button type="button" className="cv-sheet-tools__align" title="Align center" disabled={!selection} onClick={() => applyFormat("ht", 0)}>↔</button>
+          <button type="button" className="cv-sheet-tools__align" title="Align right" disabled={!selection} onClick={() => applyFormat("ht", 2)}>⇥</button>
+        </span>
+        <span className="cv-sheet-tools__sep" />
+        <button type="button" className="cv-sheet-tools__clean" title="Remove all cell fills and font colors" onClick={cleanStyling}>
+          Clean styling
+        </button>
+        <button
+          type="button"
+          className={`cv-sheet-tools__freeze${frozen ? " cv-sheet-tools__freeze--on" : ""}`}
+          title={frozen ? "Unfreeze the header row" : "Keep the header row visible while scrolling"}
+          aria-pressed={frozen}
+          onClick={toggleFreeze}
+        >
+          Freeze header
+        </button>
         {columns.length > 0 && (
           <>
             <span className="cv-sheet-tools__sep" />
@@ -309,7 +447,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
       </div>
       <div className="cv-sheet" ref={rootRef}>
         <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
-          <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
+          <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} hooks={workbookHooks} />
         </Suspense>
       </div>
     </div>
