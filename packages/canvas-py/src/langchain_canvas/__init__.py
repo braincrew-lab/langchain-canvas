@@ -17,7 +17,7 @@ under ``langchain_canvas.store``.
 
 from .agent import create_canvas_agent
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
-from .store import CanvasStore, InMemoryCanvasStore
+from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
 from .tools import create_canvas_tools
 
@@ -25,6 +25,7 @@ __all__ = [
     "Canvas",
     "CanvasStore",
     "DocumentHandle",
+    "FileCanvasStore",
     "ChartHandle",
     "InMemoryCanvasStore",
     "TableHandle",
