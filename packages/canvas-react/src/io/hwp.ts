@@ -1,5 +1,5 @@
 /**
- * Zero-dependency `.hwp` (HWP 5.x) → plain-text extractor.
+ * Zero-dependency `.hwp` (HWP 5.x) → plain-text / HTML extractor.
  *
  * Binary HWP files are an MS Compound File Binary (CFB / OLE) container holding
  * a tiny `FileHeader` stream plus one record stream per section under
@@ -17,6 +17,8 @@
  * are rejected with bilingual (한국어 / English) errors so the UI can surface
  * them to Korean users directly.
  */
+
+import { escapeHtml, koreanDocHtml } from "./hwpx";
 
 /* ------------------------------------------------------------------------- *
  * Error messages — bilingual so they can be shown to end users as-is.
@@ -339,14 +341,24 @@ function parseRecords(section: Uint8Array, view: DataView): HwpRecord[] {
 }
 
 /**
- * Render a table control's subtree (every record deeper than the control) as
- * one GFM table block. Each cell is a LIST_HEADER one level below the control,
+ * Intermediate block the section walker emits — the single extraction both
+ * output formats render from (`hwpToText` as GFM, `hwpToHtml` as HTML). Cell
+ * text keeps its paragraph breaks as `\n`; each emitter decides how a break
+ * renders.
+ */
+type HwpBlock =
+  | { kind: "paragraph"; text: string }
+  | { kind: "table"; rows: string[][] };
+
+/**
+ * Collect a table control's subtree (every record deeper than the control) as
+ * one table block. Each cell is a LIST_HEADER one level below the control,
  * whose paragraphs follow it in row-major order. On any structural surprise —
  * missing/short TABLE record, text before the first cell, cell count ≠
  * nRows×nCols — the cell texts are returned as plain paragraphs instead, so
  * nothing is ever dropped.
  */
-function tableBlocks(view: DataView, subtree: HwpRecord[], ctrlLevel: number): string[] {
+function tableBlocks(view: DataView, subtree: HwpRecord[], ctrlLevel: number): HwpBlock[] {
   const tableRec = subtree.find((r) => r.tag === HWPTAG_TABLE);
   const cellLevel = ctrlLevel + 1;
 
@@ -372,26 +384,20 @@ function tableBlocks(view: DataView, subtree: HwpRecord[], ctrlLevel: number): s
     const nRows = view.getUint16(tableRec!.start + 4, true);
     const nCols = view.getUint16(tableRec!.start + 6, true);
     if (nRows >= 1 && nCols >= 1 && cells.length === nRows * nCols) {
-      // Cell text flattens its paragraphs; pipes/newlines are escaped so they
-      // can't break the row — mirroring the HWPX table renderer.
-      const texts = cells.map((c) =>
-        c.filter((p) => p.length > 0).join(" ").replace(/\|/g, "\\|").replace(/\n/g, " ").trim(),
-      );
-      const line = (row: string[]) => `| ${row.join(" | ")} |`;
+      const texts = cells.map((c) => c.filter((p) => p.length > 0).join("\n"));
       const rows = Array.from({ length: nRows }, (_, r) => texts.slice(r * nCols, (r + 1) * nCols));
-      const [head, ...body] = rows;
-      return [[line(head), `| ${Array(nCols).fill("---").join(" | ")} |`, ...body.map(line)].join("\n")];
+      return [{ kind: "table", rows }];
     }
   }
-  return flat;
+  return flat.map((text) => ({ kind: "paragraph", text }));
 }
 
 /** Walk a section's records and collect its blocks: paragraphs in stream
- *  order, with recognized table controls rendered as GFM tables in place. */
-function extractSectionBlocks(section: Uint8Array): string[] {
+ *  order, with recognized table controls collected as table blocks in place. */
+function extractSectionBlocks(section: Uint8Array): HwpBlock[] {
   const view = new DataView(section.buffer, section.byteOffset, section.byteLength);
   const records = parseRecords(section, view);
-  const blocks: string[] = [];
+  const blocks: HwpBlock[] = [];
   let i = 0;
   while (i < records.length) {
     const rec = records[i];
@@ -403,10 +409,51 @@ function extractSectionBlocks(section: Uint8Array): string[] {
       i = end;
       continue;
     }
-    if (rec.tag === HWPTAG_PARA_TEXT) blocks.push(...decodeParaText(view, rec.start, rec.size));
+    if (rec.tag === HWPTAG_PARA_TEXT) {
+      for (const text of decodeParaText(view, rec.start, rec.size)) blocks.push({ kind: "paragraph", text });
+    }
     i++;
   }
   return blocks;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Block emitters — one extraction, two output formats
+ * ------------------------------------------------------------------------- */
+
+/** Render blocks as markdown-ish text: non-empty paragraphs as-is, tables as
+ *  GFM. Cell text flattens its paragraphs; pipes/newlines are escaped so they
+ *  can't break the row — mirroring the HWPX table renderer. */
+function blocksToText(blocks: HwpBlock[]): string[] {
+  const out: string[] = [];
+  for (const block of blocks) {
+    if (block.kind === "paragraph") {
+      // Drop empty paragraphs: blank-line spacing already comes from the join.
+      if (block.text.length > 0) out.push(block.text);
+      continue;
+    }
+    const rows = block.rows.map((row) => row.map((cell) => cell.replace(/\|/g, "\\|").replace(/\n/g, " ").trim()));
+    const line = (row: string[]) => `| ${row.join(" | ")} |`;
+    const [head, ...body] = rows;
+    out.push([line(head), `| ${Array(head.length).fill("---").join(" | ")} |`, ...body.map(line)].join("\n"));
+  }
+  return out;
+}
+
+/** Render blocks as HTML: non-empty paragraphs as `<p>`, tables as bordered
+ *  `<table>` rows (the border/padding rules live in the shared page chrome). */
+function blocksToHtml(blocks: HwpBlock[]): string[] {
+  const inline = (text: string) => escapeHtml(text).replace(/\n/g, "<br>");
+  const out: string[] = [];
+  for (const block of blocks) {
+    if (block.kind === "paragraph") {
+      if (block.text.length > 0) out.push(`<p>${inline(block.text)}</p>`);
+      continue;
+    }
+    const rows = block.rows.map((row) => `<tr>${row.map((cell) => `<td>${inline(cell)}</td>`).join("")}</tr>`);
+    out.push(`<table>${rows.join("")}</table>`);
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -447,12 +494,9 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
  * Public API
  * ------------------------------------------------------------------------- */
 
-/**
- * Extract the document text of a binary HWP 5.x file as markdown-ish plain
- * text (paragraphs separated by blank lines, tables as GFM). Throws a
- * descriptive bilingual Error for encrypted, DRM'd, or pre-5.0 files.
- */
-export async function hwpToText(buffer: ArrayBuffer): Promise<string> {
+/** Open the container, validate the header, and walk every `BodyText/SectionN`
+ *  stream into intermediate blocks — the shared front half of both exports. */
+async function extractBlocks(buffer: ArrayBuffer): Promise<HwpBlock[]> {
   const cfb = parseCfb(new Uint8Array(buffer));
 
   const headerEntry = cfb.entries.find((e) => e.type === 2 && e.name === "FileHeader");
@@ -466,13 +510,30 @@ export async function hwpToText(buffer: ArrayBuffer): Promise<string> {
     .filter((s): s is { entry: CfbEntry; match: RegExpExecArray } => s.match !== null)
     .sort((a, b) => Number(a.match[1]) - Number(b.match[1]));
 
-  const paragraphs: string[] = [];
+  const blocks: HwpBlock[] = [];
   for (const { entry } of sections) {
     let bytes = cfb.readStream(entry);
     if (header.compressed) bytes = await inflateRaw(bytes);
-    // Drop empty paragraphs: blank-line spacing already comes from the join.
-    paragraphs.push(...extractSectionBlocks(bytes).filter((p) => p.length > 0));
+    blocks.push(...extractSectionBlocks(bytes));
   }
+  return blocks;
+}
 
-  return paragraphs.join("\n\n").replace(/\s+$/, "");
+/**
+ * Extract the document text of a binary HWP 5.x file as markdown-ish plain
+ * text (paragraphs separated by blank lines, tables as GFM). Throws a
+ * descriptive bilingual Error for encrypted, DRM'd, or pre-5.0 files.
+ */
+export async function hwpToText(buffer: ArrayBuffer): Promise<string> {
+  return blocksToText(await extractBlocks(buffer)).join("\n\n").replace(/\s+$/, "");
+}
+
+/**
+ * Extract a binary HWP 5.x file as a standalone HTML page in the shared 한글
+ * page chrome — paragraphs as `<p>`, tables as bordered `<table>`s. Binary
+ * HWP has no cheap style resolution, so unlike the HWPX path the text carries
+ * no per-run formatting. Error behavior matches `hwpToText`.
+ */
+export async function hwpToHtml(buffer: ArrayBuffer): Promise<string> {
+  return koreanDocHtml(blocksToHtml(await extractBlocks(buffer)).join("\n"));
 }

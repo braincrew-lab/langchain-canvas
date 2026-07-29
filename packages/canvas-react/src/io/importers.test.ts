@@ -218,6 +218,66 @@ describe("importFile xlsx (robust to real spreadsheets)", () => {
   });
 });
 
+describe("importFile hwpx", () => {
+  /** Minimal stored-only ZIP (CRCs zeroed — the reader doesn't verify them). */
+  const storedZip = (entries: { name: string; data: Uint8Array }[]): ArrayBuffer => {
+    const enc = new TextEncoder();
+    const chunks: Uint8Array[] = [];
+    const central: Uint8Array[] = [];
+    let offset = 0;
+    for (const { name, data } of entries) {
+      const nameBytes = enc.encode(name);
+      const local = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint32(18, data.length, true);
+      lv.setUint32(22, data.length, true);
+      lv.setUint16(26, nameBytes.length, true);
+      local.set(nameBytes, 30);
+      chunks.push(local, data);
+
+      const cdir = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(cdir.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint32(20, data.length, true);
+      cv.setUint32(24, data.length, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint32(42, offset, true);
+      cdir.set(nameBytes, 46);
+      central.push(cdir);
+      offset += local.length + data.length;
+    }
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(8, entries.length, true);
+    ev.setUint16(10, entries.length, true);
+    ev.setUint32(12, central.reduce((n, c) => n + c.length, 0), true);
+    ev.setUint32(16, offset, true);
+
+    const all = [...chunks, ...central, eocd];
+    const out = new Uint8Array(all.reduce((n, c) => n + c.length, 0));
+    let pos = 0;
+    for (const c of all) { out.set(c, pos); pos += c.length; }
+    return out.buffer;
+  };
+
+  it("HWPX → html artifact labelled as a document (meta.kind 'doc')", async () => {
+    const section = new TextEncoder().encode(
+      `<hs:sec xmlns:hs="x" xmlns:hp="y"><hp:p><hp:run><hp:t>한글 문서 본문</hp:t></hp:run></hp:p></hs:sec>`,
+    );
+    const zip = storedZip([{ name: "Contents/section0.xml", data: section }]);
+    const f = Object.assign(new File([], "제안서.hwpx"), { arrayBuffer: async () => zip }) as File;
+
+    const a = created(await importFile(f));
+    expect(a.type).toBe("html");
+    expect(a.meta).toMatchObject({ kind: "doc" });
+    const html = (a.data as { html: string }).html;
+    expect(html).toContain(`<html lang="ko">`);
+    expect(html).toContain("한글 문서 본문");
+  });
+});
+
 describe("canImport", () => {
   it("accepts known extensions, rejects others", () => {
     expect(canImport(file("a.csv", ""))).toBe(true);

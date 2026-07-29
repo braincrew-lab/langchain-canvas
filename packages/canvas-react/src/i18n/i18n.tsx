@@ -112,6 +112,13 @@ const MESSAGES = {
   ascending: { en: "Ascending", ko: "오름차순" },
   descending: { en: "Descending", ko: "내림차순" },
   filterTip: { en: "Filter rows", ko: "행 필터" },
+  fxPlaceholder: { en: "=formula or value", ko: "=수식 또는 값 입력" },
+  fmtGeneral: { en: "General", ko: "일반" },
+  fmtCurrency: { en: "Currency", ko: "통화" },
+  fmtPercent: { en: "Percent", ko: "퍼센트" },
+  fmtThousands: { en: "Thousands", ko: "천단위" },
+  fmtDecimal: { en: "Decimal", ko: "소수" },
+  fmtDate: { en: "Date", ko: "날짜" },
 
   // --- chart ---
   chartTitle: { en: "Chart title…", ko: "차트 제목…" },

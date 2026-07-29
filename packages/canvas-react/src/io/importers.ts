@@ -12,18 +12,19 @@
  * dynamic import so it never touches the main bundle.
  */
 
-import type { Artifact, DocumentData, HtmlData, PdfData, TableColumn, TableData } from "../protocol/artifacts";
+import type { Artifact, DocumentData, HtmlData, PdfData, SlidesData, TableColumn, TableData } from "../protocol/artifacts";
 import type { CanvasCreate, CanvasStatus, StreamEvent } from "../protocol/events";
 import { loadOptional } from "../optionalImport";
 import { xlsxToSheets } from "./xlsx";
-import { hwpxToMarkdown } from "./hwpx";
-import { hwpToText } from "./hwp";
+import { hwpxToHtml } from "./hwpx";
+import { hwpToHtml } from "./hwp";
 import { docxToMarkdown } from "./docx";
+import { pptxToSlides } from "./pptx";
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
 export const IMPORTABLE_EXTENSIONS = [
   ".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx",
-  ".pdf", ".hwpx", ".hwp", ".docx",
+  ".pdf", ".hwpx", ".hwp", ".docx", ".pptx",
 ] as const;
 
 const extensionOf = (name: string) => {
@@ -88,19 +89,28 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
       return toEvents(artifact(id, "pdf", title, { src, filename: file.name } satisfies PdfData));
     }
     case ".hwpx": {
-      // OWPML (ZIP of XML) → markdown, parsed with platform primitives only.
-      const content = await hwpxToMarkdown(await file.arrayBuffer());
-      return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
+      // OWPML (ZIP of XML) → a standalone HTML page with the original 한글
+      // formatting, parsed with platform primitives only. `meta.kind` labels
+      // the artifact a document rather than a web page.
+      const html = await hwpxToHtml(await file.arrayBuffer());
+      return toEvents({ ...artifact(id, "html", title, { html } satisfies HtmlData), meta: { kind: "doc" } });
     }
     case ".docx": {
       // WordprocessingML (ZIP of XML) → markdown, parsed with platform primitives only.
       const content = await docxToMarkdown(await file.arrayBuffer());
       return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
     }
+    case ".pptx": {
+      // PresentationML (ZIP of XML) → the native editable slides model, parsed
+      // with platform primitives only — geometry lands as percent of the slide.
+      const data = await pptxToSlides(await file.arrayBuffer());
+      return toEvents(artifact(id, "slides", title, data satisfies SlidesData));
+    }
     case ".hwp": {
-      // Binary HWP 5.x → plain-text extraction (CFB + record streams).
-      const content = await hwpToText(await file.arrayBuffer());
-      return toEvents(artifact(id, "document", title, { format: "markdown", content } satisfies DocumentData));
+      // Binary HWP 5.x → text/table extraction (CFB + record streams), wrapped
+      // in the same page chrome as the HWPX path.
+      const html = await hwpToHtml(await file.arrayBuffer());
+      return toEvents({ ...artifact(id, "html", title, { html } satisfies HtmlData), meta: { kind: "doc" } });
     }
     default:
       throw new Error(`Unsupported file type "${ext || file.name}". Supported: ${IMPORTABLE_EXTENSIONS.join(", ")}`);

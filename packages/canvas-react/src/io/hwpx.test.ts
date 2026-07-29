@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { hwpxToMarkdown, readZip } from "./hwpx";
+import { hwpxToHtml, hwpxToMarkdown, readZip } from "./hwpx";
 
 const enc = new TextEncoder();
 
@@ -282,5 +282,115 @@ describe("hwpxToMarkdown headings", () => {
     ]);
     const md = await hwpxToMarkdown(zip);
     expect(md).toBe("제목일 수도 있는 문단");
+  });
+});
+
+/** A header.xml with the reference lookups the HTML path resolves against:
+ *  fontfaces, a fill borderFill, styled charPrs, and a centered paraPr. */
+const STYLE_HEADER = `<?xml version="1.0" encoding="UTF-8"?>
+<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">
+  <hh:refList>
+    <hh:fontfaces itemCnt="1">
+      <hh:fontface lang="HANGUL" fontCnt="1"><hh:font id="0" face="함초롬바탕" type="TTF" isEmbedded="0"/></hh:fontface>
+    </hh:fontfaces>
+    <hh:borderFills itemCnt="1">
+      <hh:borderFill id="3"><hh:fillBrush><hh:winBrush faceColor="#DDEEFF" hatchColor="#999999" alpha="0"/></hh:fillBrush></hh:borderFill>
+    </hh:borderFills>
+    <hh:charProperties itemCnt="2">
+      <hh:charPr id="0" height="1000" textColor="#000000"><hh:fontRef hangul="0" latin="0"/><hh:underline type="NONE" shape="SOLID" color="#000000"/></hh:charPr>
+      <hh:charPr id="7" height="1600" textColor="#FF0000"><hh:fontRef hangul="0" latin="0"/><hh:bold/><hh:italic/><hh:underline type="BOTTOM" shape="SOLID" color="#FF0000"/></hh:charPr>
+    </hh:charProperties>
+    <hh:paraProperties itemCnt="1">
+      <hh:paraPr id="4"><hh:align horizontal="CENTER" vertical="BASELINE"/></hh:paraPr>
+    </hh:paraProperties>
+    <hh:styles itemCnt="1">
+      <hh:style id="2" type="PARA" name="개요 1" paraPrIDRef="20"/>
+    </hh:styles>
+  </hh:refList>
+</hh:head>`;
+
+/** Body-only excerpt of an hwpxToHtml page — everything inside the chrome div. */
+const pageBody = (html: string) => /<div class="page">\n([\s\S]*)\n<\/div>/.exec(html)?.[1] ?? "";
+
+describe("hwpxToHtml", () => {
+  const styledZip = (body: string) =>
+    makeZip([
+      { name: "Contents/header.xml", data: enc.encode(STYLE_HEADER), method: 0 },
+      { name: "Contents/section0.xml", data: sectionXml(body), method: 0 },
+    ]);
+
+  it("emits the Korean page chrome around the body", async () => {
+    const html = await hwpxToHtml(styledZip(`<hp:p><hp:run charPrIDRef="0"><hp:t>본문 &amp; <![CDATA[<텍스트>]]></hp:t></hp:run></hp:p>`));
+    expect(html).toContain(`<html lang="ko">`);
+    expect(html).toContain(`<meta charset="utf-8">`);
+    expect(html).toContain("max-width:794px");
+    expect(html).toContain("padding:96px 72px");
+    expect(html).toContain("'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',AppleGothic,sans-serif");
+    expect(html).toContain("border-collapse:collapse");
+    // Text is XML-escaped on the way out.
+    expect(html).toContain("본문 &amp; &lt;텍스트&gt;");
+  });
+
+  it("resolves run bold/italic/underline/size/color/font from header.xml charProperties", async () => {
+    const html = await hwpxToHtml(
+      styledZip(
+        `<hp:p><hp:run charPrIDRef="7"><hp:t>강조 텍스트</hp:t></hp:run><hp:run charPrIDRef="0"><hp:t>일반 텍스트</hp:t></hp:run></hp:p>`,
+      ),
+    );
+    // charPr 7: height 1600 (16 pt → 21.33 px), red, bold+italic+underlined.
+    expect(html).toContain(
+      `<span style="font-family:'함초롬바탕','Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',AppleGothic,sans-serif;` +
+        `font-size:21.33px;color:#FF0000;font-weight:bold;font-style:italic;text-decoration:underline">강조 텍스트</span>`,
+    );
+    // charPr 0 keeps the face and size, but default black adds no color rule.
+    expect(html).toContain(`font-size:13.33px">일반 텍스트</span>`);
+    expect(html).not.toContain("color:#000000");
+  });
+
+  it("merges adjacent runs that share a charPr into one span", async () => {
+    const html = await hwpxToHtml(
+      styledZip(`<hp:p><hp:run charPrIDRef="7"><hp:t>이어</hp:t></hp:run><hp:run charPrIDRef="7"><hp:t>진다</hp:t></hp:run></hp:p>`),
+    );
+    expect(pageBody(html).match(/<span /g)).toHaveLength(1);
+    expect(html).toContain(">이어진다</span>");
+  });
+
+  it("applies paragraph alignment from paraPr and renders heading styles as heading blocks", async () => {
+    const html = await hwpxToHtml(
+      styledZip(
+        `<hp:p paraPrIDRef="4"><hp:run charPrIDRef="0"><hp:t>가운데 정렬</hp:t></hp:run></hp:p>` +
+          `<hp:p styleIDRef="2"><hp:run charPrIDRef="0"><hp:t>개요 제목</hp:t></hp:run></hp:p>`,
+      ),
+    );
+    expect(html).toContain(`<p style="text-align:center">`);
+    expect(html).toMatch(/<h1>.*개요 제목.*<\/h1>/);
+  });
+
+  it("renders tables with colspan and cell backgrounds", async () => {
+    const html = await hwpxToHtml(
+      styledZip(
+        `<hp:p><hp:run><hp:tbl>` +
+          `<hp:tr><hp:tc borderFillIDRef="3"><hp:cellSpan colSpan="2" rowSpan="1"/><hp:subList><hp:p><hp:run charPrIDRef="0"><hp:t>병합 헤더</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr>` +
+          `<hp:tr><hp:tc><hp:subList><hp:p><hp:run charPrIDRef="0"><hp:t>왼쪽</hp:t></hp:run></hp:p></hp:subList></hp:tc>` +
+          `<hp:tc><hp:subList><hp:p><hp:run charPrIDRef="0"><hp:t>오른쪽</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr>` +
+          `</hp:tbl></hp:run></hp:p>`,
+      ),
+    );
+    expect(html).toContain(`<td colspan="2" style="background:#DDEEFF">`);
+    expect(html).toMatch(/<table><tr><td[^>]*>.*병합 헤더.*<\/td><\/tr><tr><td>.*왼쪽.*<\/td><td>.*오른쪽.*<\/td><\/tr><\/table>/);
+  });
+
+  it("inlines pictures as data-URL <img> tags at their document position", async () => {
+    const zip = makeZip([
+      { name: "BinData/photo.png", data: PNG_1PX, method: 0 },
+      {
+        name: "Contents/section0.xml",
+        data: sectionXml(`<hp:p><hp:run><hp:t>그림 앞</hp:t><hp:pic><hc:img binaryItemIDRef="photo"/></hp:pic></hp:run></hp:p>`),
+        method: 0,
+      },
+    ]);
+    const html = await hwpxToHtml(zip);
+    expect(html).toContain(`<img src="data:image/png;base64,${PNG_1PX_B64}" style="max-width:100%">`);
+    expect(html.indexOf("그림 앞")).toBeLessThan(html.indexOf("<img "));
   });
 });

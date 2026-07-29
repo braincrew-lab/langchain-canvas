@@ -94,6 +94,25 @@ function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: F
   ];
 }
 
+/** Fortune's live sheet objects → the serializable shape the Workbook `data`
+ *  prop (and the exporters) can read back: `celldata` rebuilt from the runtime
+ *  2-D `data` matrix, the matrix itself dropped (it's bulky and goes stale). */
+function normalizeSheets(sheets: Array<Record<string, unknown>>): TableData["sheet"] {
+  return (sheets ?? []).map((sheet) => {
+    const matrix = sheet.data as Array<Array<unknown>> | undefined;
+    if (!Array.isArray(matrix)) return sheet;
+    const celldata: Array<{ r: number; c: number; v: unknown }> = [];
+    matrix.forEach((row, r) => {
+      if (!Array.isArray(row)) return;
+      row.forEach((v, c) => {
+        if (v != null) celldata.push({ r, c, v });
+      });
+    });
+    const { data: _dropped, ...rest } = sheet;
+    return { ...rest, celldata };
+  });
+}
+
 /** Columns from the union of row keys — a fallback when `columns` is omitted. */
 function deriveColumns(rows: TableData["rows"]): TableColumn[] {
   const keys = new Set<string>();
@@ -109,15 +128,16 @@ type FortuneOp = Parameters<WorkbookInstance["applyOp"]>[0][number];
 /** A rectangular cell range, `row`/`column` as inclusive `[start, end]` pairs. */
 type SheetSelection = { row: number[]; column: number[] };
 
-/** Quick number formats (Fortune `ct.fa` patterns) offered in the Fmt… menu. */
+/** Quick number formats (Fortune `ct.fa` patterns) offered in the Fmt… menu.
+ *  Labels are i18n keys, joined with the pattern at render time. */
 const NUMBER_FORMATS = [
-  { label: "일반", fa: "General" },
-  { label: "통화 ₩#,##0", fa: "₩#,##0" },
-  { label: "통화 $#,##0.00", fa: "$#,##0.00" },
-  { label: "퍼센트 0.0%", fa: "0.0%" },
-  { label: "천단위 #,##0", fa: "#,##0" },
-  { label: "소수 0.00", fa: "0.00" },
-  { label: "날짜 yyyy-mm-dd", fa: "yyyy-mm-dd" },
+  { labelKey: "fmtGeneral", suffix: "", fa: "General" },
+  { labelKey: "fmtCurrency", suffix: " ₩#,##0", fa: "₩#,##0" },
+  { labelKey: "fmtCurrency", suffix: " $#,##0.00", fa: "$#,##0.00" },
+  { labelKey: "fmtPercent", suffix: " 0.0%", fa: "0.0%" },
+  { labelKey: "fmtThousands", suffix: " #,##0", fa: "#,##0" },
+  { labelKey: "fmtDecimal", suffix: " 0.00", fa: "0.00" },
+  { labelKey: "fmtDate", suffix: " yyyy-mm-dd", fa: "yyyy-mm-dd" },
 ] as const;
 
 /** AutoSum-style quick functions offered in the Σ menu. */
@@ -132,6 +152,15 @@ const colToLetters = (c: number): string => {
 
 /** 0-based cell coordinates → A1 notation ("B3"). */
 const toA1 = (r: number, c: number) => `${colToLetters(c)}${r + 1}`;
+
+/** Fortune stores an edited formula as syntax-highlighted HTML — flatten it to
+ *  the plain "=…" text (entities decoded) for the formula bar. */
+const plainFormula = (f: string): string => {
+  if (!f.includes("<")) return f;
+  const div = document.createElement("div");
+  div.innerHTML = f;
+  return div.textContent ?? f;
+};
 
 /** Does the selection contain a merged cell? Merged cells carry `mc`; the scan is
  *  capped so a whole-sheet selection can't stall the selection-change hook. */
@@ -283,13 +312,34 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // `data.sheet` with no version bump, so the workbook is never remounted.
   // A user edit — routed through applyUserEvent so it lands on the undo stack and
   // fires the host's onUserEdit write-back hook.
+  //
+  // Two hard-won rules guard this path:
+  // 1. The FIRST onChange after every mount is Fortune echoing the data it was
+  //    mounted with — not an edit. Persisting it is how a still-streaming table
+  //    got bricked: the empty first mount's echo landed in `data.sheet` after
+  //    the rows arrived, and the remount then preferred that empty sheet over
+  //    the real rows. The echo is consumed and dropped.
+  // 2. Fortune's live sheets carry the grid as a 2-D `data` matrix and let
+  //    `celldata` go stale — but the Workbook `data` prop and our exporters
+  //    read `celldata`. Persisting the raw object round-trips to an empty grid,
+  //    so sheets are normalized (celldata rebuilt from the matrix, matrix
+  //    dropped) before they're stored.
   const applyEvent = useCanvasStore((s) => s.applyUserEvent);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountEcho = useRef(1);
   const handleChange = useCallback(
     (sheets: unknown) => {
+      if (mountEcho.current > 0) {
+        mountEcho.current--;
+        return;
+      }
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
-        applyEvent({ type: "canvas.patch", id: artifact.id, patch: { sheet: sheets as TableData["sheet"] } });
+        applyEvent({
+          type: "canvas.patch",
+          id: artifact.id,
+          patch: { sheet: normalizeSheets(sheets as Array<Record<string, unknown>>) },
+        });
       }, 400);
     },
     [applyEvent, artifact.id],
@@ -327,10 +377,12 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     const [r, c] = [sel.row[0], sel.column[0]];
     const bl = wb?.getCellValue?.(r, c, { type: "bl" });
     setBoldOn(bl === 1 || bl === "1");
-    // The formula bar mirrors the anchor cell: its formula if it has one, else its value.
+    // The formula bar mirrors the anchor cell: its formula if it has one, else its
+    // value. Fortune stores an edited formula as syntax-highlighted HTML
+    // (`<span class="luckysheet-formula-text-…">`), so it's flattened to text.
     const f = wb?.getCellValue?.(r, c, { type: "f" });
     const v = wb?.getCellValue?.(r, c);
-    setFxValue(typeof f === "string" && f ? f : v == null ? "" : String(v));
+    setFxValue(typeof f === "string" && f ? plainFormula(f) : v == null ? "" : String(v));
     setFxDraft(null);
     setSelHasMerge(wb ? selectionHasMerge(wb, sel) : false);
   }, []);
@@ -465,6 +517,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // workbook: resync the freeze toggle from the mounting sheet's own frozen
   // state and drop the stale selection.
   useEffect(() => {
+    mountEcho.current = 1; // the next onChange is the new workbook's mount echo
     setFrozen(!viewActive && hasSheet && !!artifact.data.sheet?.[0]?.frozen);
     setSelection(null);
     setBoldOn(false);
@@ -534,7 +587,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
           >
             <option value="">{t("numberFormat")}</option>
             {NUMBER_FORMATS.map((f) => (
-              <option key={f.fa} value={f.fa}>{f.label}</option>
+              <option key={f.fa} value={f.fa}>{t(f.labelKey) + f.suffix}</option>
             ))}
           </select>
           <select
@@ -620,7 +673,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
         <input
           className="cv-sheet-fxbar__input"
           value={fxDraft ?? fxValue}
-          placeholder="=수식 또는 값 입력"
+          placeholder={t("fxPlaceholder")}
           disabled={!selection}
           onChange={(e) => setFxDraft(e.target.value)}
           onKeyDown={(e) => {

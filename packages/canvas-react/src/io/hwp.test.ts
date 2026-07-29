@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hwpToText } from "./hwp";
+import { hwpToHtml, hwpToText } from "./hwp";
 
 /* ------------------------------------------------------------------------- *
  * Synthetic HWP fixture builder
@@ -307,5 +307,36 @@ describe("hwpToText", () => {
   it("throws when the container is CFB but the HWP signature is wrong", async () => {
     const fixture = buildHwp(paraText(0, utf16le("x")), { signature: "NOT A HWP FILE!!" });
     await expect(hwpToText(fixture)).rejects.toThrow(/HWP 문서가 아닙니다.*not an HWP document/is);
+  });
+});
+
+describe("hwpToHtml", () => {
+  it("wraps paragraphs and tables in the Korean page chrome", async () => {
+    const section = concat(
+      paraText(0, utf16le("표 앞 <문단>")),
+      ctrlHeader(1, CTRL_ID_TABLE),
+      tableRecord(2, 2, 2),
+      listHeader(2), paraText(3, utf16le("구분")),
+      listHeader(2), paraText(3, utf16le("내용")),
+      listHeader(2), paraText(3, utf16le("기간")),
+      listHeader(2), paraText(3, utf16le("2026-07")),
+      paraText(0, utf16le("표 뒤 문단")),
+    );
+    const html = await hwpToHtml(buildHwp(section));
+    // Shared 한글 page chrome: A4-proportioned white page, Korean font stack.
+    expect(html).toContain(`<html lang="ko">`);
+    expect(html).toContain(`<meta charset="utf-8">`);
+    expect(html).toContain("max-width:794px");
+    expect(html).toContain("'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',AppleGothic,sans-serif");
+    expect(html).toContain("border-collapse:collapse");
+    // Korean text intact, and XML-escaped on the way out.
+    expect(html).toContain("<p>표 앞 &lt;문단&gt;</p>");
+    expect(html).toContain("<table><tr><td>구분</td><td>내용</td></tr><tr><td>기간</td><td>2026-07</td></tr></table>");
+    expect(html).toContain("<p>표 뒤 문단</p>");
+  });
+
+  it("keeps the shared error paths (encrypted files still reject)", async () => {
+    const fixture = buildHwp(paraText(0, utf16le("x")), { flags: 0b10 });
+    await expect(hwpToHtml(fixture)).rejects.toThrow(/암호.*password-encrypted/is);
   });
 });

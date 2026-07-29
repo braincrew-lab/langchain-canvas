@@ -455,6 +455,141 @@
 .cv-sheet-fxbar__input:focus { outline: none; border-color: var(--cv-accent); background: var(--cv-bg); }
 .cv-sheet-fxbar__input:disabled { opacity: 0.5; }
 .cv-sheet { position: relative; width: 100%; flex: 1; height: auto; min-height: 0; }
+
+/* --- Fortune-sheet internals, retuned to the canvas design language ----------- */
+/* Fortune ships its own visual defaults (raw blues, hard corners, UA-grey
+   dialogs). Everything user-visible is re-tokenized here so the spreadsheet
+   reads as part of the canvas, not an embedded third-party widget. */
+
+/* toolbar */
+.cv-sheet .fortune-toolbar {
+  background: var(--cv-bg);
+  border-bottom: 1px solid var(--cv-border);
+  padding: 4px 8px;
+}
+.cv-sheet .fortune-toolbar-button,
+.cv-sheet .fortune-toolbar-item {
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.cv-sheet .fortune-toolbar-button:hover,
+.cv-sheet .fortune-toolbar-item:hover,
+.cv-sheet .fortune-toolbar-combo-button:hover {
+  background: var(--cv-surface);
+}
+.cv-sheet .fortune-toolbar-divider { border-color: var(--cv-border); }
+.cv-sheet .fortune-toolbar-combo { border-radius: 6px; }
+
+/* Fortune's own formula row duplicates the canvas formula bar above it — hide it
+   (the name box A1 + fx input live in .cv-sheet-fxbar). */
+.cv-sheet .fortune-fx-editor { display: none !important; }
+
+/* dialogs (conditional format, insert link, …) */
+.luckysheet-modal-dialog {
+  border: 1px solid var(--cv-border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22) !important;
+  background: var(--cv-bg) !important;
+  color: var(--cv-text) !important;
+  font-family: var(--cv-font) !important;
+  padding: 18px 20px !important;
+}
+.luckysheet-modal-dialog-border { border: none !important; }
+.luckysheet-modal-dialog input[type="text"],
+.luckysheet-modal-dialog input[type="number"],
+.luckysheet-modal-dialog select,
+.luckysheet-modal-dialog textarea {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+}
+.luckysheet-modal-dialog input:focus,
+.luckysheet-modal-dialog select:focus,
+.luckysheet-modal-dialog textarea:focus { outline: none; border-color: var(--cv-accent); }
+.luckysheet-modal-dialog button {
+  font: 600 13px/1.2 var(--cv-font);
+  padding: 7px 16px;
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+  cursor: pointer;
+}
+.luckysheet-modal-dialog button:hover { background: var(--cv-surface); }
+/* Fortune marks its confirm buttons with a solid blue — remap to the accent. */
+.luckysheet-modal-dialog button[style*="rgb(26, 115, 232)"],
+.luckysheet-modal-dialog .fortune-message-box-button-primary,
+.luckysheet-modal-dialog button.primary {
+  background: var(--cv-accent) !important;
+  border-color: var(--cv-accent) !important;
+  color: #fff !important;
+}
+
+/* context menus (right-click, header menus) */
+.fortune-context-menu,
+.luckysheet-cols-menu {
+  border: 1px solid var(--cv-border) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16) !important;
+  background: var(--cv-bg) !important;
+  color: var(--cv-text) !important;
+  font-family: var(--cv-font) !important;
+  padding: 6px !important;
+  overflow: hidden;
+}
+.fortune-context-menu > div,
+.luckysheet-cols-menuitem {
+  border-radius: 7px;
+  font-size: 13px;
+}
+.fortune-context-menu > div:hover,
+.luckysheet-cols-menuitem:hover { background: var(--cv-surface) !important; }
+.fortune-context-menu-divider { border-color: var(--cv-border) !important; }
+
+/* sheet tabs + status bar */
+.cv-sheet .fortune-sheettab-container {
+  background: var(--cv-bg);
+  border-top: 1px solid var(--cv-border);
+  font-family: var(--cv-font);
+}
+.cv-sheet .luckysheet-sheets-item {
+  border-radius: 7px 7px 0 0;
+  color: var(--cv-muted);
+}
+.cv-sheet .luckysheet-sheets-item-active {
+  color: var(--cv-accent);
+  background: var(--cv-accent-weak);
+  font-weight: 600;
+}
+.cv-sheet .fortune-sheettab-button { border-radius: 6px; }
+.cv-sheet .fortune-sheettab-button:hover { background: var(--cv-surface); }
+.cv-sheet .fortune-stat-area,
+.cv-sheet .fortune-zoom-container { font-family: var(--cv-font); color: var(--cv-muted); }
+.cv-sheet .fortune-zoom-button { border-radius: 6px; }
+.cv-sheet .fortune-zoom-button:hover { background: var(--cv-surface); }
+
+/* tooltips + scrollbars */
+.fortune-tooltip {
+  border-radius: 7px !important;
+  font-family: var(--cv-font) !important;
+  font-size: 12px !important;
+}
+.cv-sheet .luckysheet-scrollbar-x::-webkit-scrollbar,
+.cv-sheet .luckysheet-scrollbar-y::-webkit-scrollbar { width: 8px; height: 8px; }
+.cv-sheet .luckysheet-scrollbar-x::-webkit-scrollbar-thumb,
+.cv-sheet .luckysheet-scrollbar-y::-webkit-scrollbar-thumb {
+  background: var(--cv-border);
+  border-radius: 999px;
+}
+.cv-sheet .luckysheet-scrollbar-x::-webkit-scrollbar-thumb:hover,
+.cv-sheet .luckysheet-scrollbar-y::-webkit-scrollbar-thumb:hover { background: var(--cv-muted); }
+
+/* in-cell editor */
+.cv-sheet .luckysheet-cell-input,
+.cv-sheet .luckysheet-input-box-inner { font-family: var(--cv-font); }
 .cv-sheet .fortune-container { height: 100% !important; width: 100% !important; }
 .cv-sheet--empty { display: grid; place-items: center; height: 200px; color: var(--cv-muted); font-size: 14px; }
 
