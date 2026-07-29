@@ -231,45 +231,56 @@ const pdf: Scenario = {
 };
 
 
-// --- hwp: a Korean document, as imported from .hwp/.hwpx -------------------------
+// --- hwp: a Korean document with real formatting (as .hwp/.hwpx imports open) ----
 
-const HWP_MARKDOWN = `# 사업 수행 계획서
-
-## 1. 개요
-
-본 문서는 대화형 에이전트 빌더 구축 사업의 수행 계획을 정리한 것입니다.
-\`.hwp\`(한글 5.x 바이너리)와 \`.hwpx\`(OWPML) 파일을 캔버스에 끌어다 놓으면
-이 문서처럼 편집 가능한 문서 아티팩트로 열립니다.
-
-## 2. 추진 일정
-
-| 단계 | 기간 | 산출물 |
-| --- | --- | --- |
-| 착수 | 2026-07 | 사업수행계획서 |
-| 분석/설계 | 2026-07 ~ 2026-08 | 요구사항 정의서 |
-| 구축 | 2026-08 ~ 2026-11 | 기능 구현 |
-| 검수 | 2026-12 | 검수확인서 |
-
-## 3. 내보내기
-
-편집한 문서는 **내보내기 → 한글 (HWPX)** 로 다시 한글 파일로 저장할 수 있습니다.`;
+const HWP_HTML = `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><style>
+  body{margin:0;background:#eceef1;font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",AppleGothic,sans-serif;color:#1a1a1a}
+  .page{max-width:794px;margin:24px auto;padding:96px 72px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.12);line-height:1.7}
+  h1{font-size:22pt;text-align:center;margin:0 0 8px}
+  .stamp{text-align:center;color:#555;font-size:10.5pt;margin:0 0 36px}
+  h2{font-size:14pt;border-bottom:2px solid #2f5597;padding-bottom:4px;margin:28px 0 12px;color:#2f5597}
+  p{margin:0 0 10px;font-size:11pt;text-align:justify}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:10.5pt}
+  th{background:#dbe5f1;border:1px solid #666;padding:7px 10px}
+  td{border:1px solid #666;padding:7px 10px}
+  .sign{margin-top:48px;text-align:right;font-size:12pt}
+  .red{color:#c00000;font-weight:700}
+</style></head>
+<body><div class="page">
+  <h1>사업 수행 계획서</h1>
+  <p class="stamp">문서번호 BC-2026-041 · 2026. 7. 29.</p>
+  <h2>1. 개요</h2>
+  <p>본 문서는 <b>대화형 에이전트 빌더 구축</b> 사업의 수행 계획을 정리한 것입니다. <span class="red">한글(.hwp/.hwpx) 파일을 캔버스에 끌어다 놓으면</span> 이 문서처럼 <u>서식이 보존된 페이지</u>로 열립니다 — 글꼴 크기·색·정렬·표 테두리·이미지까지.</p>
+  <h2>2. 추진 일정</h2>
+  <table>
+    <tr><th>단계</th><th>기간</th><th>산출물</th></tr>
+    <tr><td>착수</td><td style="text-align:center">2026-07</td><td>사업수행계획서</td></tr>
+    <tr><td>분석/설계</td><td style="text-align:center">2026-07 ~ 2026-08</td><td>요구사항 정의서</td></tr>
+    <tr><td>구축</td><td style="text-align:center">2026-08 ~ 2026-11</td><td>기능 구현</td></tr>
+    <tr><td>검수</td><td style="text-align:center">2026-12</td><td>검수확인서</td></tr>
+  </table>
+  <h2>3. 내보내기</h2>
+  <p>편집한 문서는 <b>내보내기</b> 메뉴에서 PDF·HTML로 저장할 수 있습니다. 에이전트가 만든 문서(document)는 <b>한글 (HWPX)</b>로도 내보냅니다.</p>
+  <p class="sign">브레인크루 주식회사</p>
+</div></body></html>`;
 
 const hwp: Scenario = {
   id: "hwp",
   title: "한글 (HWP)",
-  description: "A Korean HWP/HWPX document imported onto the canvas — drag any .hwp/.hwpx file to open it; export back via 한글 (HWPX).",
+  description: "A formatted Korean document — how .hwp/.hwpx files open on the canvas, styling preserved.",
   events: [
-    { type: "message.delta", messageId: "m-hwp", text: "한글 파일을 문서로 열었습니다." },
+    { type: "message.delta", messageId: "m-hwp", text: "한글 파일을 서식 그대로 열었습니다." },
     {
       type: "canvas.create",
       artifact: {
         id: "hwp-doc",
-        type: "document",
+        type: "html",
         title: "사업 수행 계획서.hwpx",
         version: 1,
         status: "complete",
         meta: { kind: "doc", source: "hwpx" },
-        data: { format: "markdown", content: HWP_MARKDOWN },
+        data: { html: HWP_HTML },
       },
     },
     { type: "canvas.status", id: "hwp-doc", status: "complete" },

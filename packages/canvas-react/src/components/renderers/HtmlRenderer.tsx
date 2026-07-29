@@ -500,6 +500,11 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // coordinates — so element select / drag / style / chat editing all work; only
   // the fluid device-width switch (meaningless for a fixed slide) is hidden.
   const ratio = artifact.meta?.ratio as string | undefined;
+  // A document (an imported .hwp/.hwpx or any `meta.kind: "doc"` page) is not a
+  // web page: page-builder chrome (device preview, section/page templates) reads
+  // wrong on it, so the toolbar collapses to a document editor — insert palette
+  // (heading/text/image), outline, and Design/Code. A "문서" chip marks the mode.
+  const isDoc = !ratio && artifact.meta?.kind === "doc";
   const slide = useSlideFit(ratio, stageRef);
 
   return (
@@ -509,7 +514,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
       <div className="cv-html-bar cv-chrome">
         {mode === "design" && (
           <>
-            {!ratio && (
+            {!ratio && !isDoc && (
               <>
                 <div className="cv-html-seg" role="group" aria-label="Preview width">
                   {DEVICES.map((d) => (
@@ -521,14 +526,15 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 <span className="cv-html-bar__sep" />
               </>
             )}
+            {isDoc && <span className="cv-html-doc-chip" title={t("kindDocument")}>📄 {t("kindDocument")}</span>}
             <span className="cv-html-bar__label">{t("add")}</span>
-            {(ratio ? BLOCKS.filter((b) => SLIDE_BLOCK_TAGS.has(b.tag)) : BLOCKS).map((b) => (
+            {(ratio || isDoc ? BLOCKS.filter((b) => SLIDE_BLOCK_TAGS.has(b.tag)) : BLOCKS).map((b) => (
               <button key={b.tag} className="cv-html-add" onClick={() => command("insert", { block: b.tag })}>
                 {BLOCK_KEYS[b.tag] ? t(BLOCK_KEYS[b.tag]) : b.label}
               </button>
             ))}
             {/* Web section templates + full-page starters — only for fluid web pages. */}
-            {!ratio && (
+            {!ratio && !isDoc && (
               <>
                 <select
                   className="cv-html-tpl"
@@ -579,6 +585,24 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 )}
                 <button className="cv-html-add" title={t("a11yTitle")} onClick={() => setA11y(checkA11y(artifact.data.html))}>♿ Check</button>
               </>
+            )}
+            {/* Document outline — jump-to-section for imported .hwp/.hwpx docs. */}
+            {isDoc && outline.length > 0 && (
+              <select
+                className="cv-html-tpl"
+                value=""
+                title={t("jumpToHeading")}
+                onChange={(e) => {
+                  const idx = Number(e.target.value);
+                  if (!Number.isNaN(idx)) sendIframeCommand({ artifactId: artifact.id, type: "scroll_to", index: idx });
+                  e.currentTarget.value = "";
+                }}
+              >
+                <option value="">{t("outlineMenu")}</option>
+                {outline.map((h, i) => (
+                  <option key={`d${i}`} value={i}>{h.text}</option>
+                ))}
+              </select>
             )}
             {/* Slide-native layouts + one-click themes — only for fixed-aspect slides. */}
             {ratio && (
