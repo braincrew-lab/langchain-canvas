@@ -4,16 +4,19 @@
  * The inverse of `hwpx.ts`: where that file reads `Contents/section*.xml` out of
  * the ZIP container, this one assembles a complete minimal OWPML package —
  * `mimetype`, `version.xml`, `META-INF/*`, `Contents/content.hpf`,
- * `Contents/header.xml`, `Contents/section0.xml` — and zips it by hand with
- * stored (uncompressed) entries, so the export costs zero bundle bytes.
+ * `Contents/header.xml`, `Contents/section0.xml`, `settings.xml` — and zips it
+ * by hand with stored (uncompressed) entries, so the export costs zero bundle
+ * bytes.
  *
- * The package skeleton mirrors what 한글 itself writes for a blank document
- * (same part names, namespaces, and reference tables), trimmed to the minimum
- * the application needs to resolve: fontfaces for all seven language slots,
- * two borderFills, a small charPr/paraPr/style table, and a section whose
- * first run carries the page setup (`hp:secPr`). Every `IDRef` in the body
- * points at an id that exists in `header.xml` — dangling references are the
- * usual reason a hand-built HWPX fails to open.
+ * The package mirrors the blank document the reference OWPML implementation
+ * (hwpxlib's blank-file maker, whose output 한글 opens) emits: same part names
+ * and order, the full 2011 HWPML namespace set on every content root, booleans
+ * as `1`/`0`, and — deliberately — the format's baked-in misspellings
+ * (`tagetApplication`, `hh:trackchageConfig`). Structural markup is kept on one
+ * line, as 한글 writes it, so no stray whitespace can leak into text runs.
+ * Every `IDRef` in the body resolves against `header.xml` — in particular
+ * borderFills 1 and 2, which charPr/paraPr/secPr all depend on; dangling
+ * references are the usual reason a hand-built HWPX fails to open.
  */
 
 import type { DocumentData } from "../protocol/artifacts";
@@ -44,7 +47,7 @@ export function crc32(bytes: Uint8Array): number {
  * Assemble a ZIP from named parts, all stored (method 0) — XML this small gains
  * nothing from deflate, and stored entries keep the writer trivial and the
  * `mimetype` part readable by magic-number sniffers. Entry order is preserved,
- * which is how `mimetype` ends up first (an OCF-container convention 한글 follows).
+ * which is how `mimetype` ends up first (the OCF-container convention).
  */
 function storeZip(parts: Array<[name: string, content: Uint8Array]>): Uint8Array<ArrayBuffer> {
   // Fixed DOS timestamp (2026-01-01 00:00) keeps the output byte-deterministic.
@@ -111,72 +114,94 @@ function storeZip(parts: Array<[name: string, content: Uint8Array]>): Uint8Array
 
 // --- OWPML package parts --------------------------------------------------------
 
-const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
+// The space before `?>` matches the reference writer byte-for-byte.
+const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>`;
 
-/** Namespace block shared by header/section roots — the 2011 HWPML family, the
- *  same URIs `hwpx.ts` parses (prefixes must resolve even where unused). */
-const NS = {
-  hh: "http://www.hancom.co.kr/hwpml/2011/head",
-  hp: "http://www.hancom.co.kr/hwpml/2011/paragraph",
-  hs: "http://www.hancom.co.kr/hwpml/2011/section",
-  hc: "http://www.hancom.co.kr/hwpml/2011/core",
-} as const;
+/** The full 2011 HWPML namespace set — every content root (content.hpf,
+ *  header.xml, section0.xml) re-declares all of it, since each ZIP part is
+ *  parsed standalone. The `hp`/`hs` URIs are the same ones `hwpx.ts` reads. */
+const HWPML_NS = [
+  `xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app"`,
+  `xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"`,
+  `xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph"`,
+  `xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"`,
+  `xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core"`,
+  `xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"`,
+  `xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history"`,
+  `xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page"`,
+  `xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"`,
+  `xmlns:dc="http://purl.org/dc/elements/1.1/"`,
+  `xmlns:opf="http://www.idpf.org/2007/opf/"`,
+  `xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart"`,
+  `xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar"`,
+  `xmlns:epub="http://www.idpf.org/2007/ops"`,
+  `xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"`,
+].join(" ");
 
-const VERSION_XML = `${XML_DECL}
-<hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="0" micro="5" buildNumber="0" os="1" xmlVersion="1.4" application="Hancom Office Hangul" appVersion="9, 1, 1, 5656 WIN32LEWindows_Unknown_Version"/>`;
+// `tagetApplication` (sic) is the format's own misspelling — do not "fix" it.
+const VERSION_XML =
+  XML_DECL +
+  `<hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="0" micro="5" buildNumber="0" xmlVersion="1.4" application="langchain-canvas" appVersion="1.0"/>`;
 
-const CONTAINER_XML = `${XML_DECL}
-<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf">
-  <ocf:rootfiles>
-    <ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/>
-  </ocf:rootfiles>
-</ocf:container>`;
+const CONTAINER_XML =
+  XML_DECL +
+  `<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf">` +
+  `<ocf:rootfiles><ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/></ocf:rootfiles>` +
+  `</ocf:container>`;
 
-const MANIFEST_XML = `${XML_DECL}
-<odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
-  <odf:file-entry odf:full-path="/" odf:media-type="application/hwp+zip"/>
-  <odf:file-entry odf:full-path="version.xml" odf:media-type="text/xml"/>
-  <odf:file-entry odf:full-path="Contents/header.xml" odf:media-type="text/xml"/>
-  <odf:file-entry odf:full-path="Contents/section0.xml" odf:media-type="text/xml"/>
-  <odf:file-entry odf:full-path="settings.xml" odf:media-type="text/xml"/>
-</odf:manifest>`;
+// Empty on purpose: the manifest only carries entries for encrypted parts.
+const MANIFEST_XML = XML_DECL + `<odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`;
 
-const CONTENT_HPF = `${XML_DECL}
-<opf:package xmlns:opf="http://www.idpf.org/2007/opf/" version="" unique-identifier="" id="">
-  <opf:metadata>
-    <opf:title></opf:title>
-    <opf:language>ko</opf:language>
-  </opf:metadata>
-  <opf:manifest>
-    <opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>
-    <opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>
-    <opf:item id="settings" href="settings.xml" media-type="application/xml"/>
-  </opf:manifest>
-  <opf:spine>
-    <opf:itemref idref="header" linear="yes"/>
-    <opf:itemref idref="section0" linear="yes"/>
-  </opf:spine>
-</opf:package>`;
+// OPF-style package listing. `settings` is manifest-only — the spine names just
+// the parts in reading order (header, then the section).
+const CONTENT_HPF =
+  XML_DECL +
+  `<opf:package ${HWPML_NS} version="" unique-identifier="" id="">` +
+  `<opf:metadata><opf:title/><opf:language>ko</opf:language></opf:metadata>` +
+  `<opf:manifest>` +
+  `<opf:item id="header" href="Contents/header.xml" media-type="application/xml"/>` +
+  `<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>` +
+  `<opf:item id="settings" href="settings.xml" media-type="application/xml"/>` +
+  `</opf:manifest>` +
+  `<opf:spine><opf:itemref idref="header"/><opf:itemref idref="section0"/></opf:spine>` +
+  `</opf:package>`;
 
-const SETTINGS_XML = `${XML_DECL}
-<ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0">
-  <ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/>
-</ha:HWPApplicationSetting>`;
+const SETTINGS_XML =
+  XML_DECL +
+  `<ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0">` +
+  `<ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/>` +
+  `</ha:HWPApplicationSetting>`;
 
-/** One fontface per language slot — 한글 expects all seven to be present. */
+/** One fontface per language slot — the format expects all seven, and
+ *  `itemCnt` on the wrapper is fixed at 7 accordingly. */
 function fontfaces(): string {
   const langs = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"];
-  const face = (lang: string) => `      <hh:fontface lang="${lang}" fontCnt="1">
-        <hh:font id="0" face="함초롬바탕" type="TTF" isEmbedded="0">
-          <hh:typeInfo familyType="FCAT_GOTHIC" weight="8" proportion="4" contrast="0" strokeVariation="1" armStyle="1" letterform="1" midline="1" xHeight="1"/>
-        </hh:font>
-      </hh:fontface>`;
-  return `    <hh:fontfaces itemCnt="7">
-${langs.map(face).join("\n")}
-    </hh:fontfaces>`;
+  const face = (lang: string) =>
+    `<hh:fontface lang="${lang}" fontCnt="1">` +
+    `<hh:font id="0" face="함초롬바탕" type="TTF" isEmbedded="0">` +
+    `<hh:typeInfo familyType="FCAT_GOTHIC" weight="8" proportion="4" contrast="0" strokeVariation="1" armStyle="1" letterform="1" midline="1" xHeight="1"/>` +
+    `</hh:font>` +
+    `</hh:fontface>`;
+  return `<hh:fontfaces itemCnt="7">${langs.map(face).join("")}</hh:fontfaces>`;
 }
 
-/** Character shapes: body text plus heading sizes and bold/italic variants.
+/** Two border fills, as a blank 한글 document defines them: id 1 (page border)
+ *  and id 2 (the fill every charPr/paraPr references). Both must exist. */
+function borderFills(): string {
+  const fill = (id: number) =>
+    `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">` +
+    `<hh:slash type="NONE" Crooked="0" isCounter="0"/>` +
+    `<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>` +
+    `<hh:leftBorder type="NONE" width="0.1 mm" color="#000000"/>` +
+    `<hh:rightBorder type="NONE" width="0.1 mm" color="#000000"/>` +
+    `<hh:topBorder type="NONE" width="0.1 mm" color="#000000"/>` +
+    `<hh:bottomBorder type="NONE" width="0.1 mm" color="#000000"/>` +
+    `<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>` +
+    `</hh:borderFill>`;
+  return `<hh:borderFills itemCnt="2">${fill(1)}${fill(2)}</hh:borderFills>`;
+}
+
+/** Character shapes: body text plus heading sizes and inline emphasis variants.
  *  `height` is in 1/100 pt, so 1000 = 10 pt. */
 const CHAR_PR = [
   { id: 0, height: 1000, bold: false, italic: false }, // body
@@ -188,137 +213,142 @@ const CHAR_PR = [
 ] as const;
 
 function charProperties(): string {
-  const one = (c: (typeof CHAR_PR)[number]) => `      <hh:charPr id="${c.id}" height="${c.height}" textColor="#000000" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="2">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>
-        <hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>
-        <hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:underline type="NONE" shape="SOLID" color="#000000"/>
-        <hh:strikeout shape="NONE" color="#000000"/>
-        <hh:outline type="NONE"/>
-        <hh:shadow type="NONE" color="#B2B2B2" offsetX="10" offsetY="10"/>${c.bold ? "\n        <hh:bold/>" : ""}${c.italic ? "\n        <hh:italic/>" : ""}
-      </hh:charPr>`;
-  return `    <hh:charProperties itemCnt="${CHAR_PR.length}">
-${CHAR_PR.map(one).join("\n")}
-    </hh:charProperties>`;
+  // Child order matters: font metrics, then the bold/italic flags, then the
+  // decoration elements — the order the reference writer emits.
+  const one = (c: (typeof CHAR_PR)[number]) =>
+    `<hh:charPr id="${c.id}" height="${c.height}" textColor="#000000" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="2">` +
+    `<hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+    `<hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+    `<hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+    `<hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>` +
+    `<hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>` +
+    (c.bold ? `<hh:bold/>` : "") +
+    (c.italic ? `<hh:italic/>` : "") +
+    `<hh:underline type="NONE" shape="SOLID" color="#000000"/>` +
+    `<hh:strikeout shape="NONE" color="#000000"/>` +
+    `<hh:outline type="NONE"/>` +
+    `<hh:shadow type="NONE" color="#B2B2B2" offsetX="10" offsetY="10"/>` +
+    `</hh:charPr>`;
+  return `<hh:charProperties itemCnt="${CHAR_PR.length}">${CHAR_PR.map(one).join("")}</hh:charProperties>`;
 }
 
-/** Two border fills, as a blank 한글 document defines: id 1 (page/table chrome)
- *  and id 2 (the fill charPr/paraPr reference). */
-function borderFills(): string {
-  const fill = (id: number) => `      <hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">
-        <hh:slash type="NONE" Crooked="0" isCounter="0"/>
-        <hh:backSlash type="NONE" Crooked="0" isCounter="0"/>
-        <hh:leftBorder type="NONE" width="0.1 mm" color="#000000"/>
-        <hh:rightBorder type="NONE" width="0.1 mm" color="#000000"/>
-        <hh:topBorder type="NONE" width="0.1 mm" color="#000000"/>
-        <hh:bottomBorder type="NONE" width="0.1 mm" color="#000000"/>
-        <hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>
-      </hh:borderFill>`;
-  return `    <hh:borderFills itemCnt="2">
-${[1, 2].map(fill).join("\n")}
-    </hh:borderFills>`;
+/** The stock outline numbering a blank document carries. Nothing here refers to
+ *  it (list items are plain text in v1), but it keeps the header shaped like the
+ *  reference. `charPrIDRef="4294967295"` is the "inherit" sentinel, not a bug. */
+function numberings(): string {
+  const heads = Array.from(
+    { length: 7 },
+    (_, i) =>
+      `<hh:paraHead start="1" level="${i + 1}" align="LEFT" useInstWidth="1" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="1">^${i + 1}.</hh:paraHead>`,
+  ).join("");
+  return `<hh:numberings itemCnt="1"><hh:numbering id="1" start="0">${heads}</hh:numbering></hh:numberings>`;
 }
 
 /** Paragraph shape: one justified body layout shared by every paragraph. */
 function paraProperties(): string {
-  return `    <hh:paraProperties itemCnt="1">
-      <hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="JUSTIFY" vertical="BASELINE"/>
-        <hh:heading type="NONE" idRef="0" level="0"/>
-        <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>
-        <hh:autoSpacing eAsianEng="0" eAsianNum="0"/>
-        <hh:margin>
-          <hc:intent value="0" unit="HWPUNIT"/>
-          <hc:left value="0" unit="HWPUNIT"/>
-          <hc:right value="0" unit="HWPUNIT"/>
-          <hc:prev value="0" unit="HWPUNIT"/>
-          <hc:next value="0" unit="HWPUNIT"/>
-        </hh:margin>
-        <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
-        <hh:border borderFillIDRef="2" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-    </hh:paraProperties>`;
+  return (
+    `<hh:paraProperties itemCnt="1">` +
+    `<hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">` +
+    `<hh:align horizontal="JUSTIFY" vertical="BASELINE"/>` +
+    `<hh:heading type="NONE" idRef="0" level="0"/>` +
+    `<hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>` +
+    `<hh:autoSpacing eAsianEng="0" eAsianNum="0"/>` +
+    `<hh:margin>` +
+    `<hc:intent value="0" unit="HWPUNIT"/>` +
+    `<hc:left value="0" unit="HWPUNIT"/>` +
+    `<hc:right value="0" unit="HWPUNIT"/>` +
+    `<hc:prev value="0" unit="HWPUNIT"/>` +
+    `<hc:next value="0" unit="HWPUNIT"/>` +
+    `</hh:margin>` +
+    `<hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>` +
+    `<hh:border borderFillIDRef="2" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>` +
+    `</hh:paraPr>` +
+    `</hh:paraProperties>`
+  );
 }
 
-/** Style table: body (바탕글) plus the three heading styles the mapper emits. */
+/** Style table: body (바탕글/Normal, id 0) plus the three outline levels the
+ *  heading mapper targets — named like 한글's own built-ins. */
 const STYLES = [
-  { id: 0, name: "바탕글", engName: "Normal", charPr: 0 },
-  { id: 1, name: "제목 1", engName: "Heading 1", charPr: 1 },
-  { id: 2, name: "제목 2", engName: "Heading 2", charPr: 2 },
-  { id: 3, name: "제목 3", engName: "Heading 3", charPr: 3 },
+  { id: 0, name: "바탕글", engName: "Normal", charPr: 0, next: 0 },
+  { id: 1, name: "개요 1", engName: "Outline 1", charPr: 1, next: 1 },
+  { id: 2, name: "개요 2", engName: "Outline 2", charPr: 2, next: 2 },
+  { id: 3, name: "개요 3", engName: "Outline 3", charPr: 3, next: 3 },
 ] as const;
 
 function styles(): string {
   const one = (s: (typeof STYLES)[number]) =>
-    `      <hh:style id="${s.id}" type="PARA" name="${s.name}" engName="${s.engName}" paraPrIDRef="0" charPrIDRef="${s.charPr}" nextStyleIDRef="0" langID="1042" lockForm="0"/>`;
-  return `    <hh:styles itemCnt="${STYLES.length}">
-${STYLES.map(one).join("\n")}
-    </hh:styles>`;
+    `<hh:style id="${s.id}" type="PARA" name="${s.name}" engName="${s.engName}" paraPrIDRef="0" charPrIDRef="${s.charPr}" nextStyleIDRef="${s.next}" langID="1042" lockForm="0"/>`;
+  return `<hh:styles itemCnt="${STYLES.length}">${STYLES.map(one).join("")}</hh:styles>`;
 }
 
 function headerXml(): string {
-  return `${XML_DECL}
-<hh:head xmlns:hh="${NS.hh}" xmlns:hp="${NS.hp}" xmlns:hs="${NS.hs}" xmlns:hc="${NS.hc}" version="1.4" secCnt="1">
-  <hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>
-  <hh:refList>
-${fontfaces()}
-${borderFills()}
-${charProperties()}
-    <hh:tabProperties itemCnt="1">
-      <hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/>
-    </hh:tabProperties>
-${paraProperties()}
-${styles()}
-  </hh:refList>
-</hh:head>`;
+  // refList child order is fixed: fontfaces → borderFills → charProperties →
+  // tabProperties → numberings → paraProperties → styles.
+  return (
+    XML_DECL +
+    `<hh:head ${HWPML_NS} version="1.4" secCnt="1">` +
+    `<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>` +
+    `<hh:refList>` +
+    fontfaces() +
+    borderFills() +
+    charProperties() +
+    `<hh:tabProperties itemCnt="2"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/><hh:tabPr id="1" autoTabLeft="1" autoTabRight="0"/></hh:tabProperties>` +
+    numberings() +
+    paraProperties() +
+    styles() +
+    `</hh:refList>` +
+    `<hh:compatibleDocument targetProgram="HWP201X"><hh:layoutCompatibility/></hh:compatibleDocument>` +
+    `<hh:docOption><hh:linkinfo path="" pageInherit="0" footnoteInherit="0"/></hh:docOption>` +
+    // `trackchageConfig` (sic) — another misspelling the format itself carries.
+    `<hh:trackchageConfig flags="56"/>` +
+    `</hh:head>`
+  );
 }
 
 /** Page setup (A4 portrait, standard margins, single column) that rides in the
  *  first paragraph's first run — 한글 reads the section geometry from here. */
-const SEC_PR = `<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">
-        <hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0" strtnum="0"/>
-        <hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>
-        <hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>
-        <hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>
-        <hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY">
-          <hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5668" bottom="4252"/>
-        </hp:pagePr>
-        <hp:footNotePr>
-          <hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>
-          <hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>
-          <hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>
-          <hp:numbering type="CONTINUOUS" newNum="1"/>
-          <hp:placement place="EACH_COLUMN" beneathText="0"/>
-        </hp:footNotePr>
-        <hp:endNotePr>
-          <hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>
-          <hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="#000000"/>
-          <hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>
-          <hp:numbering type="CONTINUOUS" newNum="1"/>
-          <hp:placement place="END_OF_DOCUMENT" beneathText="0"/>
-        </hp:endNotePr>
-        <hp:pageBorderFill type="BOTH" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER">
-          <hp:offset left="1417" right="1417" top="1417" bottom="1417"/>
-        </hp:pageBorderFill>
-      </hp:secPr>
-      <hp:ctrl>
-        <hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/>
-      </hp:ctrl>`;
+const SEC_PR =
+  `<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="1" memoShapeIDRef="0" textVerticalWidthHead="0">` +
+  `<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/>` +
+  `<hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>` +
+  `<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>` +
+  `<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>` +
+  `<hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY">` +
+  `<hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5668" bottom="4252"/>` +
+  `</hp:pagePr>` +
+  `<hp:footNotePr>` +
+  `<hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>` +
+  `<hp:noteLine length="-1" type="SOLID" width="0.12 mm" color="#000000"/>` +
+  `<hp:noteSpacing betweenNotes="283" belowLine="567" aboveLine="850"/>` +
+  `<hp:numbering type="CONTINUOUS" newNum="1"/>` +
+  `<hp:placement place="EACH_COLUMN" beneathText="0"/>` +
+  `</hp:footNotePr>` +
+  `<hp:endNotePr>` +
+  `<hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/>` +
+  `<hp:noteLine length="14692344" type="SOLID" width="0.12 mm" color="#000000"/>` +
+  `<hp:noteSpacing betweenNotes="0" belowLine="567" aboveLine="850"/>` +
+  `<hp:numbering type="CONTINUOUS" newNum="1"/>` +
+  `<hp:placement place="END_OF_DOCUMENT" beneathText="0"/>` +
+  `</hp:endNotePr>` +
+  `<hp:pageBorderFill type="BOTH" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>` +
+  `<hp:pageBorderFill type="EVEN" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>` +
+  `<hp:pageBorderFill type="ODD" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>` +
+  `</hp:secPr>` +
+  `<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl>`;
 
 // --- markdown → OWPML body ------------------------------------------------------
 
-/** A run of body text with an optional inline emphasis charPr. */
+/** A run of body text with the charPr it renders in. */
 interface Run {
   text: string;
   charPr: number;
 }
 
-/** A block-level unit: one output `hp:p` (styled) — tables degrade to rows. */
+/** A block-level unit: one output `hp:p`. */
 interface Block {
   runs: Run[];
-  /** Style/charPr pair: 0 body, 1–3 headings. */
+  /** Style id: 0 body, 1–3 the outline (heading) styles. */
   style: number;
 }
 
@@ -363,21 +393,20 @@ function tableCells(line: string): string[] {
 }
 
 /**
- * Line-oriented markdown → blocks. Headings 1–3 map to the heading styles;
+ * Line-oriented markdown → blocks. Headings 1–3 map to the outline styles;
  * list items keep their marker as literal text ("• " / "1. ") — real OWPML
  * numbering is out of scope for v1. Table rows collapse to "cell | cell"
  * paragraphs: plain but guaranteed openable.
  */
 function markdownToBlocks(content: string): Block[] {
   const blocks: Block[] = [];
-  const lines = content.split("\n");
-  for (const raw of lines) {
+  for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+$/, "");
     if (!line.trim()) continue;
 
     const heading = line.match(/^(#{1,3})\s+(.*)$/);
     if (heading) {
-      // Heading text keeps its charPr from the style — inline markers are shed.
+      // Heading text renders in the style's charPr — inline markers are shed.
       const text = heading[2].replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
       blocks.push({ runs: [{ text, charPr: heading[1].length }], style: heading[1].length });
       continue;
@@ -407,33 +436,27 @@ function markdownToBlocks(content: string): Block[] {
   return blocks.length ? blocks : [{ runs: [{ text: "", charPr: 0 }], style: 0 }];
 }
 
-/** Serialize one paragraph. The first paragraph of the section carries the
- *  section properties (page setup) in its first run, as 한글 itself writes. */
+/** Serialize one paragraph, markup kept tight (no whitespace-only text nodes).
+ *  The section's first run carries the page setup, as 한글 itself writes it. */
 function paragraphXml(block: Block, index: number): string {
-  const first = index === 0;
   const runs = block.runs
-    .map((r, i) => {
-      const prefix = first && i === 0 ? `${SEC_PR}\n      ` : "";
-      return `    <hp:run charPrIDRef="${r.charPr}">
-      ${prefix}<hp:t>${escapeXml(r.text)}</hp:t>
-    </hp:run>`;
-    })
-    .join("\n");
-  // A lineseg is 한글's cached layout for the line; a nominal one is enough —
-  // the application relays out on open.
-  return `  <hp:p id="${index + 1}" paraPrIDRef="0" styleIDRef="${block.style}" pageBreak="0" columnBreak="0" merged="0">
-${runs}
-    <hp:linesegarray>
-      <hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="42520" flags="393216"/>
-    </hp:linesegarray>
-  </hp:p>`;
+    .map(
+      (r, i) =>
+        `<hp:run charPrIDRef="${r.charPr}">${index === 0 && i === 0 ? SEC_PR : ""}<hp:t>${escapeXml(r.text)}</hp:t></hp:run>`,
+    )
+    .join("");
+  // The lineseg is 한글's cached line layout; a nominal one is enough — the
+  // application re-lays out on open.
+  return (
+    `<hp:p id="${index}" paraPrIDRef="0" styleIDRef="${block.style}" pageBreak="0" columnBreak="0" merged="0">` +
+    runs +
+    `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray>` +
+    `</hp:p>`
+  );
 }
 
 function sectionXml(blocks: Block[]): string {
-  return `${XML_DECL}
-<hs:sec xmlns:hs="${NS.hs}" xmlns:hp="${NS.hp}" xmlns:hc="${NS.hc}">
-${blocks.map(paragraphXml).join("\n")}
-</hs:sec>`;
+  return XML_DECL + `<hs:sec ${HWPML_NS}>` + blocks.map(paragraphXml).join("") + `</hs:sec>`;
 }
 
 // --- entry point ----------------------------------------------------------------

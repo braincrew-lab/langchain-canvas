@@ -72,6 +72,21 @@ describe("documentToHwpx container", () => {
     const hpf = new TextDecoder().decode(entries.get("Contents/content.hpf"));
     expect(hpf).toContain('href="Contents/section0.xml"');
   });
+
+  it("emits well-formed XML in every part", async () => {
+    // The round trip only parses section0.xml — run the rest through DOMParser
+    // too, so a malformed header/manifest can't slip out unnoticed.
+    const entries = await readZip(await build("# 제목\n\n**본문** & <검증>"));
+    const dec = new TextDecoder();
+    for (const name of [...entries.keys()].filter((n) => n !== "mimetype")) {
+      const doc = new DOMParser().parseFromString(dec.decode(entries.get(name)), "application/xml");
+      expect(doc.querySelector("parsererror"), name).toBeNull();
+    }
+    // Reference-table invariants the body depends on: borderFills 1 and 2.
+    const header = dec.decode(entries.get("Contents/header.xml"));
+    expect(header).toContain('<hh:borderFill id="1"');
+    expect(header).toContain('<hh:borderFill id="2"');
+  });
 });
 
 describe("documentToHwpx round trip", () => {

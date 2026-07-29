@@ -230,4 +230,51 @@ const pdf: Scenario = {
   ],
 };
 
-export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides, pdf];
+
+// --- hwp: a Korean document, as imported from .hwp/.hwpx -------------------------
+
+const HWP_MARKDOWN = `# 사업 수행 계획서
+
+## 1. 개요
+
+본 문서는 대화형 에이전트 빌더 구축 사업의 수행 계획을 정리한 것입니다.
+\`.hwp\`(한글 5.x 바이너리)와 \`.hwpx\`(OWPML) 파일을 캔버스에 끌어다 놓으면
+이 문서처럼 편집 가능한 문서 아티팩트로 열립니다.
+
+## 2. 추진 일정
+
+| 단계 | 기간 | 산출물 |
+| --- | --- | --- |
+| 착수 | 2026-07 | 사업수행계획서 |
+| 분석/설계 | 2026-07 ~ 2026-08 | 요구사항 정의서 |
+| 구축 | 2026-08 ~ 2026-11 | 기능 구현 |
+| 검수 | 2026-12 | 검수확인서 |
+
+## 3. 내보내기
+
+편집한 문서는 **내보내기 → 한글 (HWPX)** 로 다시 한글 파일로 저장할 수 있습니다.`;
+
+const hwp: Scenario = {
+  id: "hwp",
+  title: "한글 (HWP)",
+  description: "A Korean HWP/HWPX document imported onto the canvas — drag any .hwp/.hwpx file to open it; export back via 한글 (HWPX).",
+  events: [
+    { type: "message.delta", messageId: "m-hwp", text: "한글 파일을 문서로 열었습니다." },
+    {
+      type: "canvas.create",
+      artifact: {
+        id: "hwp-doc",
+        type: "document",
+        title: "사업 수행 계획서.hwpx",
+        version: 1,
+        status: "complete",
+        meta: { kind: "doc", source: "hwpx" },
+        data: { format: "markdown", content: HWP_MARKDOWN },
+      },
+    },
+    { type: "canvas.status", id: "hwp-doc", status: "complete" },
+    { type: "done" },
+  ],
+};
+
+export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides, pdf, hwp];

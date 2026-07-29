@@ -50,6 +50,7 @@ const LABELS: Record<string, string> = {
   table: "Excel",
   slides: "PowerPoint",
   pdf: "PDF",
+  hwp: "한글 (HWP)",
 };
 
 /** Per-scenario docs: the Python call, the `data` schema, and its properties. */
@@ -157,7 +158,29 @@ type PdfData = {
       { name: "filename", type: "string", required: false, desc: "Original filename — used when the viewer's Download button saves the file." },
     ],
   },
+  hwp: {
+    type: "document",
+    pyCall: `# 파일 임포트: .hwp / .hwpx 를 드롭하면 문서 아티팩트로 열립니다.
+# 에이전트가 직접 만들 때는 document 로 보냅니다:
+doc = canvas.open_document(title="사업 수행 계획서")
+doc.append("# 개요\\n본 문서는 …")
+doc.complete()`,
+    schema: `// 한글 파일은 "document" 아티팩트로 들어옵니다.
+// 임포트 (의존성 0):
+//   .hwpx (OWPML)  → 문단·표·이미지·제목 레벨 → markdown
+//   .hwp  (5.x 바이너리) → CFB 파서로 본문·표 추출 → markdown
+// 내보내기: Export → 한글 (HWPX) — 한글 2014+ 에서 열립니다.
+type DocumentData = {
+  format: "markdown";
+  content: string;
+};`,
+    props: [
+      { name: "format", type: '"markdown"', required: true, desc: "본문 형식 — 항상 markdown." },
+      { name: "content", type: "string", required: true, desc: "문서 본문. 한글 파일을 드롭하면 문단/표/이미지가 markdown 으로 변환되어 여기 담깁니다. 암호·배포용(DRM)·한글 4.x 이하 파일은 한/영 안내와 함께 거부됩니다." },
+    ],
+  },
 };
+
 
 export default function ExplorerPage() {
   const { play } = useCanvasReplay();
