@@ -71,6 +71,30 @@ describe("reduceCanvas", () => {
     s = reduceCanvas(s, { type: "canvas.append", id: "a1", path: "nope.deep.path", text: "x" });
     expect(s.artifacts.a1.data).toEqual(before);
   });
+
+  it("canvas.commit promotes the current state to a described version snapshot", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "edited" } });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Manual edit: 1 change", revision: "v2" });
+
+    expect(s.history.a1).toHaveLength(2);
+    const latest = s.history.a1[1];
+    expect(latest.version).toBe(2);
+    expect(latest.meta?.commitDescription).toBe("Manual edit: 1 change");
+    expect(latest.meta?.revision).toBe("v2");
+    expect(s.artifacts.a1.version).toBe(2);
+  });
+
+  it("canvas.commit on an unknown id is a no-op", () => {
+    const s0 = emptyCanvasState();
+    expect(reduceCanvas(s0, { type: "canvas.commit", id: "ghost", description: "x" })).toBe(s0);
+  });
+
+  it("an unknown canvas.* event from a newer server never wipes state", () => {
+    const s1 = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    const unknown = { type: "canvas.totally_new", id: "a1" } as unknown as Parameters<typeof reduceCanvas>[1];
+    expect(reduceCanvas(s1, unknown)).toBe(s1);
+  });
 });
 
 describe("mergePatch (RFC 7386)", () => {

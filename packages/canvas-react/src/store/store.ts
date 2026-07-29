@@ -63,6 +63,9 @@ export interface CanvasStore {
   undoStack: CanvasState[];
   redoStack: CanvasState[];
 
+  /** Bumped on every user-initiated edit — the save hook's dirty signal. */
+  userEditSeq: number;
+
   // actions
   applyEvent: (event: StreamEvent) => void;
   /** Apply a batch of events in a single store write (one re-render per frame). */
@@ -90,6 +93,7 @@ const initialState = () => ({
   iframeCommand: null as IframeCommand | null,
   undoStack: [] as CanvasState[],
   redoStack: [] as CanvasState[],
+  userEditSeq: 0,
 });
 
 /** Create an isolated canvas store. */
@@ -103,7 +107,12 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
     applyUserEvent: (event) =>
       set((state) => {
         const undoStack = [...state.undoStack, state.canvas].slice(-UNDO_LIMIT);
-        return { ...foldEvent(state, event), undoStack, redoStack: [] };
+        return {
+          ...foldEvent(state, event),
+          undoStack,
+          redoStack: [],
+          userEditSeq: state.userEditSeq + 1,
+        };
       }),
     undo: () =>
       set((state) => {

@@ -143,8 +143,74 @@
 .cv-undo button:hover:not(:disabled) { background: var(--cv-surface); }
 .cv-undo button:disabled { opacity: 0.35; cursor: default; }
 
-.cv-versions { display: flex; align-items: center; gap: 6px; }
-.cv-versions__label { font-size: 12px; color: var(--cv-muted); font-variant-numeric: tabular-nums; }
+.cv-versions { position: relative; display: flex; align-items: center; gap: 6px; }
+.cv-versions__label {
+  font-size: 12px;
+  color: var(--cv-muted);
+  font-variant-numeric: tabular-nums;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.cv-versions__label:hover { background: var(--cv-surface); color: var(--cv-text); }
+.cv-versions__list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 220px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--cv-border);
+  border-radius: 10px;
+  background: var(--cv-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.cv-versions__list button {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--cv-text);
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cv-versions__list button:hover { background: var(--cv-bg); }
+.cv-versions__list button.is-current { background: var(--cv-bg); font-weight: 600; }
+.cv-versions__v { color: var(--cv-muted); font-variant-numeric: tabular-nums; flex: none; }
+.cv-versions__desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Historical snapshot view: content is visible and scrollable but not editable
+   (children lose hit-testing; the scroll container itself still gets the wheel). */
+.cv-history-banner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--cv-muted);
+  background: var(--cv-surface);
+  border-bottom: 1px solid var(--cv-border);
+}
+.cv-history-banner button {
+  border: none;
+  background: none;
+  color: var(--cv-accent, #4f46e5);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.cv-body--history > * { pointer-events: none; }
 .cv-versions__nav {
   width: 24px;
   height: 24px;
