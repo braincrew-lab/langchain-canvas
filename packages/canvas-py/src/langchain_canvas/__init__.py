@@ -6,23 +6,31 @@ Public surface:
 
 * ``Canvas``               — the API tools use to open/stream artifacts.
 * ``create_canvas_agent``  — ``create_agent`` plus canvas guidance.
+* ``create_canvas_tools``  — the standard persistent-canvas tools
+  (``read/write/edit/list_canvas``) bound to a ``CanvasStore``.
 * ``sse_from_agent``       — turn an agent run into a Canvas Wire Protocol SSE stream.
 
 The wire types live under ``langchain_canvas.protocol`` and mirror the TypeScript
-definitions in ``@braincrew-lab/langchain-canvas``.
+definitions in ``@braincrew-lab/langchain-canvas``. Persistence backends live
+under ``langchain_canvas.store``.
 """
 
 from .agent import create_canvas_agent
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
+from .store import CanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
+from .tools import create_canvas_tools
 
 __all__ = [
     "Canvas",
+    "CanvasStore",
     "DocumentHandle",
     "ChartHandle",
+    "InMemoryCanvasStore",
     "TableHandle",
     "SlidesHandle",
     "create_canvas_agent",
+    "create_canvas_tools",
     "sse_from_agent",
 ]
 

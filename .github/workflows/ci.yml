@@ -20,7 +20,7 @@ jobs:
       # findings (mostly auto-fixable) that deserve their own cleanup PR.
       # Widen to `src tests` once that lands.
       - name: Lint
-        run: uv run --extra dev ruff check src/langchain_canvas/store tests
+        run: uv run --extra dev ruff check src/langchain_canvas/store src/langchain_canvas/tools.py tests
 
       - name: Typecheck
         run: uv run --extra dev mypy src
