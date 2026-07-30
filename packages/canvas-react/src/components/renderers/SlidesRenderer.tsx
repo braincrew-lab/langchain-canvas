@@ -305,7 +305,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   el.type === "text" ? (
                     <span
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: `${((el.fontSize ?? 24) / 12.8).toFixed(3)}cqw`, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap", ...rotateStyle(el) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: `${((el.fontSize ?? 24) / 12.8).toFixed(3)}cqw`, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "visible", whiteSpace: "pre-wrap", ...rotateStyle(el) }}
                     >
                       {el.text}
                     </span>

@@ -768,7 +768,9 @@
 .cv-free__guide--v { top: 0; bottom: 0; width: 1px; }
 .cv-free__guide--h { left: 0; right: 0; height: 1px; }
 .cv-free__el.is-selected { outline: 1.5px solid var(--cv-accent); outline-offset: 1px; }
-.cv-free__text { width: 100%; height: 100%; outline: none; overflow: hidden; line-height: 1.3; }
+/* PowerPoint semantics: a text box is a layout hint, not a clip — text that
+   runs long paints past the box instead of vanishing mid-word. */
+.cv-free__text { width: 100%; min-height: 100%; outline: none; overflow: visible; line-height: 1.2; }
 .cv-free__img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .cv-free__resize {
   position: absolute; right: -5px; bottom: -5px; width: 12px; height: 12px;

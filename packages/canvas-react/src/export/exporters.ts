@@ -192,8 +192,13 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
   const PptxGenJS = (await loadOptional("pptxgenjs", () => import("pptxgenjs"))).default;
   const pptx = new PptxGenJS();
 
-  const W = 10;
-  const H = 5.625;
+  // PowerPoint's own 16:9 page (13.333in × 7.5in at 96 dpi = the editor's
+  // 1280×720 design), so px → pt (×0.75) round-trips exactly — a 10in layout
+  // silently inflated font sizes by 4/3 on re-import.
+  const W = 13.333;
+  const H = 7.5;
+  pptx.defineLayout({ name: "CV_16x9", width: W, height: H });
+  pptx.layout = "CV_16x9";
   for (const slide of data.slides) {
     const s = pptx.addSlide();
     // Only a solid hex background maps to a pptx slide fill; url()/gradient
@@ -268,7 +273,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           if (el.type === "text") {
             // box is numeric; color/align are escaped individually — the composed
             // style string is then safe to place in the attribute as-is.
-            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")};white-space:pre-wrap`;
+            const style = `${box};font-size:${el.fontSize ?? 24}px;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")};white-space:pre-wrap`;
             return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
           }
           if (el.type === "shape") {
@@ -295,7 +300,10 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     * { margin: 0; box-sizing: border-box; }
     body { font-family: Inter, Arial, sans-serif; }
     .slide { position: relative; width: 1280px; height: 720px; overflow: hidden; page-break-after: always; }
-    .el { position: absolute; overflow: hidden; line-height: 1.25; }
+    .el { position: absolute; overflow: hidden; line-height: 1.2; }
+    /* PowerPoint lets text paint past its box — only shapes/images clip. */
+    div.el { overflow: visible; }
+    img.el { overflow: hidden; }
     img.el { object-fit: contain; }
   </style></head><body>${pages}</body></html>`;
 }

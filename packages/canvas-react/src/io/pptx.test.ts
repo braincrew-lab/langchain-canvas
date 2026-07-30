@@ -379,15 +379,15 @@ describe("pptxToSlides", () => {
     expect(els[0]).toMatchObject({ type: "shape", shape: "rect", fill: "#808080" });
   });
 
-  it("shrinks overflowing un-autofitted text to fit its box (floored at 60%)", async () => {
+  it("shrinks overflowing un-autofitted text to fit its box (floored at 65%)", async () => {
     const sp =
       `<p:sp><p:nvSpPr><p:cNvPr id="2" name="box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
       `<p:spPr><a:xfrm><a:off x="1219200" y="685800"/><a:ext cx="6096000" cy="342900"/></a:xfrm></p:spPr>` +
       `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr sz="1800"/><a:t>${"x".repeat(200)}</a:t></a:r></a:p></p:txBody></p:sp>`;
     const { slides } = await pptxToSlides(makePptx({ slides: [slidePart(sp)] }));
     // 18pt → 24px, ~5 estimated lines × 1.3 line-height ≫ a 5%-tall box →
-    // clamped to the 60% floor: round(24 × 0.6) = 14.
-    expect(slides[0].elements?.[0].fontSize).toBe(14);
+    // clamped to the 65% floor: round(24 × 0.65) = 16.
+    expect(slides[0].elements?.[0].fontSize).toBe(16);
   });
 
   it("rejects a ZIP without any slides", async () => {

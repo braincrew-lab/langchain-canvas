@@ -315,7 +315,15 @@ function solidFillColor(el: Element | null, colors: ColorScheme): string | undef
   if (!fill) return undefined;
   for (const c of Array.from(fill.children)) {
     const hex = colors.resolve(c);
-    if (hex) return hex;
+    if (!hex) continue;
+    // `a:alpha` (thousandths of a percent) — a 30% highlight rendered opaque
+    // becomes a solid blob over the content, so carry it as #RRGGBBAA.
+    const alphaEl = childOf(c, "alpha");
+    const alpha = alphaEl ? Number(attrOf(alphaEl, "val")) : NaN;
+    if (Number.isFinite(alpha) && alpha >= 0 && alpha < 100000) {
+      return hex + Math.round((alpha / 100000) * 255).toString(16).padStart(2, "0").toUpperCase();
+    }
+    return hex;
   }
   return undefined;
 }
@@ -477,6 +485,12 @@ function toPercentBox(xfrm: Xfrm, map: GroupMap, ctx: SlideContext) {
     w: pct(xfrm.cx * map.sx, ctx.slideCx),
     h: pct(xfrm.cy * map.sy, ctx.slideCy),
   };
+}
+
+/** Normalize degrees to 0–359, dropping 0 (no rotation stored). */
+function normalizedRotation(deg: number): number | undefined {
+  const n = Math.round(((deg % 360) + 360) % 360 * 100) / 100;
+  return n || undefined;
 }
 
 /** Rotation in degrees from an xfrm's 60000ths-of-a-degree `rot`, or undefined. */
@@ -674,7 +688,6 @@ const MAX_SPLIT_PARAGRAPHS = 8;
  *  (1 em) that only has to rank/bound paragraphs, not typeset them. */
 const DESIGN_WIDTH_PX = 1280;
 const DESIGN_HEIGHT_PX = 720;
-const AVG_CHAR_EM = 0.6;
 
 /** Design-px stand-in for paragraphs whose size never resolves (≈ the
  *  renderer's 18 pt default). */
@@ -683,18 +696,30 @@ const DEFAULT_PARA_PX = 24;
 /** Overflow guard: our text wraps wider than PowerPoint's (especially Korean),
  *  so text authored to exactly fit clips at the box bottom. When a box has no
  *  explicit autofit and the estimated wrapped height (estimated lines × size
- *  × 1.3 line-height) exceeds the box by >15%, the emitted size shrinks to
- *  fit — floored at 60% of the original. */
+ *  × 1.3 line-height) exceeds the box by >5%, the emitted size shrinks to
+ *  fit — floored at 65% of the original. */
 const LINE_HEIGHT = 1.3;
-const OVERFLOW_TOLERANCE = 1.15;
-const OVERFLOW_MIN_SCALE = 0.6;
+const OVERFLOW_TOLERANCE = 1.05;
+const OVERFLOW_MIN_SCALE = 0.65;
+
+/** Per-character advance in em: CJK glyphs are full-width (≈1 em), everything
+ *  else averages ≈0.55 em — a flat Latin average badly under-counted Korean
+ *  text, so overflowing 한글 boxes never triggered the guard. */
+function textWidthEm(text: string): number {
+  let em = 0;
+  for (const ch of text) {
+    em += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? 1 : 0.55;
+  }
+  return em;
+}
 
 /** Estimated rendered line count of one text block in a box `boxWPct` wide. */
 function estimatedLines(text: string, sizePx: number, boxWPct: number): number {
   const widthPx = Math.max(1, (boxWPct / 100) * DESIGN_WIDTH_PX);
-  const perLine = Math.max(1, Math.floor(widthPx / (sizePx * AVG_CHAR_EM)));
   let lines = 0;
-  for (const seg of text.split("\n")) lines += Math.max(1, Math.ceil(seg.length / perLine));
+  for (const seg of text.split("\n")) {
+    lines += Math.max(1, Math.ceil((textWidthEm(seg) * sizePx) / widthPx));
+  }
   return lines;
 }
 
@@ -738,7 +763,10 @@ function textElements(sp: Element, txBody: Element, map: GroupMap, ctx: SlideCon
   // Only un-autofitted boxes get the wrap-overflow guard; autofitted ones
   // already carry PowerPoint's own shrink factor.
   const guard = (sizePx: number, text: string, hPct: number) =>
-    autofit ? sizePx : fitFontPx(sizePx, text, box.w, hPct);
+    // The guard runs regardless of autofit: PPT's own fontScale is already
+    // applied, but our Korean wrap is wider than PowerPoint's, so even
+    // autofitted boxes can overflow the model.
+    fitFontPx(sizePx, text, box.w, hPct);
 
   const paras = paragraphsOf(txBody, sp, ctx).map((p) => ({
     ...p,
@@ -842,6 +870,31 @@ function shapeElement(sp: Element, map: GroupMap, ctx: SlideContext, isConnector
   if (fill) el.fill = fill;
   if (prst === "roundRect") el.radius = 8;
   el.rotate = rotationOf(xfrm);
+
+  // A connector whose bounding box is fat in BOTH axes is a diagonal line —
+  // the model paints a "line" as its full box, which turned red annotation
+  // arrows into giant slabs. Rewrite it as a thin rule rotated corner-to-corner
+  // (flipH/flipV pick which diagonal), centered in the original box.
+  // Axis-aligned connectors keep their axis but are normalized to a hairline —
+  // PPT stores an arrow's clickable bounds, not its stroke width.
+  if (shape === "line" && !(el.w > 3 && el.h > 5)) {
+    if (el.h >= el.w && el.w > 1.2) { el.x = Math.round((el.x + el.w / 2 - 0.3) * 100) / 100; el.w = 0.6; }
+    else if (el.w > el.h && el.h > 1.2) { el.y = Math.round((el.y + el.h / 2 - 0.3) * 100) / 100; el.h = 0.6; }
+  }
+  if (shape === "line" && el.w > 3 && el.h > 5) {
+    const wPx = (el.w / 100) * 1280;
+    const hPx = (el.h / 100) * 720;
+    const lenPct = (Math.hypot(wPx, hPx) / 1280) * 100;
+    const flip = (attrOf(childOf(spPr, "xfrm") ?? spPr, "flipH") === "1") !== (attrOf(childOf(spPr, "xfrm") ?? spPr, "flipV") === "1");
+    const angle = (Math.atan2(hPx, wPx) * 180) / Math.PI;
+    const cx = el.x + el.w / 2;
+    const cy = el.y + el.h / 2;
+    el.x = Math.round((cx - lenPct / 2) * 100) / 100;
+    el.y = Math.round((cy - 0.3) * 100) / 100;
+    el.w = Math.round(lenPct * 100) / 100;
+    el.h = 0.6;
+    el.rotate = normalizedRotation((el.rotate ?? 0) + (flip ? -angle : angle));
+  }
   return el;
 }
 
