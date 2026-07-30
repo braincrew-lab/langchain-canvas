@@ -630,6 +630,7 @@
   border: 1px solid var(--cv-border);
   border-radius: 5px;
   overflow: hidden;
+  container-type: inline-size;
 }
 .cv-deck__thumb.is-active .cv-deck__thumb-slide { border-color: var(--cv-accent); box-shadow: 0 0 0 1px var(--cv-accent); }
 .cv-deck__thumb-slide b { display: block; margin-bottom: 3px; font-size: 9px; line-height: 1.2; }
@@ -757,7 +758,10 @@
 
 /* blank / free-canvas layout */
 .cv-slide { position: relative; }
-.cv-slide--blank { display: block; padding: 0; }
+.cv-slide--blank { display: block; padding: 0; container-type: inline-size; }
+/* Text on a free slide is sized in cqw (1cqw = 1% of the slide's width), so type
+   scales with the slide exactly like the percent geometry does — the editor,
+   thumbnails, and present mode all show the same proportions at any width. */
 .cv-free { position: absolute; inset: 0; }
 .cv-free__el { position: absolute; box-sizing: border-box; cursor: move; }
 .cv-free__guide { position: absolute; z-index: 6; background: #f43f5e; pointer-events: none; }

@@ -215,14 +215,18 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
         s.addText(el.text ?? "", { ...box, ...spin, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
       } else if (el.type === "shape") {
         const fill = (el.fill ?? "#5b5bd6").replace("#", "");
+        // A fill-less rect/ellipse is a frame (outline only) — mirror the editor.
+        const paint = el.fill
+          ? { fill: { color: fill } }
+          : { fill: { color: "FFFFFF", transparency: 100 }, line: { color: (tc || "1f2328").replace("#", ""), width: 1 } };
         if (el.shape === "line") {
           s.addShape(pptx.ShapeType.line, { ...box, ...spin, line: { color: fill, width: 2 } });
         } else if (el.shape !== "ellipse" && el.radius) {
           // Rounded rect: `rectRadius` is in inches — editor radius is px on a
           // 1280px-wide slide mapped to 10in, so px × 10/1280.
-          s.addShape(pptx.ShapeType.roundRect, { ...box, ...spin, fill: { color: fill }, rectRadius: (el.radius * W) / 1280 });
+          s.addShape(pptx.ShapeType.roundRect, { ...box, ...spin, ...paint, rectRadius: (el.radius * W) / 1280 });
         } else {
-          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, ...spin, fill: { color: fill } });
+          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, ...spin, ...paint });
         }
       } else if (el.src) {
         // `fit: "cover"` maps to pptx cover sizing (fill + crop). A px corner
@@ -268,9 +272,12 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
           }
           if (el.type === "shape") {
-            const fill = escapeAttr(el.fill ?? fg);
             const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : `${Number(el.radius ?? 8)}px`;
-            return `<div class="el" style="${box};background:${fill};border-radius:${radius}"></div>`;
+            // No fill = outline-only frame, matching the editor's shapeStyle.
+            const paint = el.fill || el.shape === "line"
+              ? `background:${escapeAttr(el.fill ?? fg)}`
+              : `background:transparent;border:1.5px solid ${escapeAttr(fg)};box-sizing:border-box`;
+            return `<div class="el" style="${box};${paint};border-radius:${radius}"></div>`;
           }
           const src = safeSrc(el.src);
           const imgStyle = `${box};object-fit:${el.fit === "cover" ? "cover" : "contain"}${el.radius ? `;border-radius:${Number(el.radius)}px` : ""}`;

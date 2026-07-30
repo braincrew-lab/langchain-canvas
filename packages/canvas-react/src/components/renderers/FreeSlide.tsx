@@ -17,10 +17,16 @@ import { useT } from "../../i18n/i18n";
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
 export function shapeStyle(el: SlideElement): CSSProperties {
-  const fill = el.fill ?? "currentColor";
-  if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
-  if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
-  return { width: "100%", height: "100%", background: fill, borderRadius: el.radius ?? 8 };
+  // A line IS its stroke — current text color when no explicit one.
+  if (el.shape === "line") return { width: "100%", height: "100%", background: el.fill ?? "currentColor", borderRadius: 2 };
+  const borderRadius = el.shape === "ellipse" ? "50%" : el.radius ?? 8;
+  // No fill = a frame (PowerPoint's noFill + outline). Painting it solid with
+  // the text color turned imported outline-only shapes into black slabs that
+  // covered the content.
+  if (!el.fill) {
+    return { width: "100%", height: "100%", background: "transparent", border: "1.5px solid currentColor", borderRadius, boxSizing: "border-box" };
+  }
+  return { width: "100%", height: "100%", background: el.fill, borderRadius };
 }
 
 /**
@@ -538,7 +544,9 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
               contentEditable={editingId === el.id}
               suppressContentEditableWarning
               style={{
-                fontSize: el.fontSize ?? 24,
+                // px at the 1280-wide design → cqw, so type scales with the slide
+                // (12.8px of design width per 1cqw).
+                fontSize: `${((el.fontSize ?? 24) / 12.8).toFixed(3)}cqw`,
                 fontWeight: el.bold ? 700 : 400,
                 color: el.color,
                 textAlign: el.align ?? "left",
