@@ -416,14 +416,14 @@
 .cv-sheet-tools__hint { margin-left: auto; font-size: 11px; color: var(--cv-muted); }
 
 /* --- Excel-style ribbon toolbar ----------------------------------------------- */
-/* The Excel model, in the canvas's own language: controls on top, the group's
-   name in small caps underneath, hairline dividers between groups. Buttons are
-   ghosts inside the strip — the ribbon supplies the chrome, not each control. */
+/* The Excel model in the canvas's language: each group is a soft "keycap" tray
+   of ghost controls with the group's name set small underneath — organized at a
+   glance, quiet until hovered. */
 
 .cv-ribbon {
-  align-items: stretch;
-  gap: 0;
-  padding: 6px 10px 4px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px 5px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -432,32 +432,37 @@
   flex-direction: column;
   align-items: center;
   gap: 3px;
-  padding: 0 10px;
 }
-.cv-ribbon__group + .cv-ribbon__group { border-left: 1px solid var(--cv-border); }
-.cv-ribbon__group:first-child { padding-left: 0; }
-.cv-ribbon__items { display: flex; align-items: center; gap: 2px; }
+.cv-ribbon__items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: 9px;
+}
 .cv-ribbon__label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--cv-muted);
   white-space: nowrap;
   user-select: none;
 }
-.cv-ribbon__gap { width: 6px; }
+.cv-ribbon__gap { width: 5px; }
 
-/* ghost controls — the ribbon strip is the chrome */
+/* ghost controls — the tray is the chrome */
 .cv-ribbon .cv-ribbon__btn {
   height: 26px;
   min-width: 26px;
-  padding: 0 8px;
+  padding: 0 9px;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--cv-text);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
@@ -465,18 +470,25 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
+  transition: background 0.12s, box-shadow 0.12s;
 }
-.cv-ribbon .cv-ribbon__btn:hover:not(:disabled) { background: var(--cv-surface); border: none; color: var(--cv-text); }
+.cv-ribbon .cv-ribbon__btn:hover:not(:disabled) {
+  background: var(--cv-bg);
+  border: none;
+  color: var(--cv-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.cv-ribbon .cv-ribbon__btn:active:not(:disabled) { box-shadow: none; }
 .cv-ribbon .cv-ribbon__btn:disabled { opacity: 0.35; cursor: default; }
 .cv-ribbon .cv-ribbon__btn.is-on {
   background: var(--cv-accent-weak);
   color: var(--cv-accent);
-  font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--cv-accent);
 }
-.cv-ribbon .cv-ribbon__btn--icon { padding: 0 5px; }
-.cv-ribbon .cv-ribbon__btn--glyph { font-weight: 700; font-size: 13px; width: 26px; padding: 0; }
+.cv-ribbon .cv-ribbon__btn--icon { padding: 0 6px; }
+.cv-ribbon .cv-ribbon__btn--glyph { font-weight: 800; font-size: 13px; width: 26px; padding: 0; }
 
-/* Excel-style color swatches: glyph over a color bar, native picker underneath */
+/* Excel-style color swatches: glyph over a live color bar, picker underneath */
 .cv-ribbon__swatch {
   position: relative;
   display: inline-flex;
@@ -486,13 +498,14 @@
   gap: 2px;
   width: 26px;
   height: 26px;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
+  transition: background 0.12s, box-shadow 0.12s;
 }
-.cv-ribbon__swatch:hover:not(.is-disabled) { background: var(--cv-surface); }
+.cv-ribbon__swatch:hover:not(.is-disabled) { background: var(--cv-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 .cv-ribbon__swatch.is-disabled { opacity: 0.35; cursor: default; }
-.cv-ribbon__swatch-glyph { font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; }
-.cv-ribbon__swatch-bar { width: 14px; height: 3px; border-radius: 2px; }
+.cv-ribbon__swatch-glyph { font-size: 12px; font-weight: 800; line-height: 1; display: inline-flex; align-items: center; }
+.cv-ribbon__swatch-bar { width: 15px; height: 3.5px; border-radius: 2px; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
 .cv-ribbon__swatch input[type="color"] {
   position: absolute;
   inset: 0;
@@ -505,25 +518,27 @@
 }
 .cv-ribbon__swatch.is-disabled input { pointer-events: none; }
 
-/* selects/inputs inside the ribbon: quiet until focused */
+/* selects/inputs live in the tray as quiet controls */
 .cv-ribbon .cv-ribbon__select,
 .cv-ribbon .cv-ribbon__input {
   height: 26px;
   font: inherit;
   font-size: 12px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  font-weight: 600;
+  padding: 0 7px;
+  border: none;
+  border-radius: 7px;
   background: transparent;
   color: var(--cv-text);
-  max-width: 132px;
+  max-width: 130px;
+  transition: background 0.12s;
 }
 .cv-ribbon .cv-ribbon__select:hover:not(:disabled),
-.cv-ribbon .cv-ribbon__input:hover { background: var(--cv-surface); border-color: transparent; }
+.cv-ribbon .cv-ribbon__input:hover { background: var(--cv-bg); border: none; }
 .cv-ribbon .cv-ribbon__select:focus,
-.cv-ribbon .cv-ribbon__input:focus { outline: none; border-color: var(--cv-accent); background: var(--cv-bg); }
+.cv-ribbon .cv-ribbon__input:focus { outline: none; background: var(--cv-bg); box-shadow: inset 0 0 0 1px var(--cv-accent); }
 .cv-ribbon .cv-ribbon__select:disabled { opacity: 0.35; }
-.cv-ribbon .cv-ribbon__input { width: 96px; }
+.cv-ribbon .cv-ribbon__input { width: 88px; font-weight: 500; }
 .cv-ribbon .cv-ribbon__input::placeholder { color: var(--cv-muted); }
 
 /* selection formatting cluster — reads as one tight group between separators */
