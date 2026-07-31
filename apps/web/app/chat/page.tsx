@@ -1,13 +1,21 @@
 "use client";
 
 /**
- * Chat demo — the same UI a real app would ship, but running in **mock mode**:
- * pressing a prompt plays a scripted response (assistant text + canvas events)
- * with no LLM call, like an OpenAPI "try it out". Point `useCanvasStream` at a
- * real `/api/chat` (drop the `mock` option) to go live.
+ * Chat demo — live against the reference server (`apps/server`, port 8000).
+ * The canvas is persistent per thread: on load the stored history is replayed
+ * (hydration), and hand edits are saved back as described commits. Scripted
+ * offline playback lives on the `/replay` page.
  */
 
-import { Canvas, scenarios, useCanvasStream, type StreamEvent } from "@braincrew-lab/langchain-canvas";
+import { useCallback, useEffect, useState } from "react";
+
+import {
+  Canvas,
+  useCanvasStore,
+  useCanvasStream,
+  type CanvasSaveHandler,
+  type StreamEvent,
+} from "@braincrew-lab/langchain-canvas";
 
 import { Chat } from "../../components/Chat";
 
@@ -19,38 +27,57 @@ const SUGGESTIONS = [
   "Design a 3-slide pitch deck",
 ];
 
-/** Map a prompt to a scenario + a canned reply. */
-const ROUTES: { match: RegExp; scenarioId: string; reply: string }[] = [
-  { match: /page|landing|pricing|site|웹|페이지/i, scenarioId: "html-page", reply: "Built a pricing page — click any element on the canvas to edit it." },
-  { match: /report|essay|write|문서|리포트|글/i, scenarioId: "document", reply: "Drafted a markdown report on the canvas." },
-  { match: /chart|graph|revenue|trend|차트|매출|그래프/i, scenarioId: "chart", reply: "Charted quarterly revenue on the canvas." },
-  { match: /table|compare|grid|표|비교/i, scenarioId: "table", reply: "Rendered a comparison table on the canvas." },
-  { match: /slide|deck|present|ppt|pptx|프레젠|슬라이드|발표/i, scenarioId: "slides", reply: "Built a slide deck — every element is movable; drag to rearrange, then Present or export." },
-];
+const SERVER = "http://localhost:8000";
 
-/** Offline resolver: assistant reply + the scenario's canvas events, no network. */
-function mockResolver(text: string): StreamEvent[] {
-  const route = ROUTES.find((r) => r.match.test(text)) ?? ROUTES[0];
-  const scenario = scenarios.find((s) => s.id === route.scenarioId)!;
-  const id = crypto.randomUUID();
-  const canvasEvents = scenario.events.filter(
-    (e) => e.type.startsWith("canvas.") && e.type !== "canvas.node_patch",
-  );
-  return [
-    { type: "message.delta", messageId: id, text: route.reply },
-    { type: "message.end", messageId: id },
-    ...canvasEvents,
-    { type: "done" },
-  ];
+/** Stable per-browser thread id so the canvas survives reloads. */
+function usePersistentThreadId(): string {
+  const [id] = useState(() => {
+    if (typeof window === "undefined") return "ssr";
+    const existing = window.localStorage.getItem("canvas-demo-thread");
+    if (existing) return existing;
+    const fresh = crypto.randomUUID();
+    window.localStorage.setItem("canvas-demo-thread", fresh);
+    return fresh;
+  });
+  return id;
 }
 
 export default function ChatPage() {
-  const stream = useCanvasStream({ endpoint: "/api/chat", mock: mockResolver });
+  const threadId = usePersistentThreadId();
+  const stream = useCanvasStream({ endpoint: `${SERVER}/api/chat`, threadId });
+  const applyEvents = useCanvasStore((s) => s.applyEvents);
+  const applyEvent = useCanvasStore((s) => s.applyEvent);
+
+  // Hydrate: rebuild the stored canvas (artifacts + described versions) on load.
+  useEffect(() => {
+    if (threadId === "ssr") return;
+    fetch(`${SERVER}/api/canvas/${threadId}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((events: StreamEvent[]) => events.length && applyEvents(events))
+      .catch(() => {});
+  }, [threadId, applyEvents]);
+
+  // Persist hand edits as described commits; stamp the new revision back in.
+  const handleSave = useCallback<CanvasSaveHandler>(
+    async ({ artifactId, artifact, baseRevision }) => {
+      const html = (artifact.data as { html?: string }).html;
+      if (typeof html !== "string") return;
+      const res = await fetch(`${SERVER}/api/canvas/${threadId}/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html, baseRevision, path: artifactId }),
+      });
+      if (!res.ok) return; // 409 = stale — the next agent read still wins
+      const { revision, description } = await res.json();
+      applyEvent({ type: "canvas.commit", id: artifactId, description, revision });
+    },
+    [threadId, applyEvent],
+  );
 
   return (
     <main className="app">
       <section className="app__chat">
-        <div className="chat__banner">Mock mode — responses are simulated, no LLM call.</div>
+        <div className="chat__banner">Live mode — the canvas persists across reloads.</div>
         <Chat
           messages={stream.messages}
           isStreaming={stream.isStreaming}
@@ -62,7 +89,7 @@ export default function ChatPage() {
         />
       </section>
       <section className="app__canvas">
-        <Canvas onEditElement={stream.editSelection} />
+        <Canvas onEditElement={stream.editSelection} onSave={handleSave} />
       </section>
     </main>
   );

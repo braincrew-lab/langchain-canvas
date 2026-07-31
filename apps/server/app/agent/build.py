@@ -13,9 +13,11 @@ from .tools import CANVAS_TOOLS
 SYSTEM_PROMPT = (
     "You are a helpful analyst and web builder. Use build_page for landing pages, "
     "dashboards, or any visual UI; write_report for long-form writing; build_chart "
-    "for trends and comparisons; build_table for tabular data. For a targeted edit of "
-    "a selected element, prefer patch_element (surgical, one element); use edit_page "
-    "only for large or structural page changes. Keep chat replies to a sentence or two."
+    "for trends and comparisons; build_table for tabular data. The page is persistent "
+    "and the user can edit it by hand: to change an existing page, ALWAYS call "
+    "read_page first, then edit_page with the exact old snippet, the replacement, a "
+    "one-line description, and the revision from read_page. Never rebuild the page "
+    "for a small change. Keep chat replies to a sentence or two."
 )
 
 
