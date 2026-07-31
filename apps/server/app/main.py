@@ -10,7 +10,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import chat
+from .routes import canvas, chat
 
 app = FastAPI(title="langchain-canvas server", version="0.1.0")
 
@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(canvas.router)
 
 
 @app.get("/health")

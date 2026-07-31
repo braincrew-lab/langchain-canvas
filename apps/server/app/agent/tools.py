@@ -17,6 +17,9 @@ from langchain.tools import ToolRuntime, tool
 
 from langchain_canvas import Canvas
 from langchain_canvas.protocol import ChartSeries, TableColumn
+from langchain_canvas.store import CanvasFileNotFoundError, EditConflictError, RevisionMismatchError
+
+from .store import PAGE_PATH, STORE
 
 _WRITER_MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
@@ -36,55 +39,85 @@ def _strip_code_fence(text: str) -> str:
     return stripped.strip()
 
 
+def _thread_id(runtime: ToolRuntime) -> str:
+    """The demo scopes one canvas per conversation thread."""
+    configurable = (runtime.config or {}).get("configurable", {})
+    thread_id = configurable.get("thread_id")
+    if not thread_id:
+        raise ValueError("no thread_id in run config")
+    return str(thread_id)
+
+
 @tool
 def build_page(brief: str, runtime: ToolRuntime) -> str:
     """Design a self-contained HTML page from a brief and render it on the canvas.
 
-    Use for landing pages, dashboards, or any visual/interactive UI. The rendered
-    page is directly editable — the user can click any element to request changes.
+    Use for landing pages, dashboards, or any visual/interactive UI. The page is
+    saved to the canvas store (it survives reloads) and the user can edit it by
+    hand; always read_page before editing it later.
     """
     canvas = Canvas.from_runtime(runtime)
-    page = canvas.open_html(title=brief[:60])
+    page = canvas.open_html(title=brief[:60], id=PAGE_PATH)
 
     model = init_chat_model(_WRITER_MODEL)
     prompt = (
         "Create a single self-contained HTML document (inline <style>, no external "
         f"resources or scripts) for: {brief}. Return ONLY the HTML."
     )
-    page.set_html(_strip_code_fence(_text_of(model.invoke(prompt))))
+    html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    description = f"Create page: {brief[:50]}"
+    commit = STORE.write(_thread_id(runtime), PAGE_PATH, html, description)
+    page.set_html(html)
     page.complete()
+    page.commit(description, revision=commit.revision)
 
-    return f"Built a page for “{brief}”. Click any element on the canvas to edit it."
-
-
-@tool
-def edit_page(artifact_id: str, updated_html: str, runtime: ToolRuntime) -> str:
-    """Replace an existing page's whole HTML (for large or structural edits).
-
-    Args:
-        artifact_id: The id of the page artifact to update (given in the edit request).
-        updated_html: The full updated HTML document.
-    """
-    canvas = Canvas.from_runtime(runtime)
-    canvas.html(artifact_id).set_html(_strip_code_fence(updated_html)).complete()
-    return "Updated the page on the canvas."
+    return (
+        f"Built and saved the page (revision {commit.revision}). "
+        "Click any element on the canvas to edit it."
+    )
 
 
 @tool
-def patch_element(artifact_id: str, cid: str, html: str, runtime: ToolRuntime) -> str:
-    """Replace a SINGLE element (by data-cid) in a page — a surgical, O(1) edit.
+def read_page(runtime: ToolRuntime) -> str:
+    """Read the page's current saved content (line-numbered) plus its revision.
 
-    Prefer this over edit_page for targeted element edits: it swaps just the one
-    element instead of resending the whole page.
-
-    Args:
-        artifact_id: The page artifact id (given in the edit request).
-        cid: The data-cid of the element to replace (given in the edit request).
-        html: The new outer HTML for that element.
+    Always call this right before edit_page — the user may have edited the page
+    by hand, and edit_page needs the current revision.
     """
-    canvas = Canvas.from_runtime(runtime)
-    canvas.html(artifact_id).patch_node(cid, _strip_code_fence(html))
-    return "Applied a targeted edit on the canvas."
+    try:
+        got = STORE.read(_thread_id(runtime), PAGE_PATH)
+    except CanvasFileNotFoundError:
+        return "No page exists yet. Use build_page first."
+    numbered = "\n".join(
+        f"{i:>4}\t{line}" for i, line in enumerate(got.content.split("\n"), start=1)
+    )
+    return f"revision: {got.revision}\n{numbered}"
+
+
+@tool
+def edit_page(old: str, new: str, description: str, revision: str, runtime: ToolRuntime) -> str:
+    """Replace exactly one occurrence of `old` with `new` in the saved page.
+
+    `revision` must come from your most recent read_page — if the page changed
+    since (e.g. the user edited it by hand), the call is rejected and you must
+    read again. `old` must match exactly once; include enough surrounding HTML
+    to make it unique. `description` is one short sentence for the version
+    history.
+    """
+    thread_id = _thread_id(runtime)
+    try:
+        commit = STORE.edit(
+            thread_id, PAGE_PATH, old, new, description, base_revision=revision
+        )
+    except (RevisionMismatchError, EditConflictError) as exc:
+        return f"Error: {exc}. Call read_page again and retry with the fresh revision."
+    except CanvasFileNotFoundError:
+        return "No page exists yet. Use build_page first."
+    content = STORE.read(thread_id, PAGE_PATH).content
+    page = Canvas.from_runtime(runtime).html(PAGE_PATH)
+    page.set_html(content)
+    page.commit(description, revision=commit.revision)
+    return f"Edited and saved the page (revision {commit.revision})."
 
 
 @tool
@@ -162,4 +195,4 @@ def build_table(
     return f"Rendered a table “{title}” with {len(rows)} rows on the canvas."
 
 
-CANVAS_TOOLS = [build_page, edit_page, patch_element, write_report, build_chart, build_table]
+CANVAS_TOOLS = [build_page, read_page, edit_page, write_report, build_chart, build_table]

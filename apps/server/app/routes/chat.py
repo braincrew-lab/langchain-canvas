@@ -44,8 +44,9 @@ def _with_selections(message: str, selections: list[Selection]) -> str:
         f"{message}\n\n"
         f"[Targeted edit] Apply the change to these selected element(s) in artifact "
         f"`{artifact_id}`:\n{listed}\n"
-        f"For each, call patch_element with artifact_id `{artifact_id}`, the element's cid, "
-        f"and the new outer HTML for just that element (keep its data-cid attribute)."
+        f"First call read_page to get the current content and revision, then call "
+        f"edit_page with the element's exact current outer HTML as `old` and your "
+        f"replacement as `new` (keep the data-cid attribute), plus a one-line description."
     )
 
 

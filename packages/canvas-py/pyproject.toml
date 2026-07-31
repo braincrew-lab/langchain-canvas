@@ -1,5 +1,5 @@
 [project]
-name = "canvas-sdk"
+name = "langchain-canvas"
 version = "0.1.0"
 description = "Turn a LangChain agent's tools into a live React canvas."
 readme = "README.md"
