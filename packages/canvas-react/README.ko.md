@@ -1,8 +1,11 @@
 # @braincrew-lab/langchain-canvas
 
-LangChain 챗 앱을 위한 캔버스. 에이전트가 아티팩트(웹 페이지·스프레드시트·슬라이드·차트·문서)를 스트리밍하면 대화 옆에 실시간으로 뜨고 그 자리에서 편집됩니다. 사용자가 직접 손보고 실제 파일로 내보낼 수 있습니다.
+[![npm](https://img.shields.io/npm/v/%40braincrew-lab%2Flangchain-canvas?label=npm&color=cb3837)](https://www.npmjs.com/package/@braincrew-lab/langchain-canvas)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/braincrew-lab/langchain-canvas/blob/main/LICENSE)
 
-ChatGPT Canvas나 Claude Artifacts 같은 경험을, **내 React 앱에 넣고 내 에이전트에 연결하는 패키지**로 제공합니다.
+LangChain 챗 앱을 위한 캔버스. 에이전트가 아티팩트(웹 페이지·스프레드시트·슬라이드·차트·문서·PDF)를 스트리밍하면 대화 옆에 실시간으로 뜨고 그 자리에서 편집됩니다. 사용자가 직접 손보고 실제 파일로 내보낼 수 있습니다.
+
+ChatGPT Canvas나 Claude Artifacts 같은 경험을, **내 React 앱에 넣고 내 에이전트에 연결하는 패키지**로 제공합니다. 스크린샷·아키텍처·와이어 프로토콜 전체는 [GitHub 레포](https://github.com/braincrew-lab/langchain-canvas)에 있습니다.
 
 > [English README](./README.md)
 
@@ -74,26 +77,29 @@ HTML이 기본 substrate이고, 샌드박스 iframe에 렌더됩니다. 에이�
 
 정적 표가 아니라 스프레드시트 엔진(Fortune-sheet) 위에서 동작합니다.
 
-- **실시간 수식** — `=SUM(C2:C4)`, `=AVERAGE(...)`, `=A2*B2` 입력 시 계산. 셀참조·범위·함수 자동완성 지원
+- **실시간 수식** — `=SUM(C2:C4)`, `=VLOOKUP(...)`, `=A2*B2` 입력 시 계산. 셀참조·범위·함수 자동완성 지원. 계산은 선택 설치 `fast-formula-parser`가 담당해 Excel 함수 세트(`IF`, `COUNTIF`, `SUMIF`, `INDEX`/`MATCH`, …)가 바로 동작
 - **데이터로 온 수식** — 에이전트가 값으로 보낸 수식(`"=AVERAGE(B2:B4)"`)은 **로드 시 미리 계산**되어 결과가 바로 표시
-- **전체 툴바** — 폰트, 숫자/통화/％ 서식, 굵게/기울임, 테두리, 셀 병합, 정렬, 다중 시트 — 데스크톱 수준
+- **Excel 스타일 리본** — 삽입 / 글꼴 / 맞춤 / 표시 형식 / 편집 / 보기로 그룹된 트레이, **수식 바**, **Σ 자동 합계** 메뉴
+- **서식** — 폰트, 숫자/통화/％/날짜 서식, 굵게/기울임, 테두리, 셀 병합/해제, 정렬, **틀 고정**, 다중 시트, 그리고 에이전트가 만든 요란한 셀 색을 한 번에 걷어내는 **스타일 정리**
 - 넓은 그리드에서 **상하좌우 부드러운 스크롤**
-- **Export** — `.xlsx`(폰트/병합/서식 포함) 또는 `.csv`
+- **Export** — `.xlsx`(폰트/병합/서식 포함) 또는 `.csv` — 둘 다 사용자의 그리드 편집이 반영됨
 
 ### 🖼️ 슬라이드 (`slides`) — 프리 캔버스 덱
 
 모든 요소가 움직이는 PowerPoint 스타일 편집기.
 
-- **자유 배치** — 텍스트/이미지 요소 드래그·리사이즈, 가이드 스냅
+- **자유 배치** — 텍스트/이미지 요소 드래그·리사이즈, 드래그와 리사이즈 모두에서 스냅 가이드, 회전, Shift로 비율 고정 리사이즈
+- **다중 선택 & 그룹** — Shift+클릭 또는 마퀴 선택 후 그룹/해제(⌘G / ⌘⇧G). 떠 있는 액션 바로 정렬·분배·복제·삭제
+- **키보드 편집** — 방향키 미세 이동, ⌘D 복제, ⌘C/⌘V(슬라이드 간 가능), ⌘] / ⌘[ z-순서
 - **인라인 편집** — 더블클릭 텍스트 편집, 굵게/크기/색/정렬 툴바
 - **구조** — 슬라이드 추가/복제/삭제/순서, 썸네일 레일, 발표자 노트
-- **테마·배경**, 발표 모드(전체화면, 방향키 이동)
-- **Export** — `.pptx`, **Figma 복사**(에디터블 프레임으로 바로 붙여넣기), **PDF**(전 슬라이드)
+- **8가지 테마**(Editorial · Gallery · Boardroom · Sage · Graphite · Observatory · Ultramarine · Bordeaux)·배경, 발표 모드(전체화면, 방향키 이동, 진행 표시)
+- **Export** — `.pptx` 또는 **PDF**(전 슬라이드)
 
 ### 📝 문서 (`document`) — Markdown / Word
 
 - **클릭 편집** — 페이지를 Markdown으로 편집(GFM 렌더)
-- **Export** — `.docx`, `.md`, `.pdf`, `.html`
+- **Export** — `.docx`, `.md`, `.hwpx`(한글), `.pdf`, `.html`
 
 ### 📈 차트 (`chart`)
 
@@ -102,10 +108,15 @@ HTML이 기본 substrate이고, 샌드박스 iframe에 렌더됩니다. 에이�
 - 시리즈(또는 파이 조각)별 **색상 변경**, 시리즈 이름, Y축 라벨, 스택 토글
 - **Export** — `.pdf`(차트가 SVG라 선명) 또는 raw JSON
 
+### 📄 PDF (`pdf`)
+
+- 에이전트가 `{ type: "pdf", data: { src } }`(`data:`/`blob:`/https URL)를 emit 하면 **브라우저 내장 뷰어**로 렌더 — 의존성 0, 줌 컨트롤 포함
+- `data:` 소스는 `application/pdf`로 고정되어, 조작된 아티팩트가 스크립트 실행 가능한 same-origin 프레임을 끼워 넣을 수 없음
+
 ### 📁 파일 — 라운드트립
 
-- **Import** — 드래그앤드롭 또는 파일 선택: **CSV · Excel · Markdown · HTML · JSON** → 편집 가능한 아티팩트로
-- **Export** — 각 아티팩트를 네이티브 포맷으로, 그리고 범용 **standalone `.html`** · **PDF**(브라우저 인쇄)
+- **Import** — 드래그앤드롭 또는 파일 선택: **CSV · Excel(.xlsx) · Word(.docx) · PowerPoint(.pptx) · PDF · Markdown · HTML · JSON · 한글(.hwp / .hwpx)** → 편집 가능한 아티팩트로. `.xlsx`는 폰트/채우기/병합/서식/내장 이미지를, `.pptx`는 테마 색·마스터 스타일을 유지하고, 바이너리 `.hwp`는 직접 파싱해 서식 있는 HTML로 엽니다
+- **Export** — 각 아티팩트를 네이티브 포맷(`.xlsx` / `.csv` / `.docx` / `.md` / `.hwpx` / `.pptx` / 차트 JSON)으로, 그리고 범용 **standalone `.html`** · **PDF**(브라우저 인쇄)
 
 ### 🧰 모든 아티팩트 공통
 
@@ -121,6 +132,7 @@ HTML이 기본 substrate이고, 샌드박스 iframe에 렌더됩니다. 에이�
 - **peerDependency:** React 18 또는 19 — 직접 제공. ESM 전용.
 - **스타일:** `import "@braincrew-lab/langchain-canvas/styles.css"` 한 번.
 - **인스턴스 격리:** `<CanvasProvider>`가 서브트리마다 독립 store 제공.
+- **한국어 UI:** `<Canvas locale="ko" />` 하나로 UI 전체가 한국어/영어 전환.
 - **커스텀 렌더러:** `registry`로 타입 렌더 방식 추가/오버라이드.
 
 ```tsx

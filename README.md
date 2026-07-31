@@ -2,17 +2,16 @@
 
 # langchain-canvas
 
-**A live canvas for LangChain agents.**
+**A live, editable canvas for LangChain agents — Claude-Artifacts-style documents, decks, spreadsheets, charts and web pages, streamed over one wire protocol.**
 
 Your agent writes ordinary tools; your users get a canvas — a panel beside the
-chat where documents, charts, tables, and full HTML pages render live, stream as
-they're written, version themselves, and can be edited by clicking any element.
+chat where artifacts render live, stream as they're written, version themselves,
+and can be edited by clicking any element.
 
-Quality bar: Genspark · ChatGPT Canvas · Claude Artifacts.
+[![npm](https://img.shields.io/npm/v/%40braincrew-lab%2Flangchain-canvas?label=npm&color=cb3837)](https://www.npmjs.com/package/@braincrew-lab/langchain-canvas)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-</div>
-
-<div align="center">
+[npm](https://www.npmjs.com/package/@braincrew-lab/langchain-canvas) · [Docs](docs/01-architecture.md) · [Changelog](CHANGELOG.md) · [Demo — schema replay, no backend](#see-it-with-zero-backend-schema-replay)
 
 **English** · 📖 [한국어](README.ko.md)
 
@@ -30,6 +29,31 @@ Quality bar: Genspark · ChatGPT Canvas · Claude Artifacts.
 └───────────────────────────┴─────────────────────────────────────┘
 ```
 
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/assets/excel-formulas.png" alt="Spreadsheet artifact with formula bar and AutoSum" />
+      <sub>A real spreadsheet: formula bar, Σ AutoSum, number formats, freeze panes — formulas evaluate live.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/assets/pptx-import-slide.png" alt="Imported .pptx slide rendered with theme fidelity" />
+      <sub>A <code>.pptx</code> dropped on the canvas — theme colors, master styles, and layout survive the trip.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/assets/table-themed.png" alt="Themed grid with in-sheet context menu" />
+      <sub>The themed grid: in-sheet context menu (sort · filter · insert), clean-styling and freeze-header controls.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/assets/excel-ribbon.png" alt="Excel ribbon localized to Korean" />
+      <sub>The same ribbon in Korean — <code>&lt;Canvas locale="ko"&gt;</code> localizes the whole chrome (Σ 자동 합계 · 틀 고정).</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Table of contents
@@ -38,6 +62,7 @@ Quality bar: Genspark · ChatGPT Canvas · Claude Artifacts.
 - [Add a canvas to your own app](#add-a-canvas-to-your-own-app)
 - [The three ideas](#the-three-ideas)
 - [Features](#features)
+- [What to emit per artifact type](#what-to-emit-per-artifact-type)
 - [Add your own artifact type](#add-your-own-artifact-type)
 - [Docs](#docs) · [Roadmap](#roadmap) · [License](#license)
 
@@ -54,8 +79,8 @@ pnpm install
 pnpm dev:web                  # → open http://localhost:3000/replay
 ```
 
-Pick a scenario (HTML page, streaming doc, chart, table) and watch it render
-exactly as a real agent would drive it. In code:
+Pick a scenario (HTML page, streaming doc, chart, table, deck, PDF, 한글 HWP) and
+watch it render exactly as a real agent would drive it. In code:
 
 ```tsx
 import { Canvas, useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
@@ -72,8 +97,12 @@ play(scenarios[0].events);    // schema → screen, no network
 
 Two installs, two small pieces of code.
 
-> Not yet published to PyPI/npm — for now install from this repo (see
-> `apps/server/pyproject.toml` and `pnpm-workspace.yaml` for the workspace wiring).
+```bash
+npm i @braincrew-lab/langchain-canvas
+```
+
+> The Python package isn't on PyPI yet — install it from this repo (see
+> `packages/canvas-py` and `apps/server/pyproject.toml` for the wiring).
 
 ### Backend (Python) — emit artifacts from a tool
 
@@ -160,21 +189,59 @@ Under the hood it rides LangChain 1.x's native custom-stream channel
 
 ## Features
 
+### Artifacts & streaming
+
 - 🌐 **HTML is the base** — the agent emits a self-contained page, rendered in a
-  CSP-sandboxed iframe. Documents, charts, and tables are structured conveniences
-  on top.
-- 🖱️ **Click-to-edit** — hover highlights, click selects, then either type an
-  instruction (the agent surgically patches just that element) or use the **style
-  panel** (color / size / weight / align) and **double-click to edit text inline**.
+  CSP-sandboxed iframe. Documents, decks, grids, and charts are structured
+  conveniences on top.
+- 📝 **Streaming documents** — markdown rendered live, token-by-token.
 - ⚡ **O(1) element patches** — `canvas.node_patch` swaps one element by its
   `data-cid` instead of resending the page.
-- 📝 **Streaming documents** — markdown rendered live, token-by-token.
-- 📊 **Charts** & 📋 **tables** — line/bar/area/pie and sticky-header grids over tidy rows.
-- 📦 **Export to files** — any artifact → self-contained **`.html`**, plus `.md` / `.csv` / `.json` / `.xlsx` / `.docx` / `.pptx` / PDF.
-- 📥 **Open real files** — drop `.xlsx` (fonts, fills, merges, formats), `.csv`, `.md`, `.html`, `.json`, **`.pdf`**, and Korean **`.hwpx` / `.hwp`** straight onto the canvas — the Office/HWP parsers are dependency-free or dynamically imported.
-- 🗂️ **Tabs + versioning** — switch between artifacts; page through every version.
-- 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`, or use the reconciler/SSE client with your own UI.
+- 🗂️ **Tabs + versioning** — switch between artifacts; page through every version
+  (old versions are read-only previews, so history can't be silently overwritten).
 - 🧵 **Typed on both ends** — Pydantic and TypeScript mirror one wire protocol.
+
+### Rich editors, per type
+
+- 📊 **Excel-grade tables** — a grouped ribbon (Insert / Font / Alignment /
+  Number / Editing / View), a formula bar, **Σ AutoSum**, live formulas
+  (`VLOOKUP`, `SUMIF`, `COUNTIF`, `INDEX`/`MATCH` and the rest of the Excel set,
+  evaluated by the optional `fast-formula-parser`), number/currency/percent/date
+  formats, cell merge, and freeze panes.
+- 🖼️ **Figma-grade slides** — multi-select (Shift+click, marquee), group/ungroup
+  (⌘G), snap guides on drag *and* resize, rotation, z-order (⌘] / ⌘[), arrow-key
+  nudge, aspect-lock resize, **8 themes** (Editorial · Gallery · Boardroom ·
+  Sage · Graphite · Observatory · Ultramarine · Bordeaux), speaker notes, and a
+  present mode with progress.
+- 🖱️ **Click-to-edit web pages** — hover highlights, click selects, then either
+  type an instruction (the agent surgically patches just that element) or use the
+  **style panel** and **double-click to edit text inline**.
+- 📈 **Charts** — line/bar/area/pie on ECharts, switchable in one click, with
+  inline data editing and per-series recoloring.
+- 📄 **PDF viewer** — `type: "pdf"` renders `{ src }` in the browser's built-in
+  viewer, with data:/blob:/https sources pinned to `application/pdf`.
+
+### File round-trip
+
+- 📥 **Import** — drop `.csv`, `.md`, `.html`, `.json`, `.xlsx` (fonts, fills,
+  merges, formats, embedded images), `.docx`, `.pptx` (theme colors, master
+  inheritance), `.pdf`, and Korean **`.hwpx` / `.hwp`** (binary HWP 5.x parsed
+  from scratch into formatted HTML) straight onto the canvas.
+- 📦 **Export** — any artifact → self-contained **`.html`** or **PDF**, plus
+  `.md` / `.csv` / `.xlsx` / `.docx` / `.pptx` / **`.hwpx`** per type.
+- 🪶 **Zero-dependency importers** — the Office/HWP paths use platform
+  primitives (`DecompressionStream`, `DOMParser`); only `.xlsx` dynamically
+  imports `exceljs`, and a missing optional package degrades to a clear message.
+
+### Integration
+
+- ✏️ **Write-back** — pass `onUserEdit` and every in-canvas edit (including
+  undo/redo) hands your host the reconciled artifact, so the agent's next turn
+  sees what the user actually changed.
+- 🌏 **i18n** — `<Canvas locale="ko" />` localizes the entire chrome (English /
+  Korean).
+- 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`,
+  or use the reconciler/SSE client with your own UI.
 
 ## What to emit per artifact type
 
@@ -189,7 +256,7 @@ you want** — a table wrapped in `html` renders as a web page, not a grid. One
 | `slides`   | PowerPoint deck   | `{ slides: [{ layout, title, bullets, … }] }`         |
 | `table`    | Excel-style grid  | `{ columns: [{ key, label }], rows: [{ … }] }`        |
 | `chart`    | line/bar/area/pie | `{ chart, xKey, rows, series: [{ key, label }] }`     |
-| `pdf`      | native PDF viewer | `{ src }` — a `data:application/pdf;…` or https URL   |
+| `pdf`      | native PDF viewer | `{ src, filename? }` — a `data:application/pdf;…` or https URL |
 
 ```json
 { "type": "canvas.create", "artifact": {
@@ -221,6 +288,7 @@ Three steps, zero transport changes:
 - [Architecture](docs/01-architecture.md) — the boundaries and why they exist.
 - [Wire protocol](docs/02-protocol.md) — every event and its reconciliation effect.
 - [Getting started](docs/03-getting-started.md) — copy-paste, front to back.
+- [Changelog](CHANGELOG.md) — what shipped, release by release.
 - [Contributing](CONTRIBUTING.md).
 
 ## Roadmap
@@ -234,4 +302,3 @@ Three steps, zero transport changes:
 ## License
 
 [MIT](LICENSE)
-# langchain-canvas

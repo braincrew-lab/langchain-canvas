@@ -1,8 +1,11 @@
 # @braincrew-lab/langchain-canvas
 
-A canvas for your LangChain chat app. Your agent streams an artifact — a web page, a spreadsheet, a slide deck, a chart, a document — and it shows up next to the conversation, live and editable. Users can tweak it by hand and export it to a real file.
+[![npm](https://img.shields.io/npm/v/%40braincrew-lab%2Flangchain-canvas?label=npm&color=cb3837)](https://www.npmjs.com/package/@braincrew-lab/langchain-canvas)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/braincrew-lab/langchain-canvas/blob/main/LICENSE)
 
-Think ChatGPT Canvas or Claude Artifacts, but a package you drop into your own React app and point at your own agent.
+A canvas for your LangChain chat app. Your agent streams an artifact — a web page, a spreadsheet, a slide deck, a chart, a document, a PDF — and it shows up next to the conversation, live and editable. Users can tweak it by hand and export it to a real file.
+
+Think ChatGPT Canvas or Claude Artifacts, but a package you drop into your own React app and point at your own agent. Screenshots, architecture, and the full wire protocol live in the [GitHub repo](https://github.com/braincrew-lab/langchain-canvas).
 
 > [한국어 README](./README.ko.md)
 
@@ -74,26 +77,29 @@ HTML is the base substrate, rendered in a sandboxed iframe. Selecting and editin
 
 Runs on a spreadsheet engine (Fortune-sheet), not a static table.
 
-- **Live formulas** — type `=SUM(C2:C4)`, `=AVERAGE(...)`, `=A2*B2`; they calculate, with cell references, ranges, and function autocomplete.
+- **Live formulas** — type `=SUM(C2:C4)`, `=VLOOKUP(...)`, `=A2*B2`; they calculate, with cell references, ranges, and function autocomplete. Evaluation is delegated to the optional `fast-formula-parser`, so the Excel function set (`IF`, `COUNTIF`, `SUMIF`, `INDEX`/`MATCH`, …) works out of the box.
 - **Formulas from data** — a formula the agent sends as a value (e.g. `"=AVERAGE(B2:B4)"`) is **pre-computed on load** so it shows its result immediately.
-- **Full toolbar** — fonts, number/currency/percent formats, bold/italic, borders, cell merging, alignment, multiple sheets — like a desktop spreadsheet.
+- **Excel-style ribbon** — grouped Insert / Font / Alignment / Number / Editing / View trays, plus a **formula bar** and a **Σ AutoSum** menu.
+- **Formatting** — fonts, number/currency/percent/date formats, bold/italic, borders, cell merge/unmerge, alignment, **freeze panes**, multiple sheets, and a one-click **clean styling** that strips garish agent-generated fills.
 - **Smooth scrolling** in both directions over a large grid.
-- **Export** to `.xlsx` (with fonts/merges/formats) or `.csv`.
+- **Export** to `.xlsx` (with fonts/merges/formats) or `.csv` — both include the user's in-grid edits.
 
 ### 🖼️ Slides (`slides`) — a free-canvas deck
 
 A PowerPoint-style editor where every element is movable.
 
-- **Free positioning** — drag and resize text/image elements; snap to guides.
+- **Free positioning** — drag and resize text/image elements; snap guides on drag *and* resize; rotation; hold Shift to lock aspect while resizing.
+- **Multi-select & groups** — Shift+click or marquee-select, then group/ungroup (⌘G / ⌘⇧G); a floating bar offers align, distribute, duplicate, delete.
+- **Keyboard editing** — arrow-key nudge, ⌘D duplicate, ⌘C/⌘V across slides, ⌘] / ⌘[ z-order.
 - **Inline editing** — double-click to edit text; format toolbar for bold/size/color/align.
 - **Structure** — add/duplicate/delete/reorder slides, thumbnails rail, speaker notes.
-- **Themes & backgrounds**, present mode (full-screen, arrow-key navigation).
-- **Export** to `.pptx`, or copy to **Figma** (paste straight in as editable frames), or **PDF** (all slides).
+- **8 themes** (Editorial, Gallery, Boardroom, Sage, Graphite, Observatory, Ultramarine, Bordeaux) & backgrounds; present mode (full-screen, arrow-key navigation, progress bar).
+- **Export** to `.pptx` or **PDF** (all slides).
 
 ### 📝 Documents (`document`) — Markdown / Word
 
 - **Click-to-edit** the page as Markdown, rendered with GFM.
-- **Export** to `.docx`, `.md`, `.pdf`, or `.html`.
+- **Export** to `.docx`, `.md`, `.hwpx` (한글), `.pdf`, or `.html`.
 
 ### 📈 Charts (`chart`)
 
@@ -102,10 +108,15 @@ A PowerPoint-style editor where every element is movable.
 - **Recolor** each series (or each pie slice), rename series, set the y-axis label, toggle stacking.
 - **Export** to `.pdf` (the chart is SVG, so it prints crisply) or the raw JSON.
 
+### 📄 PDFs (`pdf`)
+
+- The agent emits `{ type: "pdf", data: { src } }` (a `data:`/`blob:`/https URL) and the file renders in the **browser's built-in viewer** — zero dependencies, with a zoom control.
+- `data:` sources are pinned to `application/pdf`, so a crafted artifact can't smuggle a scriptable same-origin frame.
+
 ### 📁 Files — round-trip
 
-- **Import** by drag-and-drop or a file picker: **CSV · Excel · Markdown · HTML · JSON**. They open as editable artifacts.
-- **Export** every artifact to its native format, plus a universal **standalone `.html`** and **PDF** (browser print).
+- **Import** by drag-and-drop or a file picker: **CSV · Excel (.xlsx) · Word (.docx) · PowerPoint (.pptx) · PDF · Markdown · HTML · JSON · 한글 (.hwp / .hwpx)**. They open as editable artifacts — `.xlsx` keeps fonts/fills/merges/formats/embedded images, `.pptx` keeps theme colors and master styles, and binary `.hwp` is parsed from scratch into formatted HTML.
+- **Export** every artifact to its native format (`.xlsx` / `.csv` / `.docx` / `.md` / `.hwpx` / `.pptx` / chart JSON), plus a universal **standalone `.html`** and **PDF** (browser print).
 
 ### 🧰 Across every artifact
 
@@ -121,6 +132,7 @@ A PowerPoint-style editor where every element is movable.
 - **Peer dependency:** React 18 or 19 — you bring your own. ESM only.
 - **Styles:** `import "@braincrew-lab/langchain-canvas/styles.css"` once.
 - **Isolated instances:** `<CanvasProvider>` gives each subtree its own store.
+- **Korean UI:** `<Canvas locale="ko" />` localizes the entire chrome (English / Korean).
 - **Bring your own renderer:** pass `registry` to add or override how a type renders.
 
 ```tsx
