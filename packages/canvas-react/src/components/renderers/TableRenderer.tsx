@@ -12,7 +12,7 @@
  * rendered after mount (never during SSR).
  */
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import "@fortune-sheet/react/dist/index.css";
 
@@ -174,6 +174,39 @@ const selectionHasMerge = (wb: WorkbookInstance, sel: SheetSelection): boolean =
   }
   return false;
 };
+
+/** Excel-style alignment glyph: four rules flushed to the given edge. */
+function AlignIcon({ mode }: { mode: "left" | "center" | "right" }) {
+  return (
+    <svg width="14" height="12" viewBox="0 0 14 12" aria-hidden focusable="false">
+      {[0, 1, 2, 3].map((i) => {
+        const w = i % 2 ? 8.5 : 13;
+        const x = mode === "left" ? 0 : mode === "right" ? 14 - w : (14 - w) / 2;
+        return <rect key={i} x={x} y={i * 3.1} width={w} height="1.7" rx="0.85" fill="currentColor" />;
+      })}
+    </svg>
+  );
+}
+
+/** Paint-bucket stand-in for the fill swatch (diamond + droplet). */
+function FillIcon() {
+  return (
+    <svg width="13" height="12" viewBox="0 0 13 12" aria-hidden focusable="false">
+      <path d="M5.6 1.2 10 5.6a1.1 1.1 0 0 1 0 1.6L7.4 9.8a1.1 1.1 0 0 1-1.6 0L1.4 5.4a1.1 1.1 0 0 1 0-1.6L4 1.2a1.1 1.1 0 0 1 1.6 0Z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M12.6 9.4c0 .9-.55 1.6-1.25 1.6s-1.25-.7-1.25-1.6c0-.85 1.25-2.3 1.25-2.3s1.25 1.45 1.25 2.3Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** One captioned ribbon group — the Excel model: controls above, name below. */
+function RibbonGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="cv-ribbon__group" role="group" aria-label={label}>
+      <div className="cv-ribbon__items">{children}</div>
+      <span className="cv-ribbon__label">{label}</span>
+    </div>
+  );
+}
 
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
   const t = useT();
@@ -541,45 +574,73 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
 
   return (
     <div className="cv-sheet-panel">
-      <div className="cv-sheet-tools">
-        <button type="button" onClick={() => insert("column")}>{t("addColumn")}</button>
-        <button type="button" onClick={() => insert("row")}>{t("addRow")}</button>
-        <span className="cv-sheet-tools__sep" />
-        {/* Selection formatting — enabled once a range is selected in the grid. */}
-        <span className="cv-sheet-tools__fmt">
+      <div className="cv-sheet-tools cv-ribbon">
+        <RibbonGroup label={t("groupInsert")}>
+          <button type="button" className="cv-ribbon__btn" onClick={() => insert("column")}>{t("addColumn")}</button>
+          <button type="button" className="cv-ribbon__btn" onClick={() => insert("row")}>{t("addRow")}</button>
+        </RibbonGroup>
+
+        <RibbonGroup label={t("groupFont")}>
           <button
             type="button"
-            className={`cv-sheet-tools__bold${boldOn ? " cv-sheet-tools__bold--on" : ""}`}
+            className={`cv-ribbon__btn cv-ribbon__btn--glyph cv-ribbon__bold${boldOn ? " is-on" : ""}`}
             title={t("bold")}
             aria-pressed={boldOn}
             disabled={!selection}
             onClick={toggleBold}
           >
-            B
+            {t("boldGlyph")}
           </button>
-          <input
-            type="color"
-            className="cv-sheet-tools__color cv-sheet-tools__color--fill"
-            title={t("fillColor")}
-            disabled={!selection}
-            value={fillColor}
-            onChange={(e) => { setFillColor(e.target.value); applyFormat("bg", e.target.value); }}
-          />
-          <input
-            type="color"
-            className="cv-sheet-tools__color cv-sheet-tools__color--text"
-            title={t("textColor")}
-            disabled={!selection}
-            value={textColor}
-            onChange={(e) => { setTextColor(e.target.value); applyFormat("fc", e.target.value); }}
-          />
+          {/* Excel-style swatches: the glyph shows WHAT it colors, the bar shows
+              the current color; clicking opens the native picker. */}
+          <label className={`cv-ribbon__swatch${!selection ? " is-disabled" : ""}`} title={t("textColor")}>
+            <span className="cv-ribbon__swatch-glyph">{t("textGlyph")}</span>
+            <span className="cv-ribbon__swatch-bar" style={{ background: textColor }} />
+            <input
+              type="color"
+              className="cv-sheet-tools__color cv-sheet-tools__color--text"
+              disabled={!selection}
+              value={textColor}
+              onChange={(e) => { setTextColor(e.target.value); applyFormat("fc", e.target.value); }}
+            />
+          </label>
+          <label className={`cv-ribbon__swatch${!selection ? " is-disabled" : ""}`} title={t("fillColor")}>
+            <span className="cv-ribbon__swatch-glyph"><FillIcon /></span>
+            <span className="cv-ribbon__swatch-bar" style={{ background: fillColor }} />
+            <input
+              type="color"
+              className="cv-sheet-tools__color cv-sheet-tools__color--fill"
+              disabled={!selection}
+              value={fillColor}
+              onChange={(e) => { setFillColor(e.target.value); applyFormat("bg", e.target.value); }}
+            />
+          </label>
+        </RibbonGroup>
+
+        <RibbonGroup label={t("groupAlign")}>
           {/* Fortune's `ht` codes: 1 = left (default), 0 = center, 2 = right. */}
-          <button type="button" className="cv-sheet-tools__align" title={t("alignLeft")} disabled={!selection} onClick={() => applyFormat("ht", 1)}>⇤</button>
-          <button type="button" className="cv-sheet-tools__align" title={t("alignCenter")} disabled={!selection} onClick={() => applyFormat("ht", 0)}>↔</button>
-          <button type="button" className="cv-sheet-tools__align" title={t("alignRight")} disabled={!selection} onClick={() => applyFormat("ht", 2)}>⇥</button>
+          <button type="button" className="cv-ribbon__btn cv-ribbon__btn--icon cv-sheet-tools__align" title={t("alignLeft")} disabled={!selection} onClick={() => applyFormat("ht", 1)}><AlignIcon mode="left" /></button>
+          <button type="button" className="cv-ribbon__btn cv-ribbon__btn--icon" title={t("alignCenter")} disabled={!selection} onClick={() => applyFormat("ht", 0)}><AlignIcon mode="center" /></button>
+          <button type="button" className="cv-ribbon__btn cv-ribbon__btn--icon" title={t("alignRight")} disabled={!selection} onClick={() => applyFormat("ht", 2)}><AlignIcon mode="right" /></button>
+          <span className="cv-ribbon__gap" />
+          <button
+            type="button"
+            className="cv-ribbon__btn cv-sheet-tools__merge"
+            title={t("mergeTip")}
+            disabled={!selection || (selection.row[0] === selection.row[1] && selection.column[0] === selection.column[1])}
+            onClick={mergeSelection}
+          >
+            {t("mergeCells")}
+          </button>
+          <button type="button" className="cv-ribbon__btn cv-sheet-tools__unmerge" title={t("unmergeTip")} disabled={!selHasMerge} onClick={unmergeSelection}>
+            {t("unmergeCells")}
+          </button>
+        </RibbonGroup>
+
+        <RibbonGroup label={t("groupNumber")}>
           {/* Renders as a menu: value stays "" so it snaps back to the label. */}
           <select
-            className="cv-sheet-tools__numfmt"
+            className="cv-ribbon__select cv-sheet-tools__numfmt"
             value=""
             title={t("numberFormatTip")}
             disabled={!selection}
@@ -590,79 +651,64 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
               <option key={f.fa} value={f.fa}>{t(f.labelKey) + f.suffix}</option>
             ))}
           </select>
+        </RibbonGroup>
+
+        <RibbonGroup label={t("groupEdit")}>
           <select
-            className="cv-sheet-tools__fx"
+            className="cv-ribbon__select cv-sheet-tools__fx"
             value=""
             title={t("quickFunctionTip")}
             disabled={!selection}
             onChange={(e) => { if (e.target.value) insertQuickFormula(e.target.value); }}
           >
-            <option value="">{t("quickFunction")}</option>
+            <option value="">{t("autoSum")}</option>
             {QUICK_FUNCTIONS.map((fn) => (
               <option key={fn} value={fn}>{fn}</option>
             ))}
           </select>
+          {columns.length > 0 && (
+            <>
+              <select
+                className="cv-ribbon__select cv-sheet-tools__sort"
+                value={sortCol}
+                title={t("sortByColumn")}
+                onChange={(e) => setSortCol(e.target.value)}
+              >
+                <option value="">{t("sortBy")}</option>
+                {columns.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label ?? c.key}</option>
+                ))}
+              </select>
+              {sortCol && (
+                <button type="button" className="cv-ribbon__btn cv-ribbon__btn--icon" title={sortDir === 1 ? t("ascending") : t("descending")} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
+                  {sortDir === 1 ? "▲" : "▼"}
+                </button>
+              )}
+              <input
+                className="cv-ribbon__input cv-sheet-tools__filter"
+                value={filter}
+                placeholder={t("filterRows")}
+                onChange={(e) => setFilter(e.target.value)}
+                title={t("filterTip")}
+              />
+            </>
+          )}
+        </RibbonGroup>
+
+        <RibbonGroup label={t("groupView")}>
           <button
             type="button"
-            className="cv-sheet-tools__merge"
-            title={t("mergeTip")}
-            disabled={!selection || (selection.row[0] === selection.row[1] && selection.column[0] === selection.column[1])}
-            onClick={mergeSelection}
+            className={`cv-ribbon__btn cv-sheet-tools__freeze${frozen ? " is-on" : ""}`}
+            title={frozen ? t("freezeOffTip") : t("freezeOnTip")}
+            aria-pressed={frozen}
+            onClick={toggleFreeze}
           >
-            {t("mergeCells")}
+            {t("freezeHeader")}
           </button>
-          <button
-            type="button"
-            className="cv-sheet-tools__unmerge"
-            title={t("unmergeTip")}
-            disabled={!selHasMerge}
-            onClick={unmergeSelection}
-          >
-            {t("unmergeCells")}
+          <button type="button" className="cv-ribbon__btn cv-sheet-tools__clean" title={t("cleanStylingTip")} onClick={cleanStyling}>
+            {t("cleanStyling")}
           </button>
-        </span>
-        <span className="cv-sheet-tools__sep" />
-        <button type="button" className="cv-sheet-tools__clean" title={t("cleanStylingTip")} onClick={cleanStyling}>
-          {t("cleanStyling")}
-        </button>
-        <button
-          type="button"
-          className={`cv-sheet-tools__freeze${frozen ? " cv-sheet-tools__freeze--on" : ""}`}
-          title={frozen ? t("freezeOffTip") : t("freezeOnTip")}
-          aria-pressed={frozen}
-          onClick={toggleFreeze}
-        >
-          {t("freezeHeader")}
-        </button>
-        {columns.length > 0 && (
-          <>
-            <span className="cv-sheet-tools__sep" />
-            <select
-              className="cv-sheet-tools__sort"
-              value={sortCol}
-              title={t("sortByColumn")}
-              onChange={(e) => setSortCol(e.target.value)}
-            >
-              <option value="">{t("sortBy")}</option>
-              {columns.map((c) => (
-                <option key={c.key} value={c.key}>{c.label ?? c.key}</option>
-              ))}
-            </select>
-            {sortCol && (
-              <button type="button" title={sortDir === 1 ? t("ascending") : t("descending")} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
-                {sortDir === 1 ? "▲" : "▼"}
-              </button>
-            )}
-            <input
-              className="cv-sheet-tools__filter"
-              value={filter}
-              placeholder={t("filterRows")}
-              onChange={(e) => setFilter(e.target.value)}
-              title={t("filterTip")}
-            />
-          </>
-        )}
-        <span className="cv-sheet-tools__hint">{t("sheetHint")}</span>
+        </RibbonGroup>
       </div>
       {/* Formula bar: mirrors the anchor cell (formula over value); Enter commits,
           Escape drops the draft back to the mirrored value. */}

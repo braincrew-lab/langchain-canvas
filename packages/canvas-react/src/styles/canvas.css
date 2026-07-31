@@ -415,6 +415,117 @@
 .cv-sheet-tools__sort:focus, .cv-sheet-tools__filter:focus { outline: none; border-color: var(--cv-accent); }
 .cv-sheet-tools__hint { margin-left: auto; font-size: 11px; color: var(--cv-muted); }
 
+/* --- Excel-style ribbon toolbar ----------------------------------------------- */
+/* The Excel model, in the canvas's own language: controls on top, the group's
+   name in small caps underneath, hairline dividers between groups. Buttons are
+   ghosts inside the strip — the ribbon supplies the chrome, not each control. */
+
+.cv-ribbon {
+  align-items: stretch;
+  gap: 0;
+  padding: 6px 10px 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.cv-ribbon__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0 10px;
+}
+.cv-ribbon__group + .cv-ribbon__group { border-left: 1px solid var(--cv-border); }
+.cv-ribbon__group:first-child { padding-left: 0; }
+.cv-ribbon__items { display: flex; align-items: center; gap: 2px; }
+.cv-ribbon__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--cv-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+.cv-ribbon__gap { width: 6px; }
+
+/* ghost controls — the ribbon strip is the chrome */
+.cv-ribbon .cv-ribbon__btn {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cv-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.cv-ribbon .cv-ribbon__btn:hover:not(:disabled) { background: var(--cv-surface); border: none; color: var(--cv-text); }
+.cv-ribbon .cv-ribbon__btn:disabled { opacity: 0.35; cursor: default; }
+.cv-ribbon .cv-ribbon__btn.is-on {
+  background: var(--cv-accent-weak);
+  color: var(--cv-accent);
+  font-weight: 700;
+}
+.cv-ribbon .cv-ribbon__btn--icon { padding: 0 5px; }
+.cv-ribbon .cv-ribbon__btn--glyph { font-weight: 700; font-size: 13px; width: 26px; padding: 0; }
+
+/* Excel-style color swatches: glyph over a color bar, native picker underneath */
+.cv-ribbon__swatch {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cv-ribbon__swatch:hover:not(.is-disabled) { background: var(--cv-surface); }
+.cv-ribbon__swatch.is-disabled { opacity: 0.35; cursor: default; }
+.cv-ribbon__swatch-glyph { font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; }
+.cv-ribbon__swatch-bar { width: 14px; height: 3px; border-radius: 2px; }
+.cv-ribbon__swatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+.cv-ribbon__swatch.is-disabled input { pointer-events: none; }
+
+/* selects/inputs inside the ribbon: quiet until focused */
+.cv-ribbon .cv-ribbon__select,
+.cv-ribbon .cv-ribbon__input {
+  height: 26px;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cv-text);
+  max-width: 132px;
+}
+.cv-ribbon .cv-ribbon__select:hover:not(:disabled),
+.cv-ribbon .cv-ribbon__input:hover { background: var(--cv-surface); border-color: transparent; }
+.cv-ribbon .cv-ribbon__select:focus,
+.cv-ribbon .cv-ribbon__input:focus { outline: none; border-color: var(--cv-accent); background: var(--cv-bg); }
+.cv-ribbon .cv-ribbon__select:disabled { opacity: 0.35; }
+.cv-ribbon .cv-ribbon__input { width: 96px; }
+.cv-ribbon .cv-ribbon__input::placeholder { color: var(--cv-muted); }
+
 /* selection formatting cluster — reads as one tight group between separators */
 .cv-sheet-tools__fmt { display: inline-flex; align-items: center; gap: 3px; }
 .cv-sheet-tools__fmt button:disabled,
