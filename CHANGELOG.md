@@ -4,6 +4,89 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-07-31
+
+The file-compatibility and spreadsheet release: PowerPoint / Word / 한글 files
+now open on the canvas with their formatting, the spreadsheet grows an
+Excel-style ribbon with a live formula engine, the whole chrome speaks Korean,
+and artifacts gain durable, described version history.
+
+### Added — open real files (all importers dependency-free)
+- **`.pptx` import** — a PowerPoint deck opens as a native editable slide deck:
+  EMU→percent geometry, theme-color resolution (clrScheme + clrMap with
+  lumMod/tint approximations), layout/master placeholder inheritance,
+  slide-background chain, per-paragraph splitting, tables as cell grids,
+  annotation connectors as thin rules (flipH/flipV diagonals), `a:alpha`
+  carried as #RRGGBBAA, and a Korean-aware overflow guard. Verified on real
+  36-slide corporate decks (colored text 37→340, placeholder fallbacks 24→0).
+- **`.docx` import** — headings, lists, tables, bold/italic run merging → a
+  document artifact.
+- **`.hwp` / `.hwpx` open with their formatting** — Korean documents render as
+  a white A4 page (맑은 고딕 stack) with per-run size/color/bold/underline,
+  paragraph alignment, real bordered tables with colspan/rowspan and cell
+  backgrounds, and embedded images; binary `.hwp` gets the same page chrome
+  for its text + reconstructed tables. Imports land as `meta.kind: "doc"`
+  artifacts with a dedicated **document mode** (📄 chip, no web-builder
+  chrome, jump-to-heading outline).
+- **`.hwpx` export** — a document artifact saves as an OWPML package (zero-dep
+  ZIP writer with real CRC-32) that Hancom 한글 2014+ opens: "한글 (HWPX)" in
+  the Export menu.
+- **`type: "pdf"` artifact + `.pdf` import** — the browser's native viewer in
+  the canvas with a clean toolbar (zoom − / Fit / +, download, open) and the
+  native chrome hidden.
+
+### Added — spreadsheet (Excel)
+- **Excel-style ribbon** — captioned groups (삽입 · 글꼴 · 맞춤 · 표시 형식 ·
+  편집 · 보기) as soft keycap trays: bold (가/B by locale), Excel-style color
+  swatches (glyph over a live color bar), SVG alignment glyphs, merge/unmerge,
+  number-format menu (₩/$/%/thousands/decimal/date), Σ AutoSum, sort, filter,
+  틀 고정, clean-styling.
+- **Formula bar + live engine** — an A1 cell reference + `=formula` editing
+  row; formulas compute through the sheet's engine (VLOOKUP, IF, IFERROR,
+  COUNTIF, SUMIF, INDEX+MATCH, CONCATENATE, LEFT, ROUND/AVERAGE all verified
+  live; ~338-function catalog). Σ AutoSum writes the formula below the
+  selection like Excel.
+- **Fortune internals re-themed** — dialogs, right-click menus, sheet tabs,
+  tooltips, and scrollbars now follow the canvas design tokens; the duplicate
+  built-in formula row is hidden.
+
+### Added — slides, charts, i18n, versioning
+- **Slide elements rotate** (15° stepper + exact degrees, carried to PPTX and
+  print exports), **thumbnail drag-reorder**, and **image fit (cover/contain)
+  + corner radius**.
+- **Scatter and donut** chart types.
+- **`<Canvas locale="ko">`** — the entire chrome (toolbars, menus, states,
+  tooltips) localized; typed dictionary with English fallback.
+- **Durable version history** — `canvas.commit` events stamp described
+  snapshots; the version rail opens a popover listing them; an `onSave` hook
+  (debounced) plus a `CanvasStore` protocol with in-memory and filesystem
+  backends persists snapshots (Python: standard canvas tools with enforced
+  read-before-update).
+
+### Fixed
+- **Streamed tables no longer render empty.** Fortune's mount-echo onChange
+  could persist an empty pre-stream snapshot over the real rows; echoes are
+  now consumed, and persisted sheets are normalized (celldata rebuilt from the
+  runtime matrix) so remounts and CSV/XLSX exports read real cells.
+- **Type scales with the slide.** Free-slide text renders in container-query
+  units (px@1280 → cqw), so the editor, thumbnails, and present mode agree at
+  any width; PPTX export uses PowerPoint's true 16:9 page so px→pt
+  round-trips exactly; print-HTML dropped a long-standing ≈1.78× font
+  inflation. Round-trip on a real deck: 36→36 slides, 787→787 elements,
+  fontSize 28→28.
+- **Fill-less shapes are frames, not slabs** — imported outline-only
+  rectangles used to paint solid with the text color (black slabs over
+  content); editor, thumbnails, and both exports now draw transparent outline
+  frames.
+- Text paints past its box like PowerPoint (overflow visible) with matched
+  1.2 line-height; Excel number formats localize; the formula bar flattens
+  Fortune's syntax-highlight HTML to plain "=…" text; the PDF panel fills its
+  height and hides the browser viewer's UUID chrome.
+
+### Docs
+- README overhaul (EN/KO, root + npm): hero, badges, real screenshots,
+  verified feature groups; per-type contract table includes `pdf`.
+
 ## [0.2.0] — 2026-07-29
 
 A milestone release: Figma-grade slide editing, a real spreadsheet formatting
@@ -279,6 +362,7 @@ Republished via `pnpm publish` so the `publishConfig` dist-exports swap applies
 
 Initial published release.
 
+[0.3.0]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.3.0
 [0.2.0]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.2.0
 [0.1.15]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.15
 [0.1.14]: https://github.com/braincrew-lab/langchain-canvas/releases/tag/v0.1.14
