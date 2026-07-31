@@ -58,6 +58,7 @@ Every line is one JSON object discriminated by `type`.
 | `canvas.patch`    | `{ id, patch }`                 | JSON-merge-patch `patch` into `data`                    |
 | `canvas.replace`  | `{ id, artifact }`              | snapshot as a new version, bump `version`               |
 | `canvas.status`   | `{ id, status }`                | set `streaming` / `complete` / `error`                  |
+| `canvas.commit`   | `{ id, description, revision? }`| snapshot current state as a described version           |
 | `canvas.close`    | `{ id }`                        | mark closed (kept in history)                           |
 
 ### Control family

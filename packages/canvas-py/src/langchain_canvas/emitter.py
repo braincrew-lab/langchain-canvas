@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from .protocol.artifacts import Artifact, ChartSeries, Slide, TableColumn
 from .protocol.events import (
+    CanvasCommit,
     CanvasAppend,
     CanvasCreate,
     CanvasNodePatch,
@@ -178,6 +179,15 @@ class _Handle:
 
     def error(self) -> None:
         self._canvas._emit(CanvasStatus(id=self.id, status="error"))
+
+    def commit(self, description: str, revision: str | None = None) -> None:
+        """Promote the artifact's current state to a described version snapshot.
+
+        Emits ``canvas.commit`` — the client bumps the version rail and records
+        ``description`` in the history. Pass the store ``revision`` when a
+        ``CanvasStore`` backs the canvas so the client can stamp it.
+        """
+        self._canvas._emit(CanvasCommit(id=self.id, description=description, revision=revision))
 
 
 class HtmlHandle(_Handle):

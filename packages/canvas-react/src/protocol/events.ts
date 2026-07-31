@@ -78,6 +78,17 @@ export interface CanvasStatus {
   status: ArtifactStatus;
 }
 
+/**
+ * Promote the artifact's current state to a described version snapshot.
+ * `revision` is the opaque store revision when a CanvasStore backs the canvas.
+ */
+export interface CanvasCommit {
+  type: "canvas.commit";
+  id: string;
+  description: string;
+  revision?: string;
+}
+
 export interface CanvasClose {
   type: "canvas.close";
   id: string;
@@ -105,6 +116,7 @@ export type CanvasEvent =
   | CanvasNodePatch
   | CanvasReplace
   | CanvasStatus
+  | CanvasCommit
   | CanvasClose;
 
 export type StreamEvent = ChatEvent | CanvasEvent | ErrorEvent | DoneEvent;
