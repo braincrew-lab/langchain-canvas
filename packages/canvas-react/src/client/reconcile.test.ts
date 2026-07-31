@@ -72,17 +72,42 @@ describe("reduceCanvas", () => {
     expect(s.artifacts.a1.data).toEqual(before);
   });
 
-  it("canvas.commit promotes the current state to a described version snapshot", () => {
+  it("canvas.commit stamps the live tail as a described version (no duplicate snapshot)", () => {
     let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
     s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "edited" } });
-    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Manual edit: 1 change", revision: "v2" });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Manual edit: 1 change", revision: "v1" });
+
+    expect(s.history.a1).toHaveLength(1);
+    const latest = s.history.a1[0];
+    expect(latest.meta?.commitDescription).toBe("Manual edit: 1 change");
+    expect(latest.meta?.revision).toBe("v1");
+    expect((latest.data as { content: string }).content).toBe("edited");
+  });
+
+  it("content after a commit opens a new working entry — the committed snapshot stays frozen", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "First cut", revision: "v1" });
+    s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "reworked" } });
 
     expect(s.history.a1).toHaveLength(2);
-    const latest = s.history.a1[1];
-    expect(latest.version).toBe(2);
-    expect(latest.meta?.commitDescription).toBe("Manual edit: 1 change");
-    expect(latest.meta?.revision).toBe("v2");
-    expect(s.artifacts.a1.version).toBe(2);
+    const [frozen, working] = s.history.a1;
+    expect((frozen.data as { content: string }).content).toBe(""); // untouched
+    expect(frozen.meta?.commitDescription).toBe("First cut");
+    expect((working.data as { content: string }).content).toBe("reworked");
+    expect(working.meta?.commitDescription).toBeUndefined();
+    expect(working.meta?.revision).toBe("v1"); // save baseline carries over
+    expect(working.version).toBe(frozen.version + 1);
+  });
+
+  it("commit → patch → commit yields exactly one version per commit", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "First cut", revision: "v1" });
+    s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "reworked" } });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Rework", revision: "v2" });
+
+    expect(s.history.a1).toHaveLength(2);
+    expect(s.history.a1.map((v) => v.meta?.commitDescription)).toEqual(["First cut", "Rework"]);
+    expect(s.history.a1.map((v) => v.meta?.revision)).toEqual(["v1", "v2"]);
   });
 
   it("canvas.commit on an unknown id is a no-op", () => {

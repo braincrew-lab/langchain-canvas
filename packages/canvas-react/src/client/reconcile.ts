@@ -35,14 +35,14 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       const current = state.artifacts[event.id];
       if (!current) return state;
       const data = appendAtPath(current.data, event.path, event.text);
-      return replaceInPlace(state, { ...current, data });
+      return updateLive(state, { ...current, data });
     }
 
     case "canvas.patch": {
       const current = state.artifacts[event.id];
       if (!current) return state;
       const data = mergePatch(current.data, event.patch);
-      return replaceInPlace(state, { ...current, data });
+      return updateLive(state, { ...current, data });
     }
 
     case "canvas.node_patch": {
@@ -51,7 +51,7 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       if (!current || typeof html !== "string") return state;
       const next = applyNodePatch(html, event.cid, event.html);
       const data = { ...(current.data as Record<string, unknown>), html: next };
-      return replaceInPlace(state, { ...current, data });
+      return updateLive(state, { ...current, data });
     }
 
     case "canvas.replace":
@@ -66,16 +66,22 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
     case "canvas.commit": {
       const current = state.artifacts[event.id];
       if (!current) return state;
-      const snapshot: Artifact = {
+      const versions = state.history[event.id] ?? [];
+      const committed: Artifact = {
         ...current,
-        version: current.version + 1,
         meta: {
           ...(current.meta ?? {}),
           commitDescription: event.description,
           ...(event.revision ? { revision: event.revision } : {}),
         },
       };
-      return pushVersion(state, snapshot);
+      // A commit freezes what is already on screen as a described version — it
+      // stamps the live tail in place rather than pushing a duplicate snapshot.
+      return {
+        ...state,
+        artifacts: { ...state.artifacts, [event.id]: committed },
+        history: { ...state.history, [event.id]: [...versions.slice(0, -1), committed] },
+      };
     }
 
     case "canvas.close":
@@ -97,6 +103,26 @@ function create(state: CanvasState, artifact: Artifact): CanvasState {
     history: { ...state.history, [artifact.id]: [artifact] },
     order: known ? state.order : [...state.order, artifact.id],
     activeId: artifact.id,
+  };
+}
+
+/** Update the live artifact after a content change. A committed (described)
+ *  tail is frozen — new work opens a fresh working entry on top of it instead
+ *  of overwriting the snapshot. */
+function updateLive(state: CanvasState, artifact: Artifact): CanvasState {
+  const versions = state.history[artifact.id] ?? [];
+  const last = versions[versions.length - 1];
+  if (!last || typeof last.meta?.commitDescription !== "string") {
+    return replaceInPlace(state, artifact);
+  }
+  // Keep meta.revision (the save baseline) but drop the stale description so
+  // the new entry reads as work-in-progress, not as the previous commit.
+  const { commitDescription: _stale, ...meta } = artifact.meta ?? {};
+  const working: Artifact = { ...artifact, version: last.version + 1, meta };
+  return {
+    ...state,
+    artifacts: { ...state.artifacts, [artifact.id]: working },
+    history: { ...state.history, [artifact.id]: [...versions, working] },
   };
 }
 
