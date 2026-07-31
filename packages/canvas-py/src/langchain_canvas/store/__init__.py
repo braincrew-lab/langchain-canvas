@@ -10,6 +10,7 @@ from .base import (
     FileInfo,
     RevisionMismatchError,
 )
+from .filesystem import FileCanvasStore
 from .memory import InMemoryCanvasStore
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "CanvasStoreError",
     "Commit",
     "EditConflictError",
+    "FileCanvasStore",
     "FileContent",
     "FileInfo",
     "InMemoryCanvasStore",

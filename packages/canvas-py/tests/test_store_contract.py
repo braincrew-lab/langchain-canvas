@@ -8,6 +8,7 @@ internals, no revision-format assumptions beyond opacity.
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Callable
 
 import pytest
@@ -16,12 +17,14 @@ from langchain_canvas.store import (
     CanvasFileNotFoundError,
     CanvasStore,
     EditConflictError,
+    FileCanvasStore,
     InMemoryCanvasStore,
     RevisionMismatchError,
 )
 
 STORE_FACTORIES: dict[str, Callable[[], CanvasStore]] = {
     "memory": InMemoryCanvasStore,
+    "filesystem": lambda: FileCanvasStore(tempfile.mkdtemp(prefix="canvas-store-")),
 }
 
 

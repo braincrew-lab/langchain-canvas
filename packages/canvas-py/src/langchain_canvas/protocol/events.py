@@ -119,6 +119,19 @@ class CanvasStatus(_Event):
     status: ArtifactStatus
 
 
+class CanvasCommit(_Event):
+    """Promote the artifact's current state to a described version snapshot.
+
+    ``revision`` is the opaque store revision when a ``CanvasStore`` backs
+    the canvas (see ``langchain_canvas.store``).
+    """
+
+    type: Literal["canvas.commit"] = "canvas.commit"
+    id: str
+    description: str
+    revision: str | None = None
+
+
 class CanvasClose(_Event):
     type: Literal["canvas.close"] = "canvas.close"
     id: str
@@ -143,6 +156,7 @@ CanvasEvent = Union[
     CanvasNodePatch,
     CanvasReplace,
     CanvasStatus,
+    CanvasCommit,
     CanvasClose,
 ]
 

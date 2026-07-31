@@ -63,9 +63,28 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       return replaceInPlace(state, { ...current, status: event.status });
     }
 
+    case "canvas.commit": {
+      const current = state.artifacts[event.id];
+      if (!current) return state;
+      const snapshot: Artifact = {
+        ...current,
+        version: current.version + 1,
+        meta: {
+          ...(current.meta ?? {}),
+          commitDescription: event.description,
+          ...(event.revision ? { revision: event.revision } : {}),
+        },
+      };
+      return pushVersion(state, snapshot);
+    }
+
     case "canvas.close":
       // Keep the artifact and its history; just drop focus if it was active.
       return state.activeId === event.id ? { ...state, activeId: lastOf(state.order, event.id) } : state;
+
+    default:
+      // Unknown canvas.* (a newer server) must never wipe state — ignore it.
+      return state;
   }
 }
 
