@@ -19,6 +19,7 @@ import { RendererBoundary } from "./RendererBoundary";
 import { SelectionBar } from "./SelectionBar";
 import { StylePanel } from "./StylePanel";
 import { useCanvasImport } from "../hooks/useCanvasImport";
+import { useCanvasSave, type CanvasSaveHandler } from "../hooks/useCanvasSave";
 import { useCanvasStore } from "../hooks/useCanvasStore";
 import { CanvasLocaleProvider, useT, type CanvasLocale } from "../i18n/i18n";
 
@@ -45,20 +46,33 @@ export interface CanvasProps {
    * debounce further on the host before hitting the network.
    */
   onUserEdit?: (artifact: Artifact) => void;
+  /**
+   * Persist user edits: the debounced companion to `onUserEdit` (see
+   * `useCanvasSave`). Called after edits go quiet, with the artifact and the
+   * `baseRevision` to hand a store-backed save endpoint. When omitted, edits
+   * stay in-memory exactly as before.
+   */
+  onSave?: CanvasSaveHandler;
 }
 
-export function Canvas({ registry = builtinRenderers, locale, emptyState, onEditElement, onUserEdit }: CanvasProps) {
+export function Canvas({ registry = builtinRenderers, locale, emptyState, onEditElement, onUserEdit, onSave }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
       <CanvasLocaleProvider locale={locale}>
-        <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} />
+        <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} onSave={onSave} />
       </CanvasLocaleProvider>
     </CanvasRegistryProvider>
   );
 }
 
-function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps, "emptyState" | "onEditElement" | "onUserEdit">) {
+function CanvasPanel({
+  emptyState,
+  onEditElement,
+  onUserEdit,
+  onSave,
+}: Pick<CanvasProps, "emptyState" | "onEditElement" | "onUserEdit" | "onSave">) {
   const t = useT();
+  const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
@@ -70,9 +84,18 @@ function CanvasPanel({ emptyState, onEditElement, onUserEdit }: Pick<CanvasProps
 
   // Keep the store's write-back handler in sync with the latest prop.
   useEffect(() => {
-    setOnUserEdit(onUserEdit ?? null);
+    if (!onUserEdit && !debouncedSave) {
+      setOnUserEdit(null);
+      return;
+    }
+    // One store slot, two consumers: the host's immediate write-back and the
+    // debounced persistence saver share the same user-edit signal.
+    setOnUserEdit((artifact) => {
+      onUserEdit?.(artifact);
+      debouncedSave?.(artifact);
+    });
     return () => setOnUserEdit(null);
-  }, [onUserEdit, setOnUserEdit]);
+  }, [onUserEdit, debouncedSave, setOnUserEdit]);
 
   // Escape clears the current selection (closes the style panel / selection bar).
   // The in-iframe highlight is dropped by HtmlRenderer once selections empties.
@@ -160,10 +183,10 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
   // unclamped, `shown` goes undefined and the whole panel throws.
   const shown =
     viewIndex === null ? artifact : versions[Math.min(viewIndex, versions.length - 1)] ?? artifact;
-  // Browsing an old version is a preview, not an editing surface — renderers
-  // patch by artifact id, so edits made "in the past" would silently overwrite
-  // the live version (worse: node patches resolve v1 paths against v2 HTML).
-  const isHistory = viewIndex !== null && shown !== artifact;
+  // Historical snapshots are read-only previews: renderers patch by artifact id,
+  // so edits made "in the past" would silently overwrite the live version
+  // (worse: node patches resolve v1 paths against v2 HTML).
+  const viewingHistory = viewIndex !== null && shown !== artifact;
   const Renderer = useRenderer(shown.type);
 
   // Rendered HTML for export, with editor chrome (toolbars, nav, contenteditable)
@@ -189,8 +212,8 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
         <div className="cv-header__actions">
           <UndoRedo />
           {versions.length > 1 && (
-            <VersionRail
-              total={versions.length}
+            <VersionHistory
+              versions={versions}
               index={viewIndex ?? versions.length - 1}
               onSelect={(i) => setViewIndex(i === versions.length - 1 ? null : i)}
             />
@@ -199,17 +222,19 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
         </div>
       </header>
 
+      {viewingHistory && (
+        <div className="cv-history-banner" role="status">
+          v{Math.min((viewIndex ?? 0) + 1, versions.length)} / {versions.length} · {t("historyNote")}{" "}
+          <button onClick={() => setViewIndex(null)}>{t("backToLatest")}</button>
+        </div>
+      )}
+
       {/* spreadsheets own their own scroll — give them a flush, non-scrolling body */}
       <div
-        className={`cv-body${shown.type === "table" || shown.type === "pdf" ? " cv-body--flush" : ""}${isHistory ? " cv-body--history" : ""}`}
+        className={`cv-body${shown.type === "table" || shown.type === "pdf" ? " cv-body--flush" : ""}${viewingHistory ? " cv-body--history" : ""}`}
         ref={bodyRef}
-        aria-readonly={isHistory || undefined}
+        aria-readonly={viewingHistory || undefined}
       >
-        {isHistory && (
-          <div className="cv-history-note" role="status">
-            v{Math.min(viewIndex! + 1, versions.length)} · {t("historyNote")}
-          </div>
-        )}
         {Renderer ? (
           <RendererBoundary resetKey={`${shown.id}:${shown.version}`}>
             {/* Structured renderers are lazy (recharts / react-markdown / fortune-sheet
@@ -258,24 +283,72 @@ function UndoRedo() {
   );
 }
 
-function VersionRail({ total, index, onSelect }: { total: number; index: number; onSelect: (i: number) => void }) {
+/**
+ * Version rail plus a described-history popover. The rail keeps the old
+ * `‹ v2/5 ›` stepping; the label opens a list of snapshots with the commit
+ * descriptions stamped by `canvas.commit` (falling back to "Snapshot").
+ */
+function VersionHistory({
+  versions,
+  index,
+  onSelect,
+}: {
+  versions: Artifact[];
+  index: number;
+  onSelect: (i: number) => void;
+}) {
   const t = useT();
+  const [open, setOpen] = useState(false);
+  const total = versions.length;
+  const pick = (i: number) => {
+    setOpen(false);
+    onSelect(i);
+  };
   return (
     <div className="cv-versions" role="group" aria-label={t("versionHistory")}>
-      <button className="cv-versions__nav" disabled={index === 0} onClick={() => onSelect(index - 1)} aria-label={t("prevVersion")}>
+      <button className="cv-versions__nav" disabled={index === 0} onClick={() => pick(index - 1)} aria-label={t("prevVersion")}>
         ‹
       </button>
-      <span className="cv-versions__label">
+      <button
+        className="cv-versions__label"
+        aria-expanded={open}
+        aria-label="Open version history"
+        onClick={() => setOpen((v) => !v)}
+      >
         v{index + 1} / {total}
-      </span>
+      </button>
       <button
         className="cv-versions__nav"
         disabled={index === total - 1}
-        onClick={() => onSelect(index + 1)}
+        onClick={() => pick(index + 1)}
         aria-label={t("nextVersion")}
       >
         ›
       </button>
+      {open && (
+        <ul className="cv-versions__list" role="listbox" aria-label="Versions">
+          {versions
+            .map((snapshot, i) => ({ snapshot, i }))
+            .reverse()
+            .map(({ snapshot, i }) => (
+              <li key={i}>
+                <button
+                  role="option"
+                  aria-selected={i === index}
+                  className={i === index ? "is-current" : undefined}
+                  onClick={() => pick(i)}
+                >
+                  <span className="cv-versions__v">v{i + 1}</span>
+                  <span className="cv-versions__desc">
+                    {typeof snapshot.meta?.commitDescription === "string"
+                      ? snapshot.meta.commitDescription
+                      : "Snapshot"}
+                  </span>
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
     </div>
   );
 }

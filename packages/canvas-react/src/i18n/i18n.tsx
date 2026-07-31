@@ -29,6 +29,7 @@ const MESSAGES = {
   versionHistory: { en: "Version history", ko: "버전 기록" },
   prevVersion: { en: "Previous version", ko: "이전 버전" },
   nextVersion: { en: "Next version", ko: "다음 버전" },
+  backToLatest: { en: "Back to latest", ko: "최신으로 돌아가기" },
   historyNote: {
     en: "read-only — select the latest version to edit",
     ko: "읽기 전용 — 편집하려면 최신 버전을 선택하세요",

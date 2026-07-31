@@ -202,6 +202,36 @@ const slides: Scenario = {
   ],
 };
 
+// --- versions: create → edit → described commits --------------------------------
+
+const VERSIONED_HTML = `<!doctype html><html><body style="font-family:sans-serif;padding:40px">
+<h1>Coffee history</h1><p>From the Ethiopian highlands to the espresso bar.</p>
+</body></html>`;
+
+const versions: Scenario = {
+  id: "versions",
+  title: "Version history",
+  description:
+    "An agent builds a page, a user edit and an agent edit each land as described commits — open the version rail to browse and restore-view snapshots.",
+  events: [
+    { type: "message.delta", messageId: "m1", text: "Built the page — every change now lands in the version history." },
+    { type: "message.end", messageId: "m1" },
+    {
+      type: "canvas.create",
+      artifact: { id: "page", type: "html", title: "Coffee history", version: 1, status: "streaming", data: { html: VERSIONED_HTML } },
+    },
+    { type: "canvas.status", id: "page", status: "complete" },
+    { type: "canvas.commit", id: "page", description: "Create page", revision: "v1" },
+    // A human tweaks the headline by hand, then saves — one described commit.
+    { type: "canvas.patch", id: "page", patch: { html: VERSIONED_HTML.replace("Coffee history", "A short history of coffee") } },
+    { type: "canvas.commit", id: "page", description: "Manual edit: 1 change", revision: "v2" },
+    // The agent applies a targeted follow-up edit on the current state.
+    { type: "canvas.patch", id: "page", patch: { html: VERSIONED_HTML.replace("Coffee history", "A short history of coffee").replace("espresso bar", "third-wave café") } },
+    { type: "canvas.commit", id: "page", description: "Update closing phrase", revision: "v3" },
+    { type: "done" },
+  ],
+};
+
 // --- pdf: the browser's native viewer -------------------------------------------
 
 /** A complete one-page PDF (self-contained data: URL) for the native viewer. */
@@ -288,4 +318,4 @@ const hwp: Scenario = {
   ],
 };
 
-export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides, pdf, hwp];
+export const scenarios: Scenario[] = [htmlPage, document, chart, table, slides, pdf, hwp, versions];

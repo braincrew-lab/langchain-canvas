@@ -6,6 +6,28 @@ on:
   pull_request:
 
 jobs:
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/canvas-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Scoped to the store module for now: the rest of src has pre-existing
+      # findings (mostly auto-fixable) that deserve their own cleanup PR.
+      # Widen to `src tests` once that lands.
+      - name: Lint
+        run: uv run --extra dev ruff check src/langchain_canvas/store src/langchain_canvas/tools.py tests
+
+      - name: Typecheck
+        run: uv run --extra dev mypy src
+
+      - name: Test
+        run: uv run --extra dev pytest tests -q
+
   build:
     runs-on: ubuntu-latest
     steps:

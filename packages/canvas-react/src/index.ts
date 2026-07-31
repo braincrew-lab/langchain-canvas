@@ -27,6 +27,8 @@ export { useCanvasStream } from "./hooks/useCanvasStream";
 export type { UseCanvasStreamOptions } from "./hooks/useCanvasStream";
 export { useCanvasReplay } from "./hooks/useCanvasReplay";
 export { useArtifactPatch } from "./hooks/useArtifactPatch";
+export { useCanvasSave } from "./hooks/useCanvasSave";
+export type { CanvasSaveHandler, CanvasSavePayload } from "./hooks/useCanvasSave";
 
 // schema fixtures — render the canvas with no backend
 export { scenarios } from "./fixtures/scenarios";
