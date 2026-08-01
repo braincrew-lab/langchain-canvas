@@ -5,7 +5,7 @@ description = "langchain-canvas + deepagents on langgraph dev, bridged to the re
 requires-python = ">=3.11"
 dependencies = [
     "langchain-canvas",
-    "deepagents>=0.4.3,<0.5",
+    "deepagents>=0.4.3",
     "langchain-aws>=0.2",
     "langgraph-cli[inmem]>=0.4.2",
     "langgraph-sdk>=0.1.60",
