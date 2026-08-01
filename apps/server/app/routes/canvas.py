@@ -15,13 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from langchain_canvas.protocol import (
-    Artifact,
-    CanvasCommit,
-    CanvasCreate,
-    CanvasPatch,
-    CanvasStatus,
-)
+from langchain_canvas import hydrate_events
 from langchain_canvas.store import CanvasFileNotFoundError, RevisionMismatchError
 
 from ..agent.store import MANIFEST_PATH, PAGE_PATH, SLIDE_META, STORE
@@ -41,46 +35,14 @@ def _slide_titles(thread_id: str) -> dict[str, str]:
 @router.get("/api/canvas/{thread_id}")
 def hydrate(thread_id: str) -> list[dict]:
     """Wire events reconstructing the thread's canvas, oldest commit first."""
-    commits = list(reversed(STORE.history(thread_id)))  # oldest first
     slides = _slide_titles(thread_id)
-    events: list[dict] = []
-    seen: set[str] = set()
-    for commit in commits:
-        for path in commit.paths:
-            if not path.endswith(".html"):
-                continue
-            content = STORE.read(thread_id, path, revision=commit.revision).content
-            if path not in seen:
-                seen.add(path)
-                events.append(
-                    CanvasCreate(
-                        artifact=Artifact(
-                            id=path,
-                            type="html",
-                            title=slides.get(path, path),
-                            data={"html": content},
-                            # A slide file re-renders at its fixed 16:9 ratio.
-                            meta=SLIDE_META if path in slides else None,
-                        )
-                    ).model_dump(by_alias=True, exclude_none=True)
-                )
-                events.append(
-                    CanvasStatus(id=path, status="complete").model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                )
-            else:
-                events.append(
-                    CanvasPatch(id=path, patch={"html": content}).model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                )
-            events.append(
-                CanvasCommit(
-                    id=path, description=commit.description, revision=commit.revision
-                ).model_dump(by_alias=True, exclude_none=True)
-            )
-    return events
+    return hydrate_events(
+        STORE,
+        thread_id,
+        title_for=lambda path: slides.get(path, path),
+        # A slide file re-renders at its fixed 16:9 ratio.
+        meta_for=lambda path: SLIDE_META if path in slides else None,
+    )
 
 
 class SaveRequest(BaseModel):
