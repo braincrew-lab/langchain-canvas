@@ -1,10 +1,11 @@
-"""Replay a canvas's stored history as wire events.
+"""Wire events for store commits — live emission and reload replay.
 
-A client that reloads mid-conversation has an empty canvas; the server answers
-its hydrate request by replaying the store's commit log as the same wire
-events a live run would have produced (create → status → patch → commit).
-:func:`hydrate_events` is that replay, shared by every server that persists
-through a :class:`~langchain_canvas.store.CanvasStore`.
+One commit to an ``.html`` file maps to one small event sequence: a
+``canvas.create`` (+ ``complete`` status) the first time the file appears, a
+``canvas.patch`` on later changes, and always a ``canvas.commit``.
+:func:`events_for_commit` builds that sequence; the standard tools emit it
+live during a run, and :func:`hydrate_events` replays it from history when a
+client reloads — so both paths draw the same canvas.
 """
 
 from __future__ import annotations
@@ -14,6 +15,52 @@ from typing import Any
 
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import CanvasStore
+
+
+def events_for_commit(
+    path: str,
+    content: str,
+    *,
+    is_new: bool,
+    revision: str,
+    description: str,
+    title: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> list[dict]:
+    """The wire events one committed ``.html`` change produces.
+
+    First appearance (``is_new``): create + complete status; later changes:
+    a whole-content patch. Both end with the described ``canvas.commit`` so
+    the client records the version.
+    """
+    events: list[dict] = []
+    if is_new:
+        events.append(
+            CanvasCreate(
+                artifact=Artifact(
+                    id=path,
+                    type="html",
+                    title=title or path,
+                    data={"html": content},
+                    meta=meta,
+                )
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
+        events.append(
+            CanvasStatus(id=path, status="complete").model_dump(by_alias=True, exclude_none=True)
+        )
+    else:
+        events.append(
+            CanvasPatch(id=path, patch={"html": content}).model_dump(
+                by_alias=True, exclude_none=True
+            )
+        )
+    events.append(
+        CanvasCommit(id=path, description=description, revision=revision).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+    return events
 
 
 def hydrate_events(
@@ -42,33 +89,16 @@ def hydrate_events(
             if not path.endswith(".html"):
                 continue
             content = store.read(canvas_id, path, revision=commit.revision).content
-            if path not in seen:
-                seen.add(path)
-                events.append(
-                    CanvasCreate(
-                        artifact=Artifact(
-                            id=path,
-                            type="html",
-                            title=title_for(path) if title_for else path,
-                            data={"html": content},
-                            meta=meta_for(path) if meta_for else None,
-                        )
-                    ).model_dump(by_alias=True, exclude_none=True)
+            events.extend(
+                events_for_commit(
+                    path,
+                    content,
+                    is_new=path not in seen,
+                    revision=commit.revision,
+                    description=commit.description,
+                    title=title_for(path) if title_for else None,
+                    meta=meta_for(path) if meta_for else None,
                 )
-                events.append(
-                    CanvasStatus(id=path, status="complete").model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                )
-            else:
-                events.append(
-                    CanvasPatch(id=path, patch={"html": content}).model_dump(
-                        by_alias=True, exclude_none=True
-                    )
-                )
-            events.append(
-                CanvasCommit(
-                    id=path, description=commit.description, revision=commit.revision
-                ).model_dump(by_alias=True, exclude_none=True)
             )
+            seen.add(path)
     return events

@@ -172,3 +172,120 @@ def test_tool_writes_produce_described_history() -> None:
         revision=revision,
     )
     assert [c.description for c in store.history("t1")] == ["Fix wording", "Create"]
+
+
+# --- live broadcast --------------------------------------------------------------
+
+
+@dataclass
+class _StreamingRuntime(_Runtime):
+    """Runtime with a collecting stream writer, like a live LangGraph run."""
+
+    events: list[dict] = field(default_factory=list)
+
+    @property
+    def stream_writer(self):  # noqa: ANN201 — mirrors ToolRuntime's attribute
+        return self.events.append
+
+
+def _streaming_runtime(thread_id: str) -> _StreamingRuntime:
+    return _StreamingRuntime(config={"configurable": {"thread_id": thread_id}})
+
+
+def test_write_broadcasts_create_then_patch() -> None:
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    runtime = _streaming_runtime("t1")
+    _invoke(tools["write_canvas"], runtime, path="a.html", content="<p>1</p>", description="create")
+    revision = store.read("t1", "a.html").revision
+    _invoke(
+        tools["write_canvas"],
+        runtime,
+        path="a.html",
+        content="<p>2</p>",
+        description="rewrite",
+        revision=revision,
+    )
+    kinds = [e["type"] for e in runtime.events]
+    assert kinds == [
+        "canvas.create",
+        "canvas.status",
+        "canvas.commit",
+        "canvas.patch",
+        "canvas.commit",
+    ]
+    assert runtime.events[0]["artifact"]["data"]["html"] == "<p>1</p>"
+    assert runtime.events[3]["patch"]["html"] == "<p>2</p>"
+
+
+def test_edit_broadcasts_patch_and_commit() -> None:
+    store = InMemoryCanvasStore()
+    commit = store.write("t1", "a.html", "<p>one</p>", "create")
+    runtime = _streaming_runtime("t1")
+    _invoke(
+        _tools(store)["edit_canvas"],
+        runtime,
+        path="a.html",
+        old="one",
+        new="two",
+        description="tweak",
+        revision=commit.revision,
+    )
+    kinds = [e["type"] for e in runtime.events]
+    assert kinds == ["canvas.patch", "canvas.commit"]
+    assert runtime.events[0]["patch"]["html"] == "<p>two</p>"
+    assert runtime.events[1]["description"] == "tweak"
+
+
+def test_non_html_and_failed_writes_broadcast_nothing() -> None:
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    runtime = _streaming_runtime("t1")
+    _invoke(tools["write_canvas"], runtime, path="notes.md", content="hi", description="notes")
+    stale = store.write("t1", "a.html", "one", "create")
+    store.write("t1", "a.html", "two", "human edit")
+    events_before = list(runtime.events)
+    _invoke(
+        tools["write_canvas"],
+        runtime,
+        path="a.html",
+        content="three",
+        description="stale",
+        revision=stale.revision,
+    )
+    assert runtime.events == events_before  # rejected write emits nothing
+
+
+def test_no_stream_writer_is_a_silent_noop() -> None:
+    store = InMemoryCanvasStore()
+    out = _invoke(
+        _tools(store)["write_canvas"],
+        _runtime(thread_id="t1"),
+        path="a.html",
+        content="<p>hi</p>",
+        description="create",
+    )
+    assert out.startswith("Wrote a.html")
+
+
+def test_broadcast_applies_title_and_meta_conventions() -> None:
+    store = InMemoryCanvasStore()
+    tools = {
+        t.name: t
+        for t in create_canvas_tools(
+            store,
+            title_for=lambda path: "Intro" if path == "01-intro.html" else path,
+            meta_for=lambda path: {"kind": "slide", "ratio": "16:9"},
+        )
+    }
+    runtime = _streaming_runtime("t1")
+    _invoke(
+        tools["write_canvas"],
+        runtime,
+        path="01-intro.html",
+        content="<p>s</p>",
+        description="slide",
+    )
+    artifact = runtime.events[0]["artifact"]
+    assert artifact["title"] == "Intro"
+    assert artifact["meta"] == {"kind": "slide", "ratio": "16:9"}
