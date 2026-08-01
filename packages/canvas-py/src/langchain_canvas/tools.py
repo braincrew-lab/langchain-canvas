@@ -104,7 +104,12 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         """
         try:
             commit = store.write(
-                _canvas_id(runtime), path, content, description, base_revision=revision
+                _canvas_id(runtime),
+                path,
+                content,
+                description,
+                base_revision=revision,
+                actor="agent",
             )
         except RevisionMismatchError as exc:
             return f"Error: {exc}. {_RETRY_HINT}"
@@ -131,7 +136,13 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         """
         try:
             commit = store.edit(
-                _canvas_id(runtime), path, old, new, description, base_revision=revision
+                _canvas_id(runtime),
+                path,
+                old,
+                new,
+                description,
+                base_revision=revision,
+                actor="agent",
             )
         except RevisionMismatchError as exc:
             return f"Error: {exc}. {_RETRY_HINT}"

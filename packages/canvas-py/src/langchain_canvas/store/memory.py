@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 
 from .base import (
+    AsyncFromSyncMixin,
     CanvasFileNotFoundError,
     CanvasNotFoundError,
     Commit,
@@ -19,6 +20,7 @@ from .base import (
     FileInfo,
     RevisionMismatchError,
     RevisionNotFoundError,
+    utcnow,
     validate_canvas_id,
     validate_relpath,
 )
@@ -34,7 +36,7 @@ class _CanvasRecord:
     counter: int = 0
 
 
-class InMemoryCanvasStore:
+class InMemoryCanvasStore(AsyncFromSyncMixin):
     """Dict-backed :class:`~langchain_canvas.store.base.CanvasStore`."""
 
     def __init__(self) -> None:
@@ -68,11 +70,12 @@ class InMemoryCanvasStore:
             for path, content in sorted(record.files.items())
         ]
 
-    def history(self, canvas_id: str) -> list[Commit]:
+    def history(self, canvas_id: str, limit: int | None = None) -> list[Commit]:
         record = self._canvases.get(canvas_id)
         if record is None:
             return []
-        return list(reversed(record.commits))
+        commits = list(reversed(record.commits))
+        return commits[:limit] if limit is not None else commits
 
     # --- writes ------------------------------------------------------------------
 
@@ -83,6 +86,7 @@ class InMemoryCanvasStore:
         content: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         validate_canvas_id(canvas_id)
         validate_relpath(path)
@@ -90,7 +94,7 @@ class InMemoryCanvasStore:
             record = self._canvases.setdefault(canvas_id, _CanvasRecord())
             self._check_base(record, base_revision)
             record.files[path] = content
-            return self._commit(record, description, [path])
+            return self._commit(record, description, [path], actor)
 
     def edit(
         self,
@@ -100,6 +104,7 @@ class InMemoryCanvasStore:
         new: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         validate_canvas_id(canvas_id)
         validate_relpath(path)
@@ -117,7 +122,7 @@ class InMemoryCanvasStore:
                     f"old string matches {occurrences} times in {path!r} — must be unique"
                 )
             record.files[path] = current.replace(old, new, 1)
-            return self._commit(record, description, [path])
+            return self._commit(record, description, [path], actor)
 
     # --- internals ---------------------------------------------------------------
 
@@ -136,9 +141,17 @@ class InMemoryCanvasStore:
             raise RevisionMismatchError(f"base revision {base_revision!r} is behind head {head!r}")
 
     @staticmethod
-    def _commit(record: _CanvasRecord, description: str, paths: list[str]) -> Commit:
+    def _commit(
+        record: _CanvasRecord, description: str, paths: list[str], actor: str | None
+    ) -> Commit:
         record.counter += 1
-        commit = Commit(revision=f"v{record.counter}", description=description, paths=paths)
+        commit = Commit(
+            revision=f"v{record.counter}",
+            description=description,
+            paths=paths,
+            created_at=utcnow(),
+            actor=actor,
+        )
         record.commits.append(commit)
         record.snapshots[commit.revision] = dict(record.files)
         return commit

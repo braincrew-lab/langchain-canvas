@@ -29,6 +29,7 @@ import threading
 from pathlib import Path
 
 from .base import (
+    AsyncFromSyncMixin,
     CanvasFileNotFoundError,
     CanvasNotFoundError,
     CanvasStoreError,
@@ -38,6 +39,7 @@ from .base import (
     FileInfo,
     RevisionMismatchError,
     RevisionNotFoundError,
+    utcnow,
     validate_canvas_id,
     validate_relpath,
 )
@@ -59,7 +61,7 @@ def _safe_relpath(path: str) -> Path:
     return Path(validate_relpath(path))
 
 
-class FileCanvasStore:
+class FileCanvasStore(AsyncFromSyncMixin):
     """Directory-backed :class:`~langchain_canvas.store.base.CanvasStore`."""
 
     def __init__(self, root: str | Path) -> None:
@@ -100,8 +102,9 @@ class FileCanvasStore:
         ]
         return infos
 
-    def history(self, canvas_id: str) -> list[Commit]:
-        return list(reversed(self._commits(self._canvas_dir(canvas_id))))
+    def history(self, canvas_id: str, limit: int | None = None) -> list[Commit]:
+        commits = list(reversed(self._commits(self._canvas_dir(canvas_id))))
+        return commits[:limit] if limit is not None else commits
 
     # --- writes ------------------------------------------------------------------
 
@@ -112,6 +115,7 @@ class FileCanvasStore:
         content: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
@@ -120,7 +124,7 @@ class FileCanvasStore:
             target = canvas_dir / _HEAD / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, "utf-8")
-            return self._commit(canvas_dir, description, [path])
+            return self._commit(canvas_dir, description, [path], actor)
 
     def edit(
         self,
@@ -130,6 +134,7 @@ class FileCanvasStore:
         new: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         target = canvas_dir / _HEAD / _safe_relpath(path)
@@ -146,7 +151,7 @@ class FileCanvasStore:
                     f"old string matches {occurrences} times in {path!r} — must be unique"
                 )
             target.write_text(current.replace(old, new, 1), "utf-8")
-            return self._commit(canvas_dir, description, [path])
+            return self._commit(canvas_dir, description, [path], actor)
 
     # --- internals ---------------------------------------------------------------
 
@@ -173,9 +178,17 @@ class FileCanvasStore:
         if base_revision != head:
             raise RevisionMismatchError(f"base revision {base_revision!r} is behind head {head!r}")
 
-    def _commit(self, canvas_dir: Path, description: str, paths: list[str]) -> Commit:
+    def _commit(
+        self, canvas_dir: Path, description: str, paths: list[str], actor: str | None
+    ) -> Commit:
         commits = self._commits(canvas_dir)
-        commit = Commit(revision=f"v{len(commits) + 1}", description=description, paths=paths)
+        commit = Commit(
+            revision=f"v{len(commits) + 1}",
+            description=description,
+            paths=paths,
+            created_at=utcnow(),
+            actor=actor,
+        )
         snapshot_dir = canvas_dir / _HISTORY / _SNAPSHOTS / commit.revision
         shutil.copytree(canvas_dir / _HEAD, snapshot_dir)
         log = canvas_dir / _HISTORY / _COMMITS_LOG

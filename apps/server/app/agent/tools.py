@@ -76,7 +76,7 @@ def build_page(brief: str, runtime: ToolRuntime) -> str:
     )
     html = _strip_code_fence(_text_of(model.invoke(prompt)))
     description = f"Create page: {brief[:50]}"
-    commit = STORE.write(thread_id(runtime), PAGE_PATH, html, description)
+    commit = STORE.write(thread_id(runtime), PAGE_PATH, html, description, actor="agent")
     page.set_html(html)
     page.complete()
     page.commit(description, revision=commit.revision)
@@ -125,7 +125,7 @@ def edit_page(
     """
     tid = thread_id(runtime)
     try:
-        commit = STORE.edit(tid, path, old, new, description, base_revision=revision)
+        commit = STORE.edit(tid, path, old, new, description, base_revision=revision, actor="agent")
     except (RevisionMismatchError, EditConflictError) as exc:
         return f"Error: {exc}. Call read_page again and retry with the fresh revision."
     except CanvasFileNotFoundError:
@@ -167,6 +167,7 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
         MANIFEST_PATH,
         json.dumps(manifest, ensure_ascii=False, indent=2),
         f"Plan deck: {title} ({len(slides)} slides)",
+        actor="agent",
     )
     listing = "\n".join(f"- {s['file']}: {s['title']}" for s in slides)
     return f"Deck planned (revision {commit.revision}). Write these slides in order:\n{listing}"
@@ -188,7 +189,7 @@ def write_slide(file: str, title: str, brief: str, runtime: ToolRuntime) -> str:
     prompt = f"Create one presentation slide as a single HTML document.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
     html = _strip_code_fence(_text_of(model.invoke(prompt)))
     description = f"Write slide: {title[:50]}"
-    commit = STORE.write(thread_id(runtime), file, html, description)
+    commit = STORE.write(thread_id(runtime), file, html, description, actor="agent")
     slide.set_html(html)
     slide.complete()
     slide.commit(description, revision=commit.revision)
