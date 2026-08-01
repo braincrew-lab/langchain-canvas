@@ -194,3 +194,35 @@ def test_malformed_canvas_ids_rejected(store: CanvasStore, bad_id: str) -> None:
 
     with pytest.raises(CanvasStoreError):
         store.write(bad_id, "a.html", "content", "should not land")
+
+
+def test_commit_records_when_and_who(store: CanvasStore) -> None:
+    commit = store.write("c1", "page.html", "<p>hi</p>", "create", actor="human")
+    assert commit.actor == "human"
+    assert commit.created_at is not None
+    assert commit.created_at.tzinfo is not None  # timezone-aware (UTC)
+    unattributed = store.write("c1", "page.html", "<p>hi2</p>", "again")
+    assert unattributed.actor is None
+
+
+def test_history_limit(store: CanvasStore) -> None:
+    for i in range(5):
+        store.write("c1", "page.html", f"<p>{i}</p>", f"change {i}")
+    top_two = store.history("c1", limit=2)
+    assert [c.description for c in top_two] == ["change 4", "change 3"]
+    assert len(store.history("c1")) == 5
+
+
+async def test_async_twins_roundtrip(store: CanvasStore) -> None:
+    commit = await store.awrite("c1", "page.html", "<p>hi</p>", "create", actor="agent")
+    got = await store.aread("c1", "page.html")
+    assert got.content == "<p>hi</p>"
+    assert got.revision == commit.revision
+    edited = await store.aedit(
+        "c1", "page.html", "hi", "bye", "tweak", base_revision=commit.revision
+    )
+    assert (await store.aread("c1", "page.html")).content == "<p>bye</p>"
+    files = await store.alist_files("c1")
+    assert [f.path for f in files] == ["page.html"]
+    commits = await store.ahistory("c1", limit=1)
+    assert commits[0].revision == edited.revision

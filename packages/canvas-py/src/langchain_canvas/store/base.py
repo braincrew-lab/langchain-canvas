@@ -19,9 +19,16 @@ contract test suite in ``tests/test_store_contract.py``.
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+
+def utcnow() -> datetime:
+    """Timezone-aware UTC timestamp for :attr:`Commit.created_at`."""
+    return datetime.now(UTC)
 
 # --- data shapes -----------------------------------------------------------------
 
@@ -55,6 +62,14 @@ class Commit(BaseModel):
     description: str
     paths: list[str]
     """Files touched by this commit."""
+
+    created_at: datetime | None = None
+    """When the commit was made (UTC). Stores stamp this on every new commit;
+    ``None`` only appears on records written before the field existed."""
+
+    actor: str | None = None
+    """Who made the commit — free-form (``"agent"``, ``"human"``, a user id).
+    ``None`` when the caller did not say."""
 
 
 # --- shared validation -----------------------------------------------------------
@@ -161,12 +176,14 @@ class CanvasStore(Protocol):
         content: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         """Create or fully replace one file, as a new commit.
 
         ``base_revision`` (from a prior ``read``) enables optimistic
         concurrency: if given and the canvas head has moved past it,
         :class:`RevisionMismatchError` is raised instead of overwriting.
+        ``actor`` is recorded on the commit (see :attr:`Commit.actor`).
         """
         ...
 
@@ -178,6 +195,7 @@ class CanvasStore(Protocol):
         new: str,
         description: str,
         base_revision: str | None = None,
+        actor: str | None = None,
     ) -> Commit:
         """Replace exactly one occurrence of ``old`` with ``new`` in one file.
 
@@ -191,6 +209,107 @@ class CanvasStore(Protocol):
         """List the canvas's files at head. Unknown canvas -> empty list."""
         ...
 
-    def history(self, canvas_id: str) -> list[Commit]:
-        """All commits, newest first. Unknown canvas -> empty list."""
+    def history(self, canvas_id: str, limit: int | None = None) -> list[Commit]:
+        """Commits, newest first; at most ``limit`` when given.
+
+        Unknown canvas -> empty list.
+        """
         ...
+
+    # --- async twins (a-prefixed, same contracts as above) -----------------------
+
+    async def aread(self, canvas_id: str, path: str, revision: str | None = None) -> FileContent:
+        """Async :meth:`read`."""
+        ...
+
+    async def awrite(
+        self,
+        canvas_id: str,
+        path: str,
+        content: str,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        """Async :meth:`write`."""
+        ...
+
+    async def aedit(
+        self,
+        canvas_id: str,
+        path: str,
+        old: str,
+        new: str,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        """Async :meth:`edit`."""
+        ...
+
+    async def alist_files(self, canvas_id: str) -> list[FileInfo]:
+        """Async :meth:`list_files`."""
+        ...
+
+    async def ahistory(self, canvas_id: str, limit: int | None = None) -> list[Commit]:
+        """Async :meth:`history`."""
+        ...
+
+
+class AsyncFromSyncMixin:
+    """Async ``a*`` methods that run the store's sync methods on a worker thread.
+
+    A sync store (like the built-in in-memory and filesystem backends) inherits
+    this to satisfy the async half of :class:`CanvasStore` without blocking the
+    event loop. Natively-async backends implement the ``a*`` methods directly
+    instead.
+    """
+
+    async def aread(self, canvas_id: str, path: str, revision: str | None = None) -> FileContent:
+        return await asyncio.to_thread(self.read, canvas_id, path, revision)  # type: ignore[attr-defined]
+
+    async def awrite(
+        self,
+        canvas_id: str,
+        path: str,
+        content: str,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        return await asyncio.to_thread(
+            self.write,  # type: ignore[attr-defined]
+            canvas_id,
+            path,
+            content,
+            description,
+            base_revision,
+            actor,
+        )
+
+    async def aedit(
+        self,
+        canvas_id: str,
+        path: str,
+        old: str,
+        new: str,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        return await asyncio.to_thread(
+            self.edit,  # type: ignore[attr-defined]
+            canvas_id,
+            path,
+            old,
+            new,
+            description,
+            base_revision,
+            actor,
+        )
+
+    async def alist_files(self, canvas_id: str) -> list[FileInfo]:
+        return await asyncio.to_thread(self.list_files, canvas_id)  # type: ignore[attr-defined]
+
+    async def ahistory(self, canvas_id: str, limit: int | None = None) -> list[Commit]:
+        return await asyncio.to_thread(self.history, canvas_id, limit)  # type: ignore[attr-defined]

@@ -101,6 +101,7 @@ def save(thread_id: str, request: SaveRequest) -> dict:
             request.html,
             request.description,
             base_revision=request.base_revision,
+            actor="human",
         )
     except RevisionMismatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
