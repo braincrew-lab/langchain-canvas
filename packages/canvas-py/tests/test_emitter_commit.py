@@ -24,6 +24,24 @@ def test_handle_commit_emits_wire_event() -> None:
     }
 
 
+def test_open_html_meta_rides_the_create_event() -> None:
+    events: list[dict[str, Any]] = []
+    canvas = Canvas(events.append)
+    canvas.open_html(title="Slide 1", id="01-intro.html", meta={"kind": "slide", "ratio": "16:9"})
+
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert create["artifact"]["meta"] == {"kind": "slide", "ratio": "16:9"}
+
+
+def test_open_html_without_meta_keeps_the_wire_lean() -> None:
+    events: list[dict[str, Any]] = []
+    canvas = Canvas(events.append)
+    canvas.open_html(title="Page")
+
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert "meta" not in create["artifact"]  # exclude_none drops it
+
+
 def test_commit_without_revision_omits_the_field() -> None:
     events: list[dict[str, Any]] = []
     canvas = Canvas(events.append)
