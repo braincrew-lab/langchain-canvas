@@ -25,3 +25,6 @@ __pycache__/
 # Reference server demo data (per-thread canvas store)
 apps/server/canvas-data/
 apps/server/uv.lock
+examples/deepagents-canvas/canvas-data/
+examples/deepagents-canvas/uv.lock
+examples/deepagents-canvas/.langgraph_api/

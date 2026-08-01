@@ -19,6 +19,7 @@ export * from "./protocol";
 
 // low-level client (reconciler + SSE parser) for headless integrations
 export * from "./client";
+export * from "./transports";
 
 // store + hooks
 export { CanvasProvider, useCanvasStore, useCanvasStoreApi, createCanvasStore } from "./hooks/useCanvasStore";

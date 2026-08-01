@@ -1,13 +1,15 @@
 "use client";
 
 /**
- * Chat demo — live against the reference server (`apps/server`, port 8000).
- * The canvas is persistent per thread: on load the stored history is replayed
+ * Chat demo — live against the reference server (`apps/server`, port 8000) by
+ * default, or straight against a LangGraph server when
+ * `NEXT_PUBLIC_LANGGRAPH_URL` is set (see `examples/deepagents-canvas`). The
+ * canvas is persistent per thread: on load the stored history is replayed
  * (hydration), and hand edits are saved back as described commits. Scripted
  * offline playback lives on the `/replay` page.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Canvas,
@@ -16,6 +18,7 @@ import {
   type CanvasSaveHandler,
   type StreamEvent,
 } from "@braincrew-lab/langchain-canvas";
+import { langgraphTransport } from "@braincrew-lab/langchain-canvas/langgraph";
 
 import { Chat } from "../../components/Chat";
 
@@ -27,7 +30,11 @@ const SUGGESTIONS = [
   "Design a 3-slide pitch deck",
 ];
 
-const SERVER = "http://localhost:8000";
+/** Store server: chat (default mode) + canvas hydrate/save (both modes). */
+const SERVER = process.env.NEXT_PUBLIC_CANVAS_SERVER ?? "http://localhost:8000";
+/** Set to a LangGraph server URL (e.g. http://127.0.0.1:2024) to chat directly. */
+const LANGGRAPH_URL = process.env.NEXT_PUBLIC_LANGGRAPH_URL;
+const LANGGRAPH_ASSISTANT = process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT ?? "canvas_agent";
 
 /** Stable per-browser thread id so the canvas survives reloads. */
 function usePersistentThreadId(): string {
@@ -44,7 +51,14 @@ function usePersistentThreadId(): string {
 
 export default function ChatPage() {
   const threadId = usePersistentThreadId();
-  const stream = useCanvasStream({ endpoint: `${SERVER}/api/chat`, threadId });
+  const transport = useMemo(
+    () =>
+      LANGGRAPH_URL
+        ? langgraphTransport({ url: LANGGRAPH_URL, assistantId: LANGGRAPH_ASSISTANT })
+        : undefined,
+    [],
+  );
+  const stream = useCanvasStream({ transport, endpoint: `${SERVER}/api/chat`, threadId });
   const applyEvents = useCanvasStore((s) => s.applyEvents);
   const applyEvent = useCanvasStore((s) => s.applyEvent);
 

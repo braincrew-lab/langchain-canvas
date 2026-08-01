@@ -1,0 +1,2294 @@
+[
+  {
+    "event": "metadata",
+    "data": {
+      "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+      "attempt": 1
+    }
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "write_canvas",
+            "id": "tooluse_PflQDHgbFPMgtWxa1BjpdN",
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [
+          {
+            "name": "write_canvas",
+            "args": {},
+            "id": "tooluse_PflQDHgbFPMgtWxa1BjpdN",
+            "type": "tool_call"
+          }
+        ],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": "write_canvas",
+            "args": null,
+            "id": "tooluse_PflQDHgbFPMgtWxa1BjpdN",
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [
+          {
+            "name": "",
+            "args": {},
+            "id": null,
+            "type": "tool_call"
+          }
+        ],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "{\"path\": \"",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [
+          {
+            "name": "",
+            "args": {
+              "path": ""
+            },
+            "id": null,
+            "type": "tool_call"
+          }
+        ],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "{\"path\": \"",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "tiny.ht",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "tiny.ht",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "tiny.ht",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "ml\"",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "ml\"",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "ml\"",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": ", \"co",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": ", \"co",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": ", \"co",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "ntent\": ",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "ntent\": ",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "ntent\": ",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "\"<p>hell",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "\"<p>hell",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "\"<p>hell",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "o</",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "o</",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "o</",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "p>\"",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "p>\"",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "p>\"",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": ", \"descript",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": ", \"descript",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": ", \"descript",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "io",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "io",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "io",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "n\": \"Creat",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "n\": \"Creat",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "n\": \"Creat",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "e tiny.htm",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "e tiny.htm",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "e tiny.htm",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "l with hell",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "l with hell",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "l with hell",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "o ",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "o ",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "o ",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "paragraph",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "paragraph",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "paragraph",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "\"}",
+            "id": null,
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [
+          {
+            "name": null,
+            "args": "\"}",
+            "id": null,
+            "error": null,
+            "type": "invalid_tool_call"
+          }
+        ],
+        "usage_metadata": null,
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "\"}",
+            "id": null,
+            "index": 0,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {
+          "stopReason": "tool_use",
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {
+          "metrics": {
+            "latencyMs": 1523
+          },
+          "model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "ResponseMetadata": {
+            "RequestId": "1830232e-c1ca-49df-8460-d31c5d6d05dd",
+            "HTTPStatusCode": 200,
+            "HTTPHeaders": {
+              "date": "Sat, 01 Aug 2026 17:33:10 GMT",
+              "content-type": "application/vnd.amazon.eventstream",
+              "transfer-encoding": "chunked",
+              "connection": "keep-alive",
+              "x-amzn-requestid": "1830232e-c1ca-49df-8460-d31c5d6d05dd"
+            },
+            "RetryAttempts": 0
+          },
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": {
+          "input_tokens": 7752,
+          "output_tokens": 100,
+          "total_tokens": 7852,
+          "input_token_details": {
+            "cache_creation": 0,
+            "cache_read": 0
+          }
+        },
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-090e-7920-80c7-e5bcd2a001b9",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": "last"
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 2,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "checkpoint_ns": "model:f1e9c0a8-498a-57fc-33b9-9a5e1252c11c",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "custom",
+    "data": {
+      "type": "canvas.create",
+      "artifact": {
+        "id": "tiny.html",
+        "type": "html",
+        "title": "tiny.html",
+        "version": 1,
+        "status": "streaming",
+        "data": {
+          "html": "<p>hello</p>"
+        }
+      }
+    }
+  },
+  {
+    "event": "custom",
+    "data": {
+      "type": "canvas.status",
+      "id": "tiny.html",
+      "status": "complete"
+    }
+  },
+  {
+    "event": "custom",
+    "data": {
+      "type": "canvas.commit",
+      "id": "tiny.html",
+      "description": "Create tiny.html with hello paragraph",
+      "revision": "v1"
+    }
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "Wrote tiny.html (revision v1).",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "tool",
+        "name": "write_canvas",
+        "id": "c1be5bed-09c8-4d74-bd16-36c8592875b6",
+        "tool_call_id": "tooluse_PflQDHgbFPMgtWxa1BjpdN",
+        "artifact": null,
+        "status": "success"
+      },
+      {
+        "ls_integration": "deepagents",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 4,
+        "langgraph_node": "tools",
+        "langgraph_triggers": [
+          "__pregel_push"
+        ],
+        "langgraph_path": [
+          "__pregel_push",
+          0,
+          false
+        ],
+        "langgraph_checkpoint_ns": "tools:6ebf6685-4a5e-2aef-9578-92e07a84b32a"
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "Done",
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": ".",
+            "index": 0
+          }
+        ],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": [],
+        "additional_kwargs": {},
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {
+          "stopReason": "end_turn",
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {
+          "metrics": {
+            "latencyMs": 930
+          },
+          "model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "ResponseMetadata": {
+            "RequestId": "6a9dd842-e957-4ca2-9dbe-231fdd735a99",
+            "HTTPStatusCode": 200,
+            "HTTPHeaders": {
+              "date": "Sat, 01 Aug 2026 17:33:12 GMT",
+              "content-type": "application/vnd.amazon.eventstream",
+              "transfer-encoding": "chunked",
+              "connection": "keep-alive",
+              "x-amzn-requestid": "6a9dd842-e957-4ca2-9dbe-231fdd735a99"
+            },
+            "RetryAttempts": 0
+          },
+          "model_provider": "bedrock_converse"
+        },
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": {
+          "input_tokens": 7874,
+          "output_tokens": 2,
+          "total_tokens": 7876,
+          "input_token_details": {
+            "cache_creation": 0,
+            "cache_read": 0
+          }
+        },
+        "tool_call_chunks": [],
+        "chunk_position": null
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  },
+  {
+    "event": "messages",
+    "data": [
+      {
+        "content": "",
+        "additional_kwargs": {},
+        "response_metadata": {},
+        "type": "AIMessageChunk",
+        "name": null,
+        "id": "lc_run--019fbe63-0ff8-7461-b1bb-72a22efde92b",
+        "tool_calls": [],
+        "invalid_tool_calls": [],
+        "usage_metadata": null,
+        "tool_call_chunks": [],
+        "chunk_position": "last"
+      },
+      {
+        "ls_integration": "langchain_chat_model",
+        "created_by": "system",
+        "graph_id": "canvas_agent",
+        "assistant_id": "0552b6fb-f7d3-545e-822c-8f1c870606b7",
+        "run_attempt": 1,
+        "langgraph_version": "1.2.10",
+        "langgraph_api_version": "0.11.2",
+        "langgraph_plan": "enterprise",
+        "langgraph_host": "self-hosted",
+        "langgraph_api_url": "http://127.0.0.1:2024",
+        "run_id": "019fbe63-0685-7651-9bcd-babcdebbc46c",
+        "thread_id": "019fbe63-0681-7130-9106-25e7f523826d",
+        "langgraph_step": 5,
+        "langgraph_node": "model",
+        "langgraph_triggers": [
+          "branch:to:model"
+        ],
+        "langgraph_path": [
+          "__pregel_pull",
+          "model"
+        ],
+        "langgraph_checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "checkpoint_ns": "model:4e81f247-3b58-8f23-8ebd-b279e246c859",
+        "ls_provider": "amazon_bedrock",
+        "ls_model_name": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "ls_model_type": "chat",
+        "ls_temperature": null,
+        "ls_invocation_params": {
+          "provider": "anthropic",
+          "region_name": "us-east-1"
+        },
+        "lc_versions": {
+          "langchain-core": "1.5.3",
+          "langchain": "1.3.14",
+          "langchain-aws": "1.6.4"
+        }
+      }
+    ]
+  }
+]
