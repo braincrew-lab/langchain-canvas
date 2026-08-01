@@ -57,6 +57,40 @@ class Commit(BaseModel):
     """Files touched by this commit."""
 
 
+# --- shared validation -----------------------------------------------------------
+
+
+def validate_canvas_id(canvas_id: str) -> str:
+    """Reject empty, padded, or path-like canvas ids.
+
+    Every implementation must apply this (the contract tests enforce it), so a
+    hostile id can never escape one backend while another accepts it.
+    """
+    if (
+        not canvas_id
+        or canvas_id != canvas_id.strip()
+        or "/" in canvas_id
+        or "\\" in canvas_id
+        or canvas_id in {".", ".."}
+    ):
+        raise CanvasStoreError(f"invalid canvas id: {canvas_id!r}")
+    return canvas_id
+
+
+def validate_relpath(path: str) -> str:
+    """Reject absolute paths and ``..`` traversal; nested relative paths pass.
+
+    Shared by every implementation for the same reason as
+    :func:`validate_canvas_id` — path safety is part of the contract, not a
+    backend detail.
+    """
+    if not path or path != path.strip() or path.startswith(("/", "\\")):
+        raise CanvasStoreError(f"invalid path: {path!r}")
+    if any(part in {".", "..", ""} for part in path.replace("\\", "/").split("/")):
+        raise CanvasStoreError(f"invalid path: {path!r}")
+    return path
+
+
 # --- errors ----------------------------------------------------------------------
 
 
@@ -65,7 +99,21 @@ class CanvasStoreError(Exception):
 
 
 class CanvasFileNotFoundError(CanvasStoreError):
-    """The requested path (or revision) does not exist in the canvas."""
+    """The requested file path does not exist in the canvas.
+
+    Base of the not-found family: :class:`CanvasNotFoundError` (whole canvas
+    missing) and :class:`RevisionNotFoundError` (unknown revision) subclass it,
+    so ``except CanvasFileNotFoundError`` keeps catching all three while
+    callers that care can tell them apart.
+    """
+
+
+class CanvasNotFoundError(CanvasFileNotFoundError):
+    """The canvas itself does not exist yet (no commit has created it)."""
+
+
+class RevisionNotFoundError(CanvasFileNotFoundError):
+    """The requested revision does not exist in the canvas's history."""
 
 
 class RevisionMismatchError(CanvasStoreError):

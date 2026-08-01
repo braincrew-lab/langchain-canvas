@@ -156,3 +156,41 @@ def test_canvases_are_isolated(store: CanvasStore) -> None:
     assert store.read("c1", "a.html").content == "one"
     assert store.read("c2", "a.html").content == "two"
     assert len(store.history("c1")) == 1
+
+
+# --- contract-level safety -------------------------------------------------------
+
+
+def test_parallel_writes_commit_safely(store: CanvasStore) -> None:
+    """A parallel tool-call burst (threads) must not race the revision numbering."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = [f"{i:02d}-slide.html" for i in range(1, 9)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        commits = list(
+            pool.map(lambda p: store.write("c1", p, f"<h1>{p}</h1>", f"Create {p}"), paths)
+        )
+
+    revisions = [c.revision for c in commits]
+    assert len(set(revisions)) == len(paths), "every parallel write needs its own revision"
+    assert len(store.history("c1")) == len(paths)
+    assert len(store.list_files("c1")) == len(paths)
+
+
+@pytest.mark.parametrize(
+    "bad_path", ["../evil.html", "/etc/passwd", "a/../b.html", " padded.html", ""]
+)
+def test_traversal_and_malformed_paths_rejected(store: CanvasStore, bad_path: str) -> None:
+    """Path safety is part of the contract — every backend rejects the same inputs."""
+    from langchain_canvas.store import CanvasStoreError
+
+    with pytest.raises(CanvasStoreError):
+        store.write("c1", bad_path, "content", "should not land")
+
+
+@pytest.mark.parametrize("bad_id", ["../up", "a/b", "", " padded"])
+def test_malformed_canvas_ids_rejected(store: CanvasStore, bad_id: str) -> None:
+    from langchain_canvas.store import CanvasStoreError
+
+    with pytest.raises(CanvasStoreError):
+        store.write(bad_id, "a.html", "content", "should not land")

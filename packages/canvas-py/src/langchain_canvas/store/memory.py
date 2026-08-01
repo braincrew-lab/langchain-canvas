@@ -1,21 +1,26 @@
 """In-memory CanvasStore — for tests, replay, and single-process demos.
 
-Content lives in plain dicts and disappears with the process. Not safe for
-concurrent writers across threads; durable use belongs to the filesystem
-backend.
+Content lives in plain dicts and disappears with the process. Writes are
+serialized behind a lock, so concurrent tool calls (LangGraph runs tools on
+worker threads) commit safely; durable use belongs to the filesystem backend.
 """
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 
 from .base import (
     CanvasFileNotFoundError,
+    CanvasNotFoundError,
     Commit,
     EditConflictError,
     FileContent,
     FileInfo,
     RevisionMismatchError,
+    RevisionNotFoundError,
+    validate_canvas_id,
+    validate_relpath,
 )
 
 
@@ -34,18 +39,21 @@ class InMemoryCanvasStore:
 
     def __init__(self) -> None:
         self._canvases: dict[str, _CanvasRecord] = {}
+        # One writer at a time — a parallel tool-call burst must not race the
+        # revision counter or interleave file mutation with its snapshot.
+        self._write_lock = threading.Lock()
 
     # --- reads -------------------------------------------------------------------
 
     def read(self, canvas_id: str, path: str, revision: str | None = None) -> FileContent:
         record = self._canvases.get(canvas_id)
         if record is None:
-            raise CanvasFileNotFoundError(f"unknown canvas: {canvas_id!r}")
+            raise CanvasNotFoundError(f"unknown canvas: {canvas_id!r}")
         if revision is None:
             files, rev = record.files, self._head(record)
         else:
             if revision not in record.snapshots:
-                raise CanvasFileNotFoundError(f"unknown revision: {revision!r}")
+                raise RevisionNotFoundError(f"unknown revision: {revision!r}")
             files, rev = record.snapshots[revision], revision
         if path not in files:
             raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
@@ -76,10 +84,13 @@ class InMemoryCanvasStore:
         description: str,
         base_revision: str | None = None,
     ) -> Commit:
-        record = self._canvases.setdefault(canvas_id, _CanvasRecord())
-        self._check_base(record, base_revision)
-        record.files[path] = content
-        return self._commit(record, description, [path])
+        validate_canvas_id(canvas_id)
+        validate_relpath(path)
+        with self._write_lock:
+            record = self._canvases.setdefault(canvas_id, _CanvasRecord())
+            self._check_base(record, base_revision)
+            record.files[path] = content
+            return self._commit(record, description, [path])
 
     def edit(
         self,
@@ -90,27 +101,30 @@ class InMemoryCanvasStore:
         description: str,
         base_revision: str | None = None,
     ) -> Commit:
-        record = self._canvases.get(canvas_id)
-        if record is None or path not in record.files:
-            raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-        self._check_base(record, base_revision)
-        current = record.files[path]
-        occurrences = current.count(old)
-        if occurrences == 0:
-            raise EditConflictError(f"old string not found in {path!r}")
-        if occurrences > 1:
-            raise EditConflictError(
-                f"old string matches {occurrences} times in {path!r} — must be unique"
-            )
-        record.files[path] = current.replace(old, new, 1)
-        return self._commit(record, description, [path])
+        validate_canvas_id(canvas_id)
+        validate_relpath(path)
+        with self._write_lock:
+            record = self._canvases.get(canvas_id)
+            if record is None or path not in record.files:
+                raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
+            self._check_base(record, base_revision)
+            current = record.files[path]
+            occurrences = current.count(old)
+            if occurrences == 0:
+                raise EditConflictError(f"old string not found in {path!r}")
+            if occurrences > 1:
+                raise EditConflictError(
+                    f"old string matches {occurrences} times in {path!r} — must be unique"
+                )
+            record.files[path] = current.replace(old, new, 1)
+            return self._commit(record, description, [path])
 
     # --- internals ---------------------------------------------------------------
 
     @staticmethod
     def _head(record: _CanvasRecord) -> str:
         if not record.commits:
-            raise CanvasFileNotFoundError("canvas has no commits")
+            raise CanvasNotFoundError("canvas has no commits")
         return record.commits[-1].revision
 
     @staticmethod

@@ -11,28 +11,35 @@ Layout under ``root``::
 Every commit snapshots the whole canvas (files are small documents, not
 repositories), which keeps reads at any revision trivial and the format
 inspectable with nothing but a file browser. Canvas ids and file paths are
-sanitized against traversal; nested file paths like ``assets/logo.png`` are
-allowed, absolute paths and ``..`` are not.
+sanitized against traversal; nested file paths like ``notes/summary.md`` are
+allowed, absolute paths and ``..`` are not. Content is text (UTF-8) — binary
+assets are not supported by the store contract yet.
 
-Single-writer semantics: writes within one process are safe; concurrent
-writers across processes need an app-level lock (out of scope, same as the
-in-memory backend).
+Writes are serialized behind a per-store lock, so concurrent tool calls in
+one process (LangGraph runs tools on worker threads) commit safely.
+Concurrent writers across *processes* still need an app-level lock (out of
+scope, same as the in-memory backend).
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import threading
 from pathlib import Path
 
 from .base import (
     CanvasFileNotFoundError,
+    CanvasNotFoundError,
     CanvasStoreError,
     Commit,
     EditConflictError,
     FileContent,
     FileInfo,
     RevisionMismatchError,
+    RevisionNotFoundError,
+    validate_canvas_id,
+    validate_relpath,
 )
 
 _HEAD = "head"
@@ -48,14 +55,8 @@ def _safe_segment(name: str, *, what: str) -> str:
 
 
 def _safe_relpath(path: str) -> Path:
-    """Validate a canvas-relative file path (nested allowed, traversal not)."""
-    p = Path(path)
-    if p.is_absolute() or not path or path != path.strip():
-        raise CanvasStoreError(f"invalid path: {path!r}")
-    for part in p.parts:
-        if part in {".", ".."}:
-            raise CanvasStoreError(f"invalid path: {path!r}")
-    return p
+    """Validate a canvas-relative file path (shared contract rules)."""
+    return Path(validate_relpath(path))
 
 
 class FileCanvasStore:
@@ -64,6 +65,9 @@ class FileCanvasStore:
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)
         self._root.mkdir(parents=True, exist_ok=True)
+        # One writer at a time — a parallel tool-call burst must not race the
+        # revision numbering or the head-mutation/snapshot sequence.
+        self._write_lock = threading.Lock()
 
     # --- reads -------------------------------------------------------------------
 
@@ -73,12 +77,12 @@ class FileCanvasStore:
         if revision is None:
             commits = self._commits(canvas_dir)
             if not commits or not canvas_dir.exists():
-                raise CanvasFileNotFoundError(f"unknown canvas: {canvas_id!r}")
+                raise CanvasNotFoundError(f"unknown canvas: {canvas_id!r}")
             base, rev = canvas_dir / _HEAD, commits[-1].revision
         else:
             base = canvas_dir / _HISTORY / _SNAPSHOTS / _safe_segment(revision, what="revision")
             if not base.is_dir():
-                raise CanvasFileNotFoundError(f"unknown revision: {revision!r}")
+                raise RevisionNotFoundError(f"unknown revision: {revision!r}")
             rev = revision
         target = base / rel
         if not target.is_file():
@@ -111,11 +115,12 @@ class FileCanvasStore:
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
-        self._check_base(canvas_dir, base_revision)
-        target = canvas_dir / _HEAD / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, "utf-8")
-        return self._commit(canvas_dir, description, [path])
+        with self._write_lock:
+            self._check_base(canvas_dir, base_revision)
+            target = canvas_dir / _HEAD / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, "utf-8")
+            return self._commit(canvas_dir, description, [path])
 
     def edit(
         self,
@@ -128,24 +133,25 @@ class FileCanvasStore:
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         target = canvas_dir / _HEAD / _safe_relpath(path)
-        if not target.is_file():
-            raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-        self._check_base(canvas_dir, base_revision)
-        current = target.read_text("utf-8")
-        occurrences = current.count(old)
-        if occurrences == 0:
-            raise EditConflictError(f"old string not found in {path!r}")
-        if occurrences > 1:
-            raise EditConflictError(
-                f"old string matches {occurrences} times in {path!r} — must be unique"
-            )
-        target.write_text(current.replace(old, new, 1), "utf-8")
-        return self._commit(canvas_dir, description, [path])
+        with self._write_lock:
+            if not target.is_file():
+                raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
+            self._check_base(canvas_dir, base_revision)
+            current = target.read_text("utf-8")
+            occurrences = current.count(old)
+            if occurrences == 0:
+                raise EditConflictError(f"old string not found in {path!r}")
+            if occurrences > 1:
+                raise EditConflictError(
+                    f"old string matches {occurrences} times in {path!r} — must be unique"
+                )
+            target.write_text(current.replace(old, new, 1), "utf-8")
+            return self._commit(canvas_dir, description, [path])
 
     # --- internals ---------------------------------------------------------------
 
     def _canvas_dir(self, canvas_id: str) -> Path:
-        return self._root / _safe_segment(canvas_id, what="canvas id")
+        return self._root / validate_canvas_id(canvas_id)
 
     def _commits(self, canvas_dir: Path) -> list[Commit]:
         log = canvas_dir / _HISTORY / _COMMITS_LOG
