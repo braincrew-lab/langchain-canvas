@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -20,17 +22,27 @@ from langchain_canvas.protocol import (
     CanvasPatch,
     CanvasStatus,
 )
-from langchain_canvas.store import RevisionMismatchError
+from langchain_canvas.store import CanvasFileNotFoundError, RevisionMismatchError
 
-from ..agent.store import PAGE_PATH, STORE
+from ..agent.store import MANIFEST_PATH, PAGE_PATH, SLIDE_META, STORE
 
 router = APIRouter()
+
+
+def _slide_titles(thread_id: str) -> dict[str, str]:
+    """file → title for every slide in the deck manifest (empty if no deck)."""
+    try:
+        manifest = json.loads(STORE.read(thread_id, MANIFEST_PATH).content)
+    except (CanvasFileNotFoundError, ValueError):
+        return {}
+    return {s["file"]: s.get("title", s["file"]) for s in manifest.get("slides", [])}
 
 
 @router.get("/api/canvas/{thread_id}")
 def hydrate(thread_id: str) -> list[dict]:
     """Wire events reconstructing the thread's canvas, oldest commit first."""
     commits = list(reversed(STORE.history(thread_id)))  # oldest first
+    slides = _slide_titles(thread_id)
     events: list[dict] = []
     seen: set[str] = set()
     for commit in commits:
@@ -43,7 +55,12 @@ def hydrate(thread_id: str) -> list[dict]:
                 events.append(
                     CanvasCreate(
                         artifact=Artifact(
-                            id=path, type="html", title=path, data={"html": content}
+                            id=path,
+                            type="html",
+                            title=slides.get(path, path),
+                            data={"html": content},
+                            # A slide file re-renders at its fixed 16:9 ratio.
+                            meta=SLIDE_META if path in slides else None,
                         )
                     ).model_dump(by_alias=True, exclude_none=True)
                 )
