@@ -13,29 +13,39 @@
  * one per token — smooth streaming even at high token rates.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { StreamEvent } from "../protocol/events";
 import type { ElementSelection } from "../protocol/selection";
-import { streamChat } from "../client/sse-client";
-import { mockStream } from "../client/mock";
+import { mockTransport, sseTransport, type CanvasTransport } from "../transports";
 import { useCanvasStore, useCanvasStoreApi } from "./useCanvasStore";
 
 export interface UseCanvasStreamOptions {
-  /** Chat SSE endpoint. Defaults to `/api/chat`. */
+  /**
+   * How to reach the agent backend. Defaults to the reference Canvas Wire
+   * Protocol over SSE (`sseTransport`); pass `langgraphTransport(...)` (from
+   * the `/langgraph` entry) or your own `CanvasTransport` to speak to a
+   * different backend.
+   */
+  transport?: CanvasTransport;
+  /** Chat SSE endpoint for the default transport. Defaults to `/api/chat`. */
   endpoint?: string;
   /** Conversation thread id (for server-side memory). Defaults to a fresh uuid. */
   threadId?: string;
   /**
    * Offline mock: given the user's message, return a scripted `StreamEvent[]`
    * to play instead of hitting the network — an OpenAPI-style "try it" with no
-   * real LLM call. Return `null` to fall through to the live endpoint.
+   * real LLM call. Return `null` to fall through to the live transport.
    */
   mock?: (message: string) => StreamEvent[] | null;
 }
 
 export function useCanvasStream(options: UseCanvasStreamOptions = {}) {
-  const endpoint = options.endpoint ?? "/api/chat";
+  const { transport: customTransport, endpoint, mock } = options;
+  const transport = useMemo(() => {
+    const base = customTransport ?? sseTransport({ endpoint });
+    return mock ? mockTransport(mock, base) : base;
+  }, [customTransport, endpoint, mock]);
   const threadIdRef = useRef(options.threadId ?? crypto.randomUUID());
   const abortRef = useRef<AbortController | null>(null);
   const api = useCanvasStoreApi();
@@ -85,14 +95,12 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}) {
       abortRef.current = controller;
 
       try {
-        const mockEvents = options.mock?.(text) ?? null;
-        const stream = mockEvents
-          ? mockStream(mockEvents, { delayMs: 60, signal: controller.signal })
-          : streamChat(
-              endpoint,
-              { threadId: threadIdRef.current, message: text, selections: withSelections },
-              { signal: controller.signal },
-            );
+        const stream = transport.stream({
+          threadId: threadIdRef.current,
+          message: text,
+          selections: withSelections,
+          signal: controller.signal,
+        });
         for await (const event of stream) {
           enqueue(event);
         }
@@ -105,7 +113,7 @@ export function useCanvasStream(options: UseCanvasStreamOptions = {}) {
         api.getState().setStreaming(false);
       }
     },
-    [api, endpoint, enqueue, flush, options.mock],
+    [api, transport, enqueue, flush],
   );
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
