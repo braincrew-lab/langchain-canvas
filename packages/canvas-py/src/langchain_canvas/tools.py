@@ -7,7 +7,7 @@ Four file-level primitives over a :class:`~langchain_canvas.store.CanvasStore`:
 - ``edit_canvas``  — replace one unique occurrence, **requires the revision
   returned by a prior read** (read-before-update enforced by the contract,
   not by prompt discipline)
-- ``list_canvas``  — files currently on the canvas
+- ``list_canvas_files`` — files currently on the canvas
 
 The tools are store-only primitives: they persist content and history, and do
 not emit wire events themselves (display sync arrives with the
@@ -30,6 +30,7 @@ from langchain.tools import ToolRuntime, tool
 from .store import (
     CanvasFileNotFoundError,
     CanvasStore,
+    CanvasStoreError,
     EditConflictError,
     RevisionMismatchError,
 )
@@ -78,18 +79,37 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         try:
             got = store.read(_canvas_id(runtime), path)
         except CanvasFileNotFoundError as exc:
-            return f"Error: {exc}. Use list_canvas to see available files."
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
         return f"revision: {got.revision}\n{_numbered(got.content)}"
 
     @tool
-    def write_canvas(path: str, content: str, description: str, runtime: ToolRuntime) -> str:
+    def write_canvas(
+        path: str,
+        content: str,
+        description: str,
+        runtime: ToolRuntime,
+        revision: str | None = None,
+    ) -> str:
         """Create a new canvas file, or fully replace an existing one.
 
         `description` becomes the version-history entry — one short sentence
         describing the change. For small changes to an existing file prefer
         `edit_canvas`; use `write_canvas` for new files or full rewrites.
+        When replacing an existing file, pass the `revision` from your most
+        recent `read_canvas` — if the canvas changed since (for example the
+        user edited it by hand), the call is rejected instead of silently
+        overwriting their work. Omit `revision` only for brand-new files.
         """
-        commit = store.write(_canvas_id(runtime), path, content, description)
+        try:
+            commit = store.write(
+                _canvas_id(runtime), path, content, description, base_revision=revision
+            )
+        except RevisionMismatchError as exc:
+            return f"Error: {exc}. {_RETRY_HINT}"
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
         return f"Wrote {path} (revision {commit.revision})."
 
     @tool
@@ -118,15 +138,20 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         except EditConflictError as exc:
             return f"Error: {exc}. {_RETRY_HINT}"
         except CanvasFileNotFoundError as exc:
-            return f"Error: {exc}. Use list_canvas to see available files."
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
         return f"Edited {path} (revision {commit.revision})."
 
     @tool
-    def list_canvas(runtime: ToolRuntime) -> str:
+    def list_canvas_files(runtime: ToolRuntime) -> str:
         """List the files currently on the canvas, with sizes in bytes."""
-        infos = store.list_files(_canvas_id(runtime))
+        try:
+            infos = store.list_files(_canvas_id(runtime))
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
         if not infos:
             return "The canvas is empty."
         return "\n".join(f"{info.path} ({info.size} bytes)" for info in infos)
 
-    return [read_canvas, write_canvas, edit_canvas, list_canvas]
+    return [read_canvas, write_canvas, edit_canvas, list_canvas_files]
