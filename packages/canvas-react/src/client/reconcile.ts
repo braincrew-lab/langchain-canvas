@@ -84,10 +84,6 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       };
     }
 
-    case "canvas.close":
-      // Keep the artifact and its history; just drop focus if it was active.
-      return state.activeId === event.id ? { ...state, activeId: lastOf(state.order, event.id) } : state;
-
     default:
       // Unknown canvas.* (a newer server) must never wipe state — ignore it.
       return state;
@@ -222,7 +218,3 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function lastOf(order: string[], excludeId: string): string | null {
-  const remaining = order.filter((id) => id !== excludeId);
-  return remaining.length ? remaining[remaining.length - 1] : null;
-}

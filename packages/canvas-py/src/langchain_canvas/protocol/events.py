@@ -132,11 +132,6 @@ class CanvasCommit(_Event):
     revision: str | None = None
 
 
-class CanvasClose(_Event):
-    type: Literal["canvas.close"] = "canvas.close"
-    id: str
-
-
 # --- control family -------------------------------------------------------------
 
 
@@ -157,7 +152,6 @@ CanvasEvent = Union[
     CanvasReplace,
     CanvasStatus,
     CanvasCommit,
-    CanvasClose,
 ]
 
 StreamEvent = Union[
