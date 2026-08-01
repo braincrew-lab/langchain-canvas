@@ -252,6 +252,24 @@ the general partial update (RFC-7386 JSON Merge Patch semantics: `null` deletes
 a key, objects merge recursively, everything else replaces). `replace` is the
 only event that creates a version — that is what the version rail pages through.
 
+### Two version words: `version` vs `revision`
+
+The protocol carries two identifiers that both look like "the version". They
+are different things and never interchangeable:
+
+- **`version`** (integer, on `Artifact`) — the *client-side display counter*.
+  It numbers the snapshots the version rail pages through, starts at 1, and is
+  owned by the reconciler. It has no meaning outside the client.
+- **`revision`** (opaque string, on `canvas.commit` and in `CanvasStore`) —
+  the *store's commit id*. Clients must not parse it; its only uses are
+  equality checks and passing it back (as `base_revision` / `baseRevision`)
+  so a stale write can be rejected.
+
+Rule of thumb: `version` is what the user sees on the rail; `revision` is what
+the save endpoint and the agent tools need. A commit stamps the store
+`revision` onto the current client snapshot — that is the only place the two
+meet.
+
 ## Client → server: selection & targeted edits
 
 The SSE wire is server→client only. The one client→server concern is **element

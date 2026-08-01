@@ -2,6 +2,7 @@
 
 from .base import (
     CanvasFileNotFoundError,
+    CanvasNotFoundError,
     CanvasStore,
     CanvasStoreError,
     Commit,
@@ -9,12 +10,16 @@ from .base import (
     FileContent,
     FileInfo,
     RevisionMismatchError,
+    RevisionNotFoundError,
+    validate_canvas_id,
+    validate_relpath,
 )
 from .filesystem import FileCanvasStore
 from .memory import InMemoryCanvasStore
 
 __all__ = [
     "CanvasFileNotFoundError",
+    "CanvasNotFoundError",
     "CanvasStore",
     "CanvasStoreError",
     "Commit",
@@ -24,4 +29,7 @@ __all__ = [
     "FileInfo",
     "InMemoryCanvasStore",
     "RevisionMismatchError",
+    "RevisionNotFoundError",
+    "validate_canvas_id",
+    "validate_relpath",
 ]

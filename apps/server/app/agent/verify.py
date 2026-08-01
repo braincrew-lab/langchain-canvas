@@ -21,7 +21,7 @@ from langchain.tools import ToolRuntime, tool
 from langchain_canvas.store import CanvasFileNotFoundError
 
 from .store import DATA_DIR, SLIDE_HEIGHT, SLIDE_WIDTH, STORE
-from .tools import _thread_id
+from .tools import thread_id
 
 # One browser task at a time — slides render in well under a second, and a
 # single worker keeps Chromium memory bounded.
@@ -107,7 +107,7 @@ def check_slide_layout(file: str, runtime: ToolRuntime) -> str:
     0 errors. Treat warnings as design advice.
     """
     try:
-        html = STORE.read(_thread_id(runtime), file).content
+        html = STORE.read(thread_id(runtime), file).content
     except CanvasFileNotFoundError:
         return f"No file {file} exists yet. Use plan_deck / write_slide first."
     metrics, _ = _render(html)
@@ -122,14 +122,14 @@ def screenshot_slide(file: str, runtime: ToolRuntime) -> list[dict[str, Any]]:
     good: readable text, balanced composition, consistent style with the rest
     of the deck. If it looks wrong, fix it with read_page + edit_page.
     """
-    thread_id = _thread_id(runtime)
+    tid = thread_id(runtime)
     try:
-        html = STORE.read(thread_id, file).content
+        html = STORE.read(tid, file).content
     except CanvasFileNotFoundError:
         return [{"type": "text", "text": f"No file {file} exists yet."}]
     _, png = _render(html)
 
-    shots_dir = DATA_DIR / thread_id / "screenshots"
+    shots_dir = DATA_DIR / tid / "screenshots"
     shots_dir.mkdir(parents=True, exist_ok=True)
     (shots_dir / f"{file}.png").write_bytes(png)
 

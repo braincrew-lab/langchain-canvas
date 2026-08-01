@@ -90,7 +90,7 @@ def test_read_missing_file_returns_error_text() -> None:
         _tools(InMemoryCanvasStore())["read_canvas"], _runtime(thread_id="t1"), path="a.html"
     )
     assert out.startswith("Error:")
-    assert "list_canvas" in out
+    assert "list_canvas_files" in out
 
 
 # --- edit: read-before-update ----------------------------------------------------
@@ -151,9 +151,9 @@ def test_edit_ambiguous_match_is_rejected() -> None:
 def test_list_canvas_empty_and_populated() -> None:
     store = InMemoryCanvasStore()
     tools = _tools(store)
-    assert _invoke(tools["list_canvas"], _runtime(thread_id="t1")) == "The canvas is empty."
+    assert _invoke(tools["list_canvas_files"], _runtime(thread_id="t1")) == "The canvas is empty."
     store.write("t1", "a.html", "abc", "create")
-    assert _invoke(tools["list_canvas"], _runtime(thread_id="t1")) == "a.html (3 bytes)"
+    assert _invoke(tools["list_canvas_files"], _runtime(thread_id="t1")) == "a.html (3 bytes)"
 
 
 def test_tool_writes_produce_described_history() -> None:

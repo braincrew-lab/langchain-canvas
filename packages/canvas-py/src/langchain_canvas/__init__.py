@@ -7,7 +7,7 @@ Public surface:
 * ``Canvas``               — the API tools use to open/stream artifacts.
 * ``create_canvas_agent``  — ``create_agent`` plus canvas guidance.
 * ``create_canvas_tools``  — the standard persistent-canvas tools
-  (``read/write/edit/list_canvas``) bound to a ``CanvasStore``.
+  (``read/write/edit_canvas`` + ``list_canvas_files``) bound to a ``CanvasStore``.
 * ``sse_from_agent``       — turn an agent run into a Canvas Wire Protocol SSE stream.
 
 The wire types live under ``langchain_canvas.protocol`` and mirror the TypeScript
