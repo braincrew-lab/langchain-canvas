@@ -20,7 +20,9 @@ const request: TransportRequest = { threadId: "t1", message: "hello" };
 describe("mockTransport", () => {
   it("plays the scripted events for a matching message", async () => {
     const script = (msg: string): StreamEvent[] | null =>
-      msg === "hello" ? [{ type: "message.delta", text: "hi" }, { type: "done" }] : null;
+      msg === "hello"
+        ? [{ type: "message.delta", messageId: "m1", text: "hi" }, { type: "done" }]
+        : null;
     const events = await collect(mockTransport(script, undefined, { delayMs: 0 }).stream(request));
     expect(events.map((e) => e.type)).toEqual(["message.delta", "done"]);
   });
@@ -29,13 +31,13 @@ describe("mockTransport", () => {
     const fallback: CanvasTransport = {
       // eslint-disable-next-line require-yield
       async *stream(req) {
-        yield { type: "message.delta", text: `live:${req.message}` } as StreamEvent;
+        yield { type: "message.delta", messageId: "m1", text: `live:${req.message}` };
       },
     };
     const events = await collect(
       mockTransport(() => null, fallback, { delayMs: 0 }).stream(request),
     );
-    expect(events).toEqual([{ type: "message.delta", text: "live:hello" }]);
+    expect(events).toEqual([{ type: "message.delta", messageId: "m1", text: "live:hello" }]);
   });
 
   it("yields nothing when the script misses and there is no fallback", async () => {
