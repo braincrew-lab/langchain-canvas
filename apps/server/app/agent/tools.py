@@ -16,10 +16,10 @@ from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
 
 import json
+import re
 
-from langchain_canvas import Canvas
+from langchain_canvas import Canvas, create_canvas_tools
 from langchain_canvas.protocol import ChartSeries, TableColumn
-from langchain_canvas.store import CanvasFileNotFoundError, EditConflictError, RevisionMismatchError
 
 from .store import (
     MANIFEST_PATH,
@@ -64,7 +64,7 @@ def build_page(brief: str, runtime: ToolRuntime) -> str:
 
     Use for landing pages, dashboards, or any visual/interactive UI. The page is
     saved to the canvas store (it survives reloads) and the user can edit it by
-    hand; always read_page before editing it later.
+    hand; always read_canvas before editing it later.
     """
     canvas = Canvas.from_runtime(runtime)
     page = canvas.open_html(title=brief[:60], id=PAGE_PATH)
@@ -85,56 +85,6 @@ def build_page(brief: str, runtime: ToolRuntime) -> str:
         f"Built and saved the page (revision {commit.revision}). "
         "Click any element on the canvas to edit it."
     )
-
-
-@tool
-def read_page(runtime: ToolRuntime, path: str = PAGE_PATH) -> str:
-    """Read a saved file's current content (line-numbered) plus its revision.
-
-    Always call this right before edit_page — the user may have edited the file
-    by hand, and edit_page needs the current revision. `path` defaults to the
-    single page; pass a slide file (e.g. "01-intro.html") for decks.
-    """
-    try:
-        got = STORE.read(thread_id(runtime), path)
-    except CanvasFileNotFoundError:
-        return f"No file {path} exists yet. Use build_page or plan_deck first."
-    numbered = "\n".join(
-        f"{i:>4}\t{line}" for i, line in enumerate(got.content.split("\n"), start=1)
-    )
-    return f"revision: {got.revision}\n{numbered}"
-
-
-@tool
-def edit_page(
-    old: str,
-    new: str,
-    description: str,
-    revision: str,
-    runtime: ToolRuntime,
-    path: str = PAGE_PATH,
-) -> str:
-    """Replace exactly one occurrence of `old` with `new` in a saved file.
-
-    `revision` must come from your most recent read_page of the same `path` —
-    if the file changed since (e.g. the user edited it by hand), the call is
-    rejected and you must read again. `old` must match exactly once; include
-    enough surrounding HTML to make it unique. `description` is one short
-    sentence for the version history. `path` defaults to the single page; pass
-    a slide file for decks.
-    """
-    tid = thread_id(runtime)
-    try:
-        commit = STORE.edit(tid, path, old, new, description, base_revision=revision, actor="agent")
-    except (RevisionMismatchError, EditConflictError) as exc:
-        return f"Error: {exc}. Call read_page again and retry with the fresh revision."
-    except CanvasFileNotFoundError:
-        return f"No file {path} exists yet. Use build_page or plan_deck first."
-    content = STORE.read(tid, path).content
-    page = Canvas.from_runtime(runtime).html(path)
-    page.set_html(content)
-    page.commit(description, revision=commit.revision)
-    return f"Edited and saved {path} (revision {commit.revision})."
 
 
 # The deck's shared design language. Every slide prompt embeds this so the deck
@@ -271,10 +221,17 @@ def build_table(
     return f"Rendered a table “{title}” with {len(rows)} rows on the canvas."
 
 
+def _slide_meta_for(path: str) -> dict | None:
+    # Deck slide files follow the NN-slug.html naming from slide_path().
+    return SLIDE_META if re.fullmatch(r"\d{2}-.+\.html", path) else None
+
+
+# Domain tools (LLM-assisted authoring) plus the SDK's standard canvas tools
+# (read/write/edit_canvas + list_canvas_files) — the reference server runs on
+# the same primitives it ships, so a break in them shows up here first.
 CANVAS_TOOLS = [
     build_page,
-    read_page,
-    edit_page,
+    *create_canvas_tools(STORE, meta_for=_slide_meta_for),
     plan_deck,
     write_slide,
     write_report,

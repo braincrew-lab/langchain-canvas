@@ -44,9 +44,10 @@ def _with_selections(message: str, selections: list[Selection]) -> str:
         f"{message}\n\n"
         f"[Targeted edit] Apply the change to these selected element(s) in artifact "
         f"`{artifact_id}`:\n{listed}\n"
-        f"First call read_page to get the current content and revision, then call "
-        f"edit_page with the element's exact current outer HTML as `old` and your "
-        f"replacement as `new` (keep the data-cid attribute), plus a one-line description."
+        f"First call read_canvas with `path=\"{artifact_id}\"` to get the current content "
+        f"and revision, then call edit_canvas with the element's exact current outer HTML "
+        f"as `old` and your replacement as `new` (keep the data-cid attribute), "
+        f"plus a one-line description."
     )
 
 
