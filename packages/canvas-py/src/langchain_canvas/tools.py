@@ -9,11 +9,14 @@ Four file-level primitives over a :class:`~langchain_canvas.store.CanvasStore`:
   not by prompt discipline)
 - ``list_canvas_files`` — files currently on the canvas
 
-The tools are store-only primitives: they persist content and history, and do
-not emit wire events themselves (display sync arrives with the
-``canvas.commit`` event). Which canvas they act on is resolved per call:
-``canvas_id`` in the runtime context (or ``configurable``), falling back to
-``thread_id`` — by default a thread and its canvas are the same scope.
+The tools persist through the store **and** broadcast each committed ``.html``
+change as wire events (``canvas.create``/``patch``/``commit``) through the
+run's stream writer, so a connected client redraws live. Without a stream
+writer (unit tests, plain scripts) the broadcast is a silent no-op — same
+contract as :class:`~langchain_canvas.emitter.Canvas`. Which canvas they act
+on is resolved per call: ``canvas_id`` in the runtime context (or
+``configurable``), falling back to ``thread_id`` — by default a thread and
+its canvas are the same scope.
 
 Build them with :func:`create_canvas_tools`, which closes over your store::
 
@@ -23,14 +26,17 @@ Build them with :func:`create_canvas_tools`, which closes over your store::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 
+from .replay import events_for_commit
 from .store import (
     CanvasFileNotFoundError,
     CanvasStore,
     CanvasStoreError,
+    Commit,
     EditConflictError,
     RevisionMismatchError,
 )
@@ -64,8 +70,41 @@ def _numbered(content: str) -> str:
     return "\n".join(f"{i:>4}\t{line}" for i, line in enumerate(content.split("\n"), start=1))
 
 
-def create_canvas_tools(store: CanvasStore) -> list[Any]:
-    """Return the four standard canvas tools bound to ``store``."""
+def create_canvas_tools(
+    store: CanvasStore,
+    *,
+    title_for: Callable[[str], str] | None = None,
+    meta_for: Callable[[str], dict[str, Any] | None] | None = None,
+) -> list[Any]:
+    """Return the four standard canvas tools bound to ``store``.
+
+    ``title_for`` / ``meta_for`` customize the live broadcast the same way
+    they customize :func:`~langchain_canvas.replay.hydrate_events`: map a
+    file path to a display title / renderer hints (for example titling slide
+    files from a deck manifest). Defaults: the path as title, no hints.
+    """
+
+    def _broadcast(
+        runtime: ToolRuntime, canvas_id: str, path: str, is_new: bool, commit: Commit
+    ) -> None:
+        # Same silent no-op contract as the Canvas emitter: no writer, no wire.
+        writer = getattr(runtime, "stream_writer", None)
+        if writer is None or not path.endswith(".html"):
+            return
+        content = store.read(canvas_id, path, revision=commit.revision).content
+        for event in events_for_commit(
+            path,
+            content,
+            is_new=is_new,
+            revision=commit.revision,
+            description=commit.description,
+            title=title_for(path) if title_for else None,
+            meta=meta_for(path) if meta_for else None,
+        ):
+            writer(event)
+
+    def _has_file(canvas_id: str, path: str) -> bool:
+        return any(info.path == path for info in store.list_files(canvas_id))
 
     @tool
     def read_canvas(path: str, runtime: ToolRuntime) -> str:
@@ -102,9 +141,11 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         user edited it by hand), the call is rejected instead of silently
         overwriting their work. Omit `revision` only for brand-new files.
         """
+        canvas_id = _canvas_id(runtime)
+        is_new = not _has_file(canvas_id, path)
         try:
             commit = store.write(
-                _canvas_id(runtime),
+                canvas_id,
                 path,
                 content,
                 description,
@@ -115,6 +156,7 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
             return f"Error: {exc}. {_RETRY_HINT}"
         except CanvasStoreError as exc:
             return f"Error: {exc}."
+        _broadcast(runtime, canvas_id, path, is_new, commit)
         return f"Wrote {path} (revision {commit.revision})."
 
     @tool
@@ -134,9 +176,10 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
         `old` must match exactly once; include enough surrounding context to
         make it unique. `description` is the version-history entry.
         """
+        canvas_id = _canvas_id(runtime)
         try:
             commit = store.edit(
-                _canvas_id(runtime),
+                canvas_id,
                 path,
                 old,
                 new,
@@ -152,6 +195,7 @@ def create_canvas_tools(store: CanvasStore) -> list[Any]:
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
             return f"Error: {exc}."
+        _broadcast(runtime, canvas_id, path, is_new=False, commit=commit)
         return f"Edited {path} (revision {commit.revision})."
 
     @tool

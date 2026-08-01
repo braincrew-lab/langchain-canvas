@@ -89,11 +89,6 @@ export interface CanvasCommit {
   revision?: string;
 }
 
-export interface CanvasClose {
-  type: "canvas.close";
-  id: string;
-}
-
 // --- control family ------------------------------------------------------------
 
 export interface ErrorEvent {
@@ -116,8 +111,7 @@ export type CanvasEvent =
   | CanvasNodePatch
   | CanvasReplace
   | CanvasStatus
-  | CanvasCommit
-  | CanvasClose;
+  | CanvasCommit;
 
 export type StreamEvent = ChatEvent | CanvasEvent | ErrorEvent | DoneEvent;
 

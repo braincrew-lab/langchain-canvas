@@ -16,7 +16,6 @@ from .artifacts import (
 )
 from .events import (
     CanvasAppend,
-    CanvasClose,
     CanvasCommit,
     CanvasCreate,
     CanvasEvent,
@@ -58,7 +57,6 @@ __all__ = [
     "CanvasNodePatch",
     "CanvasReplace",
     "CanvasStatus",
-    "CanvasClose",
     "CanvasCommit",
     "ErrorEvent",
     "DoneEvent",

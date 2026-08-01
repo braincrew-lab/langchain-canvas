@@ -103,7 +103,7 @@ def check_slide_layout(file: str, runtime: ToolRuntime) -> str:
     """Render a saved slide file at 1280x720 and report layout problems.
 
     Run this after every write_slide or edit of a slide. Fix every ERROR
-    (with read_page + edit_page on the file) and re-check until it reports
+    (with read_canvas + edit_canvas on the file) and re-check until it reports
     0 errors. Treat warnings as design advice.
     """
     try:
@@ -120,7 +120,7 @@ def screenshot_slide(file: str, runtime: ToolRuntime) -> list[dict[str, Any]]:
 
     Use after check_slide_layout passes, to confirm the slide actually looks
     good: readable text, balanced composition, consistent style with the rest
-    of the deck. If it looks wrong, fix it with read_page + edit_page.
+    of the deck. If it looks wrong, fix it with read_canvas + edit_canvas.
     """
     tid = thread_id(runtime)
     try:
