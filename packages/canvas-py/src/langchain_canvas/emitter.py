@@ -65,13 +65,21 @@ class Canvas:
         """Build from an injected `ToolRuntime` (or anything with a writer)."""
         return cls(getattr(runtime, "stream_writer", None))
 
-    def open_html(self, title: str, *, id: str | None = None) -> "HtmlHandle":
+    def open_html(
+        self,
+        title: str,
+        *,
+        id: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> "HtmlHandle":
         """Open a raw-HTML artifact — the base substrate, rendered sandboxed.
 
         Use for self-contained pages / apps the agent authors directly. Stream
         markup in with ``append(...)`` or set it in one shot with ``set_html``.
+        ``meta`` carries renderer hints the client understands, e.g.
+        ``{"kind": "slide", "ratio": "16:9"}`` for a fixed-aspect slide page.
         """
-        artifact = Artifact(id=id or _new_id("page"), type="html", title=title, data={"html": ""})
+        artifact = Artifact(id=id or _new_id("page"), type="html", title=title, data={"html": ""}, meta=meta)
         self._emit(CanvasCreate(artifact=artifact))
         return HtmlHandle(self, artifact)
 
