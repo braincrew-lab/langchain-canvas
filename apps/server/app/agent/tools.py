@@ -49,7 +49,7 @@ def _strip_code_fence(text: str) -> str:
     return stripped.strip()
 
 
-def _thread_id(runtime: ToolRuntime) -> str:
+def thread_id(runtime: ToolRuntime) -> str:
     """The demo scopes one canvas per conversation thread."""
     configurable = (runtime.config or {}).get("configurable", {})
     thread_id = configurable.get("thread_id")
@@ -76,7 +76,7 @@ def build_page(brief: str, runtime: ToolRuntime) -> str:
     )
     html = _strip_code_fence(_text_of(model.invoke(prompt)))
     description = f"Create page: {brief[:50]}"
-    commit = STORE.write(_thread_id(runtime), PAGE_PATH, html, description)
+    commit = STORE.write(thread_id(runtime), PAGE_PATH, html, description)
     page.set_html(html)
     page.complete()
     page.commit(description, revision=commit.revision)
@@ -96,7 +96,7 @@ def read_page(runtime: ToolRuntime, path: str = PAGE_PATH) -> str:
     single page; pass a slide file (e.g. "01-intro.html") for decks.
     """
     try:
-        got = STORE.read(_thread_id(runtime), path)
+        got = STORE.read(thread_id(runtime), path)
     except CanvasFileNotFoundError:
         return f"No file {path} exists yet. Use build_page or plan_deck first."
     numbered = "\n".join(
@@ -123,14 +123,14 @@ def edit_page(
     sentence for the version history. `path` defaults to the single page; pass
     a slide file for decks.
     """
-    thread_id = _thread_id(runtime)
+    tid = thread_id(runtime)
     try:
-        commit = STORE.edit(thread_id, path, old, new, description, base_revision=revision)
+        commit = STORE.edit(tid, path, old, new, description, base_revision=revision)
     except (RevisionMismatchError, EditConflictError) as exc:
         return f"Error: {exc}. Call read_page again and retry with the fresh revision."
     except CanvasFileNotFoundError:
         return f"No file {path} exists yet. Use build_page or plan_deck first."
-    content = STORE.read(thread_id, path).content
+    content = STORE.read(tid, path).content
     page = Canvas.from_runtime(runtime).html(path)
     page.set_html(content)
     page.commit(description, revision=commit.revision)
@@ -163,7 +163,7 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
     ]
     manifest = {"title": title, "slides": slides}
     commit = STORE.write(
-        _thread_id(runtime),
+        thread_id(runtime),
         MANIFEST_PATH,
         json.dumps(manifest, ensure_ascii=False, indent=2),
         f"Plan deck: {title} ({len(slides)} slides)",
@@ -188,7 +188,7 @@ def write_slide(file: str, title: str, brief: str, runtime: ToolRuntime) -> str:
     prompt = f"Create one presentation slide as a single HTML document.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
     html = _strip_code_fence(_text_of(model.invoke(prompt)))
     description = f"Write slide: {title[:50]}"
-    commit = STORE.write(_thread_id(runtime), file, html, description)
+    commit = STORE.write(thread_id(runtime), file, html, description)
     slide.set_html(html)
     slide.complete()
     slide.commit(description, revision=commit.revision)
