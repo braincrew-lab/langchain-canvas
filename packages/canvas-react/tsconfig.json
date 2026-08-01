@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "resolveJsonModule": true,
     "target": "ES2021",
     "lib": ["ES2021", "DOM", "DOM.Iterable"],
     "module": "ESNext",
