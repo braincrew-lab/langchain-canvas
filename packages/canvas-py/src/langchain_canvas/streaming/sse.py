@@ -16,7 +16,8 @@ node transitions if you want it (the protocol already defines those events).
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from ..protocol.events import DoneEvent, ErrorEvent, MessageDelta
 
@@ -29,8 +30,6 @@ def _delta_text(message: Any) -> str:
     carry only tool-call args or metadata — those are skipped.
     """
     text = getattr(message, "text", None)
-    if callable(text):  # older LangChain exposed `.text()` as a method
-        text = text()
     if isinstance(text, str) and text:
         return text
 
@@ -66,7 +65,13 @@ async def sse_from_agent(
             config=config,
         ):
             if mode == "messages":
-                message, _meta = chunk
+                message, meta = chunk
+                # Only the agent's own voice is chat. Chunks from the tools
+                # node are tool results and tool-internal model calls (e.g. a
+                # writer model inside a tool) — relaying them would dump raw
+                # tool output into the transcript.
+                if isinstance(meta, dict) and meta.get("langgraph_node") == "tools":
+                    continue
                 text = _delta_text(message)
                 if text:
                     message_id = getattr(message, "id", None) or "assistant"
