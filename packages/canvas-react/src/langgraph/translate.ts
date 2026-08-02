@@ -72,6 +72,10 @@ export async function* translateLangGraphStream(
     }
     const msg = chunk.data[0];
     if (!isRecord(msg)) continue;
+    const meta = chunk.data.length > 1 && isRecord(chunk.data[1]) ? chunk.data[1] : {};
+    // Chunks from the tools node are tool-internal (e.g. a writer model
+    // inside a tool) — their text is not the agent's chat voice.
+    const fromToolsNode = meta.langgraph_node === "tools";
 
     if (msg.type === "AIMessageChunk") {
       const calls = Array.isArray(msg.tool_call_chunks) ? msg.tool_call_chunks : [];
@@ -85,7 +89,7 @@ export async function* translateLangGraphStream(
         }
       }
       const text = chunkText(msg.content);
-      if (text) yield { type: "message.delta", messageId, text };
+      if (text && !fromToolsNode) yield { type: "message.delta", messageId, text };
     } else if (msg.type === "tool") {
       const id = typeof msg.tool_call_id === "string" ? msg.tool_call_id : null;
       if (id) yield { type: "tool.end", toolCallId: id, ok: msg.status !== "error" };

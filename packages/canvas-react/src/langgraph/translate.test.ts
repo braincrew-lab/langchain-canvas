@@ -70,3 +70,18 @@ describe("edge shapes", () => {
     expect(chunkText(undefined)).toBe("");
   });
 });
+
+
+describe("tools-node suppression", () => {
+  it("drops text from model calls running inside tools", async () => {
+    const events = await collect([
+      { event: "messages", data: [{ type: "AIMessageChunk", content: "Hi" }, { langgraph_node: "model" }] },
+      { event: "messages", data: [{ type: "AIMessageChunk", content: "<html>leak</html>" }, { langgraph_node: "tools" }] },
+      { event: "messages", data: [{ type: "tool", tool_call_id: "t1", status: "success" }, { langgraph_node: "tools" }] },
+    ]);
+    const deltas = events.filter((e) => e.type === "message.delta").map((e) => e.text);
+    expect(deltas).toEqual(["Hi"]);
+    // Tool results still close the tool lifecycle.
+    expect(events.find((e) => e.type === "tool.end")).toMatchObject({ toolCallId: "t1", ok: true });
+  });
+});
