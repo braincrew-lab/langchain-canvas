@@ -7,13 +7,25 @@
  * artifact created so callers can focus it.
  */
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
+import type { Artifact } from "../protocol/artifacts";
 import { canImport, importFile } from "../io/importers";
 import { useCanvasStoreApi } from "./useCanvasStore";
 
-export function useCanvasImport() {
+export interface CanvasImportOptions {
+  /**
+   * Fired once per successfully imported file with the artifact that now
+   * renders on the canvas — the hook for a host to persist an imported
+   * table/document to its store right away.
+   */
+  onImported?: (artifact: Artifact, file: File) => void;
+}
+
+export function useCanvasImport({ onImported }: CanvasImportOptions = {}) {
   const api = useCanvasStoreApi();
+  const imported = useRef(onImported);
+  imported.current = onImported;
 
   const importFiles = useCallback(
     async (files: Iterable<File>): Promise<string | null> => {
@@ -27,6 +39,7 @@ export function useCanvasImport() {
           if (created && created.type === "canvas.create") {
             lastId = created.artifact.id;
             api.getState().setActiveArtifact(lastId);
+            imported.current?.(created.artifact, file);
           }
         } catch (err) {
           // eslint-disable-next-line no-console

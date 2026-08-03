@@ -321,3 +321,80 @@ def test_table_write_broadcasts_table_artifact() -> None:
         revision=revision,
     )
     assert [e["type"] for e in runtime.events] == kinds
+
+
+# --- sources: uploads, converters, windows ---------------------------------------
+
+
+def test_sources_are_read_only_for_the_agent() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t1", "sources/notes.md", "# hi", "Upload notes.md", actor="human")
+    tools = _tools(store)
+    runtime = _runtime(thread_id="t1")
+    for call in (
+        lambda: _invoke(
+            tools["write_canvas"],
+            runtime,
+            path="sources/notes.md",
+            content="x",
+            description="try",
+        ),
+        lambda: _invoke(
+            tools["edit_canvas"],
+            runtime,
+            path="sources/notes.md",
+            old="hi",
+            new="bye",
+            description="try",
+            revision="v1",
+        ),
+    ):
+        out = call()
+        assert "read-only" in out
+    # Nothing was committed by the rejected calls.
+    assert len(store.history("t1")) == 1
+
+
+def test_binary_source_without_converter_gets_honest_error() -> None:
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
+    out = _invoke(_tools(store)["read_canvas"], _runtime(thread_id="t1"), path="sources/photo.png")
+    assert "no converter handles it" in out
+    assert ".md" in out  # the installed set is named
+
+
+def test_custom_converter_renders_binary_source() -> None:
+    from langchain_canvas import ConvertedSource, create_canvas_tools
+
+    class ShoutConverter:
+        suffixes = (".png",)
+
+        def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+            return ConvertedSource(
+                blocks=[{"type": "text", "text": f"IMAGE {path} ({len(data)} bytes)"}],
+                metadata={"kind": "shout"},
+            )
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[ShoutConverter()])}
+    out = _invoke(tools["read_canvas"], _runtime(thread_id="t1"), path="sources/photo.png")
+    assert "converted view of sources/photo.png" in out
+    assert "kind: shout" in out
+    assert "IMAGE sources/photo.png (6 bytes)" in out
+
+
+def test_read_canvas_windows_long_files() -> None:
+    store = InMemoryCanvasStore()
+    content = "\n".join(f"line {i}" for i in range(1, 1001))
+    store.write("t1", "big.html", content, "create")
+    tools = _tools(store)
+    runtime = _runtime(thread_id="t1")
+
+    first = _invoke(tools["read_canvas"], runtime, path="big.html")
+    assert "line 400" in first and "line 401" not in first
+    assert "offset=400" in first
+
+    second = _invoke(tools["read_canvas"], runtime, path="big.html", offset=400, limit=100)
+    assert "line 401" in second and "line 500" in second and "line 501" not in second
+    assert "offset=500" in second

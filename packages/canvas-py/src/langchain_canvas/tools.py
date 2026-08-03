@@ -32,8 +32,15 @@ from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 
+from .converters import (
+    MissingConverterDependencyError,
+    SourceConverter,
+    converter_for,
+    default_converters,
+)
 from .replay import ARTIFACT_SUFFIXES, events_for_commit
 from .store import (
+    BinaryContentError,
     CanvasFileNotFoundError,
     CanvasStore,
     CanvasStoreError,
@@ -43,6 +50,13 @@ from .store import (
 )
 
 _RETRY_HINT = "Call read_canvas again and retry with the fresh revision and exact content."
+_SOURCES_PREFIX = "sources/"
+_SOURCES_READONLY = (
+    "Error: files under sources/ are the user's original uploads and are "
+    "read-only for the agent. Create a new canvas file instead (for example "
+    "an .html page or a .table.json table)."
+)
+_DEFAULT_READ_LIMIT = 400
 
 
 def _canvas_id(runtime: ToolRuntime) -> str:
@@ -67,23 +81,42 @@ def _canvas_id(runtime: ToolRuntime) -> str:
     )
 
 
-def _numbered(content: str) -> str:
-    return "\n".join(f"{i:>4}\t{line}" for i, line in enumerate(content.split("\n"), start=1))
+def _sliced(content: str, offset: int, limit: int) -> tuple[str, str]:
+    """A line window of ``content`` plus a continuation note ("" when complete)."""
+    lines = content.split("\n")
+    total = len(lines)
+    window = lines[offset : offset + limit]
+    numbered = "\n".join(
+        f"{i:>4}\t{line}" for i, line in enumerate(window, start=offset + 1)
+    )
+    end = offset + len(window)
+    if offset == 0 and end >= total:
+        return numbered, ""
+    note = f"[lines {offset + 1}-{end} of {total}"
+    if end < total:
+        note += f" — call read_canvas again with offset={end} for more"
+    return numbered, note + "]"
 
 
 def create_canvas_tools(
     store: CanvasStore,
     *,
+    converters: list[SourceConverter] | None = None,
     title_for: Callable[[str], str] | None = None,
     meta_for: Callable[[str], dict[str, Any] | None] | None = None,
 ) -> list[Any]:
     """Return the four standard canvas tools bound to ``store``.
 
-    ``title_for`` / ``meta_for`` customize the live broadcast the same way
-    they customize :func:`~langchain_canvas.replay.hydrate_events`: map a
-    file path to a display title / renderer hints (for example titling slide
-    files from a deck manifest). Defaults: the path as title, no hints.
+    ``converters`` render binary source files (uploads under ``sources/``)
+    into model-usable content when the agent reads them; defaults to the
+    built-in set (see :mod:`langchain_canvas.converters`) and is fully
+    replaceable with your own pipeline. ``title_for`` / ``meta_for``
+    customize the live broadcast the same way they customize
+    :func:`~langchain_canvas.replay.hydrate_events`: map a file path to a
+    display title / renderer hints (for example titling slide files from a
+    deck manifest). Defaults: the path as title, no hints.
     """
+    active_converters = default_converters() if converters is None else converters
 
     def _broadcast(
         runtime: ToolRuntime, canvas_id: str, path: str, is_new: bool, commit: Commit
@@ -107,22 +140,65 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
+    def _read_source(canvas_id: str, path: str, offset: int, limit: int) -> str | list[dict]:
+        """A binary file rendered through its converter (or an honest refusal)."""
+        converter = converter_for(path, active_converters)
+        if converter is None:
+            suffixes = sorted({s for c in active_converters for s in c.suffixes})
+            return (
+                f"Error: {path} is a binary file and no converter handles it. "
+                f"Converters are installed for: {', '.join(suffixes)}."
+            )
+        got = store.read_bytes(canvas_id, path)
+        try:
+            converted = converter.convert(got.data, path=path)
+        except MissingConverterDependencyError as exc:
+            return f"Error: {exc}"
+        text = "\n".join(
+            str(block.get("text", "")) for block in converted.blocks if block.get("type") == "text"
+        )
+        sliced, note = _sliced(text, offset, limit)
+        meta = ", ".join(f"{k}: {v}" for k, v in converted.metadata.items())
+        header = f"revision: {got.revision}\nconverted view of {path}" + (
+            f" ({meta})" if meta else ""
+        )
+        body = f"{header}\n{sliced}" + (f"\n{note}" if note else "")
+        images = [block for block in converted.blocks if block.get("type") == "image"]
+        if images:
+            return [{"type": "text", "text": body}, *images]
+        return body
+
     @tool
-    def read_canvas(path: str, runtime: ToolRuntime) -> str:
+    def read_canvas(
+        path: str, runtime: ToolRuntime, offset: int = 0, limit: int = _DEFAULT_READ_LIMIT
+    ) -> str | list[dict]:
         """Read one canvas file before viewing or editing it.
 
         Returns the file with line numbers plus the current `revision`. You
         need that revision to call `edit_canvas` or to safely overwrite with
         `write_canvas` — always read a file again right before editing it, so
         you see edits the user may have made by hand.
+
+        Long files are windowed: `offset`/`limit` select a line range and the
+        output says how to read the rest. Binary uploads under `sources/` are
+        rendered through a format converter instead of raw bytes.
         """
+        canvas_id = _canvas_id(runtime)
+        offset = max(0, offset)
+        limit = max(1, limit)
         try:
-            got = store.read(_canvas_id(runtime), path)
+            got = store.read(canvas_id, path)
+        except BinaryContentError:
+            try:
+                return _read_source(canvas_id, path, offset, limit)
+            except CanvasStoreError as exc:
+                return f"Error: {exc}."
         except CanvasFileNotFoundError as exc:
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
             return f"Error: {exc}."
-        return f"revision: {got.revision}\n{_numbered(got.content)}"
+        sliced, note = _sliced(got.content, offset, limit)
+        return f"revision: {got.revision}\n{sliced}" + (f"\n{note}" if note else "")
 
     @tool
     def write_canvas(
@@ -141,7 +217,10 @@ def create_canvas_tools(
         recent `read_canvas` — if the canvas changed since (for example the
         user edited it by hand), the call is rejected instead of silently
         overwriting their work. Omit `revision` only for brand-new files.
+        Files under `sources/` (the user's uploads) are read-only.
         """
+        if path.startswith(_SOURCES_PREFIX):
+            return _SOURCES_READONLY
         canvas_id = _canvas_id(runtime)
         is_new = not _has_file(canvas_id, path)
         try:
@@ -175,8 +254,11 @@ def create_canvas_tools(
         `read_canvas` of this file — if the file changed since (for example
         the user edited it), the call is rejected and you must read again.
         `old` must match exactly once; include enough surrounding context to
-        make it unique. `description` is the version-history entry.
+        make it unique. `description` is the version-history entry. Files
+        under `sources/` (the user's uploads) are read-only.
         """
+        if path.startswith(_SOURCES_PREFIX):
+            return _SOURCES_READONLY
         canvas_id = _canvas_id(runtime)
         try:
             commit = store.edit(

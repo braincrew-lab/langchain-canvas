@@ -12,10 +12,12 @@ from dataclasses import dataclass, field
 
 from .base import (
     AsyncFromSyncMixin,
+    BinaryContentError,
     CanvasFileNotFoundError,
     CanvasNotFoundError,
     Commit,
     EditConflictError,
+    FileBytes,
     FileContent,
     FileInfo,
     RevisionMismatchError,
@@ -30,9 +32,9 @@ from .base import (
 class _CanvasRecord:
     """One canvas: current files, commit log, and per-revision snapshots."""
 
-    files: dict[str, str] = field(default_factory=dict)
+    files: dict[str, str | bytes] = field(default_factory=dict)
     commits: list[Commit] = field(default_factory=list)
-    snapshots: dict[str, dict[str, str]] = field(default_factory=dict)
+    snapshots: dict[str, dict[str, str | bytes]] = field(default_factory=dict)
     counter: int = 0
 
 
@@ -59,14 +61,30 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             files, rev = record.snapshots[revision], revision
         if path not in files:
             raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-        return FileContent(path=path, content=files[path], revision=rev)
+        return FileContent(path=path, content=_as_text(files[path], path), revision=rev)
+
+    def read_bytes(self, canvas_id: str, path: str, revision: str | None = None) -> FileBytes:
+        record = self._canvases.get(canvas_id)
+        if record is None:
+            raise CanvasNotFoundError(f"unknown canvas: {canvas_id!r}")
+        if revision is None:
+            files, rev = record.files, self._head(record)
+        else:
+            if revision not in record.snapshots:
+                raise RevisionNotFoundError(f"unknown revision: {revision!r}")
+            files, rev = record.snapshots[revision], revision
+        if path not in files:
+            raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
+        value = files[path]
+        data = value.encode("utf-8") if isinstance(value, str) else value
+        return FileBytes(path=path, data=data, revision=rev)
 
     def list_files(self, canvas_id: str) -> list[FileInfo]:
         record = self._canvases.get(canvas_id)
         if record is None:
             return []
         return [
-            FileInfo(path=path, size=len(content.encode("utf-8")))
+            FileInfo(path=path, size=len(_as_bytes(content)))
             for path, content in sorted(record.files.items())
         ]
 
@@ -96,6 +114,23 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             record.files[path] = content
             return self._commit(record, description, [path], actor)
 
+    def write_bytes(
+        self,
+        canvas_id: str,
+        path: str,
+        data: bytes,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        validate_canvas_id(canvas_id)
+        validate_relpath(path)
+        with self._write_lock:
+            record = self._canvases.setdefault(canvas_id, _CanvasRecord())
+            self._check_base(record, base_revision)
+            record.files[path] = data
+            return self._commit(record, description, [path], actor)
+
     def edit(
         self,
         canvas_id: str,
@@ -113,7 +148,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             if record is None or path not in record.files:
                 raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
             self._check_base(record, base_revision)
-            current = record.files[path]
+            current = _as_text(record.files[path], path)
             occurrences = current.count(old)
             if occurrences == 0:
                 raise EditConflictError(f"old string not found in {path!r}")
@@ -155,3 +190,16 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         record.commits.append(commit)
         record.snapshots[commit.revision] = dict(record.files)
         return commit
+
+def _as_text(value: str | bytes, path: str) -> str:
+    """Text view of a stored value; binary that isn't UTF-8 must use read_bytes."""
+    if isinstance(value, str):
+        return value
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BinaryContentError(f"{path!r} holds binary data — read it with read_bytes") from exc
+
+
+def _as_bytes(value: str | bytes) -> bytes:
+    return value.encode("utf-8") if isinstance(value, str) else value

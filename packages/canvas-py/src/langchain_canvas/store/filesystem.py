@@ -12,8 +12,9 @@ Every commit snapshots the whole canvas (files are small documents, not
 repositories), which keeps reads at any revision trivial and the format
 inspectable with nothing but a file browser. Canvas ids and file paths are
 sanitized against traversal; nested file paths like ``notes/summary.md`` are
-allowed, absolute paths and ``..`` are not. Content is text (UTF-8) — binary
-assets are not supported by the store contract yet.
+allowed, absolute paths and ``..`` are not. Text files go through
+``read``/``write`` (UTF-8); binary assets (uploads like images or
+spreadsheets) go through ``read_bytes``/``write_bytes``.
 
 Writes are serialized behind a per-store lock, so concurrent tool calls in
 one process (LangGraph runs tools on worker threads) commit safely.
@@ -30,11 +31,13 @@ from pathlib import Path
 
 from .base import (
     AsyncFromSyncMixin,
+    BinaryContentError,
     CanvasFileNotFoundError,
     CanvasNotFoundError,
     CanvasStoreError,
     Commit,
     EditConflictError,
+    FileBytes,
     FileContent,
     FileInfo,
     RevisionMismatchError,
@@ -74,6 +77,21 @@ class FileCanvasStore(AsyncFromSyncMixin):
     # --- reads -------------------------------------------------------------------
 
     def read(self, canvas_id: str, path: str, revision: str | None = None) -> FileContent:
+        target, rev = self._resolve(canvas_id, path, revision)
+        try:
+            content = target.read_text("utf-8")
+        except UnicodeDecodeError as exc:
+            raise BinaryContentError(
+                f"{path!r} holds binary data — read it with read_bytes"
+            ) from exc
+        return FileContent(path=path, content=content, revision=rev)
+
+    def read_bytes(self, canvas_id: str, path: str, revision: str | None = None) -> FileBytes:
+        target, rev = self._resolve(canvas_id, path, revision)
+        return FileBytes(path=path, data=target.read_bytes(), revision=rev)
+
+    def _resolve(self, canvas_id: str, path: str, revision: str | None) -> tuple[Path, str]:
+        """The on-disk file and effective revision for a read."""
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
         if revision is None:
@@ -89,7 +107,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         target = base / rel
         if not target.is_file():
             raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-        return FileContent(path=path, content=target.read_text("utf-8"), revision=rev)
+        return target, rev
 
     def list_files(self, canvas_id: str) -> list[FileInfo]:
         head = self._canvas_dir(canvas_id) / _HEAD
@@ -126,6 +144,24 @@ class FileCanvasStore(AsyncFromSyncMixin):
             target.write_text(content, "utf-8")
             return self._commit(canvas_dir, description, [path], actor)
 
+    def write_bytes(
+        self,
+        canvas_id: str,
+        path: str,
+        data: bytes,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        canvas_dir = self._canvas_dir(canvas_id)
+        rel = _safe_relpath(path)
+        with self._write_lock:
+            self._check_base(canvas_dir, base_revision)
+            target = canvas_dir / _HEAD / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            return self._commit(canvas_dir, description, [path], actor)
+
     def edit(
         self,
         canvas_id: str,
@@ -142,7 +178,12 @@ class FileCanvasStore(AsyncFromSyncMixin):
             if not target.is_file():
                 raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
             self._check_base(canvas_dir, base_revision)
-            current = target.read_text("utf-8")
+            try:
+                current = target.read_text("utf-8")
+            except UnicodeDecodeError as exc:
+                raise BinaryContentError(
+                    f"{path!r} holds binary data — targeted edits need text"
+                ) from exc
             occurrences = current.count(old)
             if occurrences == 0:
                 raise EditConflictError(f"old string not found in {path!r}")

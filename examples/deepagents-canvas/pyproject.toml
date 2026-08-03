@@ -11,6 +11,7 @@ dependencies = [
     "langgraph-sdk>=0.1.60",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
     "python-dotenv>=1.0",
 ]
 
