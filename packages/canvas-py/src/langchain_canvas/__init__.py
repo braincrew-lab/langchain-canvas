@@ -10,6 +10,7 @@ Public surface:
   (``read/write/edit_canvas`` + ``list_canvas_files``) bound to a ``CanvasStore``.
 * ``sse_from_agent``       — turn an agent run into a Canvas Wire Protocol SSE stream.
 * ``hydrate_events``       — replay a stored canvas as wire events for reloads.
+* ``encode_table``         — the ``.table.json`` file content for a table artifact.
 
 The wire types live under ``langchain_canvas.protocol`` and mirror the TypeScript
 definitions in ``@braincrew-lab/langchain-canvas``. Persistence backends live
@@ -18,7 +19,7 @@ under ``langchain_canvas.store``.
 
 from .agent import create_canvas_agent
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
-from .replay import hydrate_events
+from .replay import encode_table, hydrate_events
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
 from .tools import create_canvas_tools
@@ -34,6 +35,7 @@ __all__ = [
     "SlidesHandle",
     "create_canvas_agent",
     "create_canvas_tools",
+    "encode_table",
     "hydrate_events",
     "sse_from_agent",
 ]
