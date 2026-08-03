@@ -218,6 +218,91 @@ class PdfSourceConverter:
         )
 
 
+def _table_lines(rows: list[list[str]]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    for row in rows:
+        writer.writerow(row)
+    return out.getvalue().rstrip("\n")
+
+
+class DocxSourceConverter:
+    """Word documents as text — paragraphs and tables, in document order.
+
+    Requires ``python-docx`` — installed by the ``office`` extra.
+    """
+
+    suffixes: tuple[str, ...] = (".docx",)
+
+    def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+        try:
+            from docx import Document  # type: ignore[import-untyped]
+            from docx.table import Table  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise MissingConverterDependencyError(
+                "reading .docx needs python-docx — install langchain-canvas[office] "
+                "or register your own converter for .docx"
+            ) from exc
+
+        document = Document(io.BytesIO(data))
+        parts: list[str] = []
+        paragraphs = 0
+        tables = 0
+        for item in document.iter_inner_content():
+            if isinstance(item, Table):
+                tables += 1
+                rows = [[cell.text.strip() for cell in row.cells] for row in item.rows]
+                parts.append(_table_lines(rows))
+            else:
+                text = item.text.strip()
+                if text:
+                    paragraphs += 1
+                    parts.append(text)
+        return ConvertedSource(
+            blocks=[{"type": "text", "text": "\n\n".join(parts)}],
+            metadata={"paragraphs": paragraphs, "tables": tables},
+        )
+
+
+class PptxSourceConverter:
+    """PowerPoint decks as per-slide text — titles, body text, and tables.
+
+    Requires ``python-pptx`` — installed by the ``office`` extra.
+    """
+
+    suffixes: tuple[str, ...] = (".pptx",)
+
+    def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+        try:
+            from pptx import Presentation  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise MissingConverterDependencyError(
+                "reading .pptx needs python-pptx — install langchain-canvas[office] "
+                "or register your own converter for .pptx"
+            ) from exc
+
+        deck = Presentation(io.BytesIO(data))
+        sections: list[str] = []
+        for number, slide in enumerate(deck.slides, start=1):
+            parts: list[str] = []
+            for shape in slide.shapes:
+                if shape.has_table:
+                    rows = [
+                        [cell.text.strip() for cell in row.cells] for row in shape.table.rows
+                    ]
+                    parts.append(_table_lines(rows))
+                elif shape.has_text_frame:
+                    text = shape.text_frame.text.strip()
+                    if text:
+                        parts.append(text)
+            body = "\n".join(parts) or "(no text on this slide)"
+            sections.append(f"### slide {number}\n{body}")
+        return ConvertedSource(
+            blocks=[{"type": "text", "text": "\n\n".join(sections)}],
+            metadata={"slides": len(deck.slides)},
+        )
+
+
 def default_converters() -> list[SourceConverter]:
     """The built-in converter set. Grows as format tiers land."""
     return [
@@ -225,4 +310,6 @@ def default_converters() -> list[SourceConverter]:
         XlsxSourceConverter(),
         ImageSourceConverter(),
         PdfSourceConverter(),
+        DocxSourceConverter(),
+        PptxSourceConverter(),
     ]
