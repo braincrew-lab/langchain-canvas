@@ -160,3 +160,56 @@ def test_pdf_converter_extracts_page_text() -> None:
 def test_image_and_pdf_are_in_the_default_set() -> None:
     assert converter_for("sources/a.png", default_converters()) is not None
     assert converter_for("sources/a.pdf", default_converters()) is not None
+
+
+# --- office (docx / pptx) --------------------------------------------------------
+
+
+def test_docx_converter_keeps_paragraphs_and_tables_in_order() -> None:
+    from docx import Document
+
+    from langchain_canvas.converters import DocxSourceConverter
+
+    doc = Document()
+    doc.add_paragraph("서문 문단")
+    table = doc.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "항목"
+    table.rows[0].cells[1].text = "값"
+    table.rows[1].cells[0].text = "표본"
+    table.rows[1].cells[1].text = "64"
+    doc.add_paragraph("맺음 문단")
+    out = io.BytesIO()
+    doc.save(out)
+
+    got = DocxSourceConverter().convert(out.getvalue(), path="sources/doc.docx")
+    text = got.blocks[0]["text"]
+    assert text.index("서문 문단") < text.index("항목,값") < text.index("맺음 문단")
+    assert "표본,64" in text
+    assert got.metadata == {"paragraphs": 2, "tables": 1}
+
+
+def test_pptx_converter_renders_each_slide() -> None:
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    from langchain_canvas.converters import PptxSourceConverter
+
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[5])  # title-only layout
+    slide.shapes.title.text = "발표 제목"
+    box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(4), Inches(1))
+    box.text_frame.text = "본문 텍스트"
+    deck.slides.add_slide(deck.slide_layouts[6])  # blank
+    out = io.BytesIO()
+    deck.save(out)
+
+    got = PptxSourceConverter().convert(out.getvalue(), path="sources/deck.pptx")
+    text = got.blocks[0]["text"]
+    assert "### slide 1" in text and "발표 제목" in text and "본문 텍스트" in text
+    assert "### slide 2\n(no text on this slide)" in text
+    assert got.metadata == {"slides": 2}
+
+
+def test_office_converters_are_in_the_default_set() -> None:
+    assert converter_for("sources/a.docx", default_converters()) is not None
+    assert converter_for("sources/a.pptx", default_converters()) is not None

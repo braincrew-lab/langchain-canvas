@@ -18,6 +18,16 @@ xlsx = [
 pdf = [
     "pypdf>=4",
 ]
+office = [
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
+]
+ingestion = [
+    "openpyxl>=3.1",
+    "pypdf>=4",
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -25,6 +35,8 @@ dev = [
     "mypy>=1.10",
     "openpyxl>=3.1",
     "pypdf>=4",
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
 ]
 
 [build-system]
