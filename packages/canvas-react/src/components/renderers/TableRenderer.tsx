@@ -27,6 +27,50 @@ const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ defaul
 
 const isFormula = (v: unknown): v is string => typeof v === "string" && v.startsWith("=");
 
+/**
+ * True when a serialized Fortune sheet set holds any actual cell content.
+ * Fortune fires `onChange` with an empty workbook when it mounts before its
+ * data settles; treating that as real state would mask the artifact's rows
+ * (and, persisted, survive reloads). Checked both when choosing what to
+ * render and before writing sheet state back onto the artifact.
+ */
+export function sheetHasContent(sheet: TableData["sheet"]): boolean {
+  if (!sheet?.length) return false;
+  return sheet.some((s) => {
+    const celldata = s.celldata as Array<{ v?: unknown }> | undefined;
+    if (celldata?.some((cell) => cell?.v != null)) return true;
+    const data = s.data as Array<Array<unknown>> | undefined;
+    return !!data?.some((row) => row?.some((cell) => cell != null));
+  });
+}
+
+/**
+ * Canonicalize serialized sheets to the `celldata` form the Workbook accepts.
+ * Fortune's `onChange` payload carries live state as a dense `data` matrix,
+ * but `<Workbook data={...}>` only reads the sparse `celldata` list — feeding
+ * the matrix form back (a reload of persisted state) renders an empty grid.
+ * Volatile view state (`luckysheet_select_save`) is dropped along the way so
+ * persisted sheets stay byte-stable across mounts.
+ */
+export function normalizeSheets(sheet: TableData["sheet"]): TableData["sheet"] {
+  if (!sheet?.length) return sheet;
+  return sheet.map((s) => {
+    const { luckysheet_select_save: _selection, data, ...rest } = s as {
+      luckysheet_select_save?: unknown;
+      data?: Array<Array<unknown>>;
+      celldata?: unknown;
+    } & Record<string, unknown>;
+    if (!data || rest.celldata) return rest;
+    const celldata: Array<{ r: number; c: number; v: unknown }> = [];
+    data.forEach((row, r) =>
+      row?.forEach((cell, c) => {
+        if (cell != null) celldata.push({ r, c, v: cell });
+      }),
+    );
+    return { ...rest, celldata };
+  });
+}
+
 /** Convert the agent's simple columns/rows into a Fortune-sheet workbook. */
 function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: FormulaValues): Record<string, unknown>[] {
   const celldata: Record<string, unknown>[] = [];
@@ -181,7 +225,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey, hasFormulas]);
 
-  const hasSheet = !!artifact.data.sheet?.length;
+  const hasSheet = sheetHasContent(artifact.data.sheet);
 
   // Non-destructive sort / filter over the structured rows. Only offered for a
   // rows-backed table — once the user edits into a Fortune sheet, that sheet is the
@@ -226,7 +270,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
       viewActive
         ? toWorkbook(columns, viewRows, formulas)
         : hasSheet
-          ? artifact.data.sheet!
+          ? normalizeSheets(artifact.data.sheet)!
           : toWorkbook(columns, rows, formulas),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [wbKey, formulasReady],
@@ -244,7 +288,15 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     (sheets: unknown) => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
-        applyEvent({ type: "canvas.patch", id: artifact.id, patch: { sheet: sheets as TableData["sheet"] } });
+        // Never let an empty mount-time serialization replace real content —
+        // it would blank the table and, persisted, survive reloads. (The rare
+        // hand edit that clears every cell is the accepted trade-off.)
+        if (!sheetHasContent(sheets as TableData["sheet"])) return;
+        applyEvent({
+          type: "canvas.patch",
+          id: artifact.id,
+          patch: { sheet: normalizeSheets(sheets as TableData["sheet"]) },
+        });
       }, 400);
     },
     [applyEvent, artifact.id],
