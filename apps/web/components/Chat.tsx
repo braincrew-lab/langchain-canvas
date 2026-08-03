@@ -44,7 +44,7 @@ export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, su
       <div className="chat__scroll" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="chat__hello">
-            <p>Try an example — no LLM call, the response is mocked.</p>
+            <p>Ask the agent anything — responses are live. Try an example:</p>
             <div className="chat__suggestions">
               {suggestions.map((s) => (
                 <button key={s} className="chat__chip" disabled={isStreaming} onClick={() => onSend(s)}>
