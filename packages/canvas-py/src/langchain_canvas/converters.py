@@ -18,6 +18,7 @@ the core package stays dependency-free.
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 from dataclasses import dataclass, field
@@ -127,6 +128,101 @@ class XlsxSourceConverter:
         )
 
 
+class ImageSourceConverter:
+    """Images as vision blocks — the model sees the picture, not a description.
+
+    No parser dependency: the bytes go straight into a base64 image block.
+    Delivery to the model requires a vision-capable model and a provider whose
+    tool messages accept image blocks (Anthropic and Bedrock Converse do; some
+    chat-completions providers accept text only). Oversized images degrade to
+    an honest note instead of an oversized request.
+    """
+
+    suffixes: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+    # Anthropic-family request limit is 5 MB per image *after* base64 (+33%).
+    max_bytes: int = 3_750_000
+
+    _MIME = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+
+    def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+        suffix = "." + path.rsplit(".", 1)[-1].lower()
+        mime = self._MIME.get(suffix, "application/octet-stream")
+        if len(data) > self.max_bytes:
+            return ConvertedSource(
+                blocks=[
+                    {
+                        "type": "text",
+                        "text": (
+                            f"(image is {len(data):,} bytes — too large to inline; "
+                            f"the limit is {self.max_bytes:,} bytes. Ask the user "
+                            "for a smaller version.)"
+                        ),
+                    }
+                ],
+                metadata={"mime": mime, "bytes": len(data), "inlined": False},
+            )
+        return ConvertedSource(
+            blocks=[
+                {"type": "text", "text": f"(image {path}, {mime}, {len(data):,} bytes)"},
+                {
+                    "type": "image",
+                    "source_type": "base64",
+                    "mime_type": mime,
+                    "data": base64.b64encode(data).decode(),
+                },
+            ],
+            metadata={"mime": mime, "bytes": len(data), "inlined": True},
+        )
+
+
+class PdfSourceConverter:
+    """PDFs as per-page extracted text.
+
+    Requires ``pypdf`` — installed by the ``pdf`` extra. Pages without an
+    extractable text layer (scans) say so honestly instead of silently
+    contributing nothing.
+    """
+
+    suffixes: tuple[str, ...] = (".pdf",)
+
+    def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+        try:
+            from pypdf import PdfReader  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise MissingConverterDependencyError(
+                "reading .pdf needs pypdf — install langchain-canvas[pdf] "
+                "or register your own converter for .pdf"
+            ) from exc
+
+        reader = PdfReader(io.BytesIO(data))
+        sections: list[str] = []
+        empty_pages = 0
+        for number, page in enumerate(reader.pages, start=1):
+            text = (page.extract_text() or "").strip()
+            if not text:
+                empty_pages += 1
+                text = "(no extractable text on this page — it may be a scan or an image)"
+            sections.append(f"### page {number}\n{text}")
+        metadata: dict[str, Any] = {"pages": len(reader.pages)}
+        if empty_pages:
+            metadata["pages without text"] = empty_pages
+        return ConvertedSource(
+            blocks=[{"type": "text", "text": "\n\n".join(sections)}], metadata=metadata
+        )
+
+
 def default_converters() -> list[SourceConverter]:
     """The built-in converter set. Grows as format tiers land."""
-    return [TextSourceConverter(), XlsxSourceConverter()]
+    return [
+        TextSourceConverter(),
+        XlsxSourceConverter(),
+        ImageSourceConverter(),
+        PdfSourceConverter(),
+    ]

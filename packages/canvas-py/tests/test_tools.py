@@ -357,8 +357,10 @@ def test_sources_are_read_only_for_the_agent() -> None:
 
 def test_binary_source_without_converter_gets_honest_error() -> None:
     store = InMemoryCanvasStore()
-    store.write_bytes("t1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
-    out = _invoke(_tools(store)["read_canvas"], _runtime(thread_id="t1"), path="sources/photo.png")
+    store.write_bytes("t1", "sources/archive.zip", b"PK\x03\x04\x00\xff", "Upload archive.zip")
+    out = _invoke(
+        _tools(store)["read_canvas"], _runtime(thread_id="t1"), path="sources/archive.zip"
+    )
     assert "no converter handles it" in out
     assert ".md" in out  # the installed set is named
 

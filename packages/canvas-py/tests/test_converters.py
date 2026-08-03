@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+
 from langchain_canvas.converters import (
     ConvertedSource,
     TextSourceConverter,
@@ -33,7 +35,7 @@ def test_text_converter_is_lossy_but_honest_on_unknown_bytes() -> None:
 def test_converter_for_matches_suffix_case_insensitively() -> None:
     converters = default_converters()
     assert converter_for("sources/NOTES.MD", converters) is not None
-    assert converter_for("sources/photo.png", converters) is None
+    assert converter_for("sources/archive.zip", converters) is None
 
 
 def test_custom_converter_plugs_in() -> None:
@@ -80,3 +82,81 @@ def test_xlsx_converter_renders_each_sheet() -> None:
 
 def test_xlsx_converter_is_in_the_default_set() -> None:
     assert converter_for("sources/report.xlsx", default_converters()) is not None
+
+
+# --- images ----------------------------------------------------------------------
+
+
+def test_image_converter_emits_a_vision_block() -> None:
+    from langchain_canvas.converters import ImageSourceConverter
+
+    got = ImageSourceConverter().convert(b"\x89PNG fake", path="sources/logo.png")
+    kinds = [b["type"] for b in got.blocks]
+    assert kinds == ["text", "image"]
+    image = got.blocks[1]
+    assert image["mime_type"] == "image/png"
+    import base64
+
+    assert base64.b64decode(image["data"]) == b"\x89PNG fake"
+    assert got.metadata["inlined"] is True
+
+
+def test_oversized_image_degrades_honestly() -> None:
+    from langchain_canvas.converters import ImageSourceConverter
+
+    converter = ImageSourceConverter()
+    converter.max_bytes = 10
+    got = converter.convert(b"x" * 11, path="sources/big.jpg")
+    assert [b["type"] for b in got.blocks] == ["text"]
+    assert "too large to inline" in got.blocks[0]["text"]
+    assert got.metadata["inlined"] is False
+
+
+# --- pdf -------------------------------------------------------------------------
+
+
+def _tiny_pdf(text: str = "Hello canvas") -> bytes:
+    # A minimal one-page PDF with a real text layer, built by hand so the test
+    # exercises extraction (pypdf's writer only makes blank pages).
+    stream = f"BT /F1 24 Tf 72 700 Td ({text}) Tj ET".encode()
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n",
+        b"4 0 obj << /Length "
+        + str(len(stream)).encode()
+        + b" >> stream\n"
+        + stream
+        + b"\nendstream endobj\n",
+        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+    ]
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = []
+    for obj in objects:
+        offsets.append(out.tell())
+        out.write(obj)
+    xref_at = out.tell()
+    out.write(b"xref\n0 6\n0000000000 65535 f \n")
+    for off in offsets:
+        out.write(f"{off:010d} 00000 n \n".encode())
+    out.write(b"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n")
+    out.write(str(xref_at).encode())
+    out.write(b"\n%%EOF")
+    return out.getvalue()
+
+
+def test_pdf_converter_extracts_page_text() -> None:
+    from langchain_canvas.converters import PdfSourceConverter
+
+    got = PdfSourceConverter().convert(_tiny_pdf(), path="sources/doc.pdf")
+    text = got.blocks[0]["text"]
+    assert "### page 1" in text
+    assert "Hello canvas" in text
+    assert got.metadata["pages"] == 1
+
+
+def test_image_and_pdf_are_in_the_default_set() -> None:
+    assert converter_for("sources/a.png", default_converters()) is not None
+    assert converter_for("sources/a.pdf", default_converters()) is not None
