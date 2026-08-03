@@ -43,6 +43,14 @@ class FileContent(BaseModel):
     ``base_revision`` to detect concurrent changes (optimistic concurrency)."""
 
 
+class FileBytes(BaseModel):
+    """One file's raw bytes at a revision, as returned by :meth:`CanvasStore.read_bytes`."""
+
+    path: str
+    data: bytes
+    revision: str
+
+
 class FileInfo(BaseModel):
     """Directory-listing entry for one file in a canvas."""
 
@@ -131,6 +139,14 @@ class RevisionNotFoundError(CanvasFileNotFoundError):
     """The requested revision does not exist in the canvas's history."""
 
 
+class BinaryContentError(CanvasStoreError):
+    """The file holds binary data — read it with ``read_bytes``, not ``read``.
+
+    Raised by ``read`` (and ``edit``, which reads first) on files written via
+    ``write_bytes`` whose content is not valid UTF-8 text.
+    """
+
+
 class RevisionMismatchError(CanvasStoreError):
     """``base_revision`` no longer matches the canvas head.
 
@@ -205,6 +221,30 @@ class CanvasStore(Protocol):
         """
         ...
 
+    def read_bytes(self, canvas_id: str, path: str, revision: str | None = None) -> FileBytes:
+        """Return one file's raw bytes (text files return their UTF-8 bytes).
+
+        Same revision semantics and errors as :meth:`read`.
+        """
+        ...
+
+    def write_bytes(
+        self,
+        canvas_id: str,
+        path: str,
+        data: bytes,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        """Create or fully replace one file with raw bytes, as a new commit.
+
+        The binary companion to :meth:`write` — same concurrency and actor
+        semantics. Reading a non-UTF-8 file back through :meth:`read` raises
+        :class:`BinaryContentError`; use :meth:`read_bytes`.
+        """
+        ...
+
     def list_files(self, canvas_id: str) -> list[FileInfo]:
         """List the canvas's files at head. Unknown canvas -> empty list."""
         ...
@@ -245,6 +285,24 @@ class CanvasStore(Protocol):
         actor: str | None = None,
     ) -> Commit:
         """Async :meth:`edit`."""
+        ...
+
+    async def aread_bytes(
+        self, canvas_id: str, path: str, revision: str | None = None
+    ) -> FileBytes:
+        """Async :meth:`read_bytes`."""
+        ...
+
+    async def awrite_bytes(
+        self,
+        canvas_id: str,
+        path: str,
+        data: bytes,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        """Async :meth:`write_bytes`."""
         ...
 
     async def alist_files(self, canvas_id: str) -> list[FileInfo]:
@@ -303,6 +361,30 @@ class AsyncFromSyncMixin:
             path,
             old,
             new,
+            description,
+            base_revision,
+            actor,
+        )
+
+    async def aread_bytes(
+        self, canvas_id: str, path: str, revision: str | None = None
+    ) -> FileBytes:
+        return await asyncio.to_thread(self.read_bytes, canvas_id, path, revision)  # type: ignore[attr-defined]
+
+    async def awrite_bytes(
+        self,
+        canvas_id: str,
+        path: str,
+        data: bytes,
+        description: str,
+        base_revision: str | None = None,
+        actor: str | None = None,
+    ) -> Commit:
+        return await asyncio.to_thread(
+            self.write_bytes,  # type: ignore[attr-defined]
+            canvas_id,
+            path,
+            data,
             description,
             base_revision,
             actor,

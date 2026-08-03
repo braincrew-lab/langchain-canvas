@@ -102,3 +102,38 @@ def test_table_title_from_file_beats_host_path_fallback() -> None:
     store.write("c1", "models.table.json", _table_content("Model compare", [{"a": 1}]), "create")
     events = hydrate_events(store, "c1", title_for=lambda path: path)
     assert events[0]["artifact"]["title"] == "Model compare"
+
+
+# --- source previews (uploads) ---------------------------------------------------
+
+
+def test_markdown_source_previews_as_document() -> None:
+    store = InMemoryCanvasStore()
+    store.write("c1", "sources/notes.md", "# Notes\nhello", "Upload notes.md", actor="human")
+    events = hydrate_events(store, "c1")
+    assert [e["type"] for e in events] == ["canvas.create", "canvas.status", "canvas.commit"]
+    artifact = events[0]["artifact"]
+    assert artifact["type"] == "document"
+    assert artifact["title"] == "notes.md"
+    assert artifact["data"]["content"] == "# Notes\nhello"
+
+
+def test_json_source_previews_as_fenced_document() -> None:
+    store = InMemoryCanvasStore()
+    store.write("c1", "sources/data.json", '{"a": 1}', "Upload data.json", actor="human")
+    events = hydrate_events(store, "c1")
+    assert events[0]["artifact"]["data"]["content"] == '```json\n{"a": 1}\n```'
+
+
+def test_html_source_previews_as_html_artifact() -> None:
+    store = InMemoryCanvasStore()
+    store.write("c1", "sources/page.html", "<p>hi</p>", "Upload page.html", actor="human")
+    events = hydrate_events(store, "c1")
+    assert events[0]["artifact"]["type"] == "html"
+
+
+def test_csv_and_binary_sources_produce_no_preview() -> None:
+    store = InMemoryCanvasStore()
+    store.write("c1", "sources/rows.csv", "a,b\n1,2", "Upload rows.csv", actor="human")
+    store.write_bytes("c1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
+    assert hydrate_events(store, "c1") == []

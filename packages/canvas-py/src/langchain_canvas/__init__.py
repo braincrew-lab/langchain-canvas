@@ -18,6 +18,7 @@ under ``langchain_canvas.store``.
 """
 
 from .agent import create_canvas_agent
+from .converters import ConvertedSource, SourceConverter, default_converters
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
 from .replay import encode_table, hydrate_events
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
@@ -27,14 +28,17 @@ from .tools import create_canvas_tools
 __all__ = [
     "Canvas",
     "CanvasStore",
+    "ConvertedSource",
     "DocumentHandle",
     "FileCanvasStore",
     "ChartHandle",
     "InMemoryCanvasStore",
+    "SourceConverter",
     "TableHandle",
     "SlidesHandle",
     "create_canvas_agent",
     "create_canvas_tools",
+    "default_converters",
     "encode_table",
     "hydrate_events",
     "sse_from_agent",

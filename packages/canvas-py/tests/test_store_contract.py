@@ -226,3 +226,48 @@ async def test_async_twins_roundtrip(store: CanvasStore) -> None:
     assert [f.path for f in files] == ["page.html"]
     commits = await store.ahistory("c1", limit=1)
     assert commits[0].revision == edited.revision
+
+
+# --- bytes (binary sources) ------------------------------------------------------
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\xff\xfe binary"
+
+
+def test_write_bytes_roundtrip(store: CanvasStore) -> None:
+    commit = store.write_bytes("c1", "sources/logo.png", PNG_BYTES, "Upload logo.png")
+    got = store.read_bytes("c1", "sources/logo.png")
+    assert got.data == PNG_BYTES
+    assert got.revision == commit.revision
+    assert commit.paths == ["sources/logo.png"]
+
+
+def test_read_on_binary_raises_binary_content_error(store: CanvasStore) -> None:
+    from langchain_canvas.store import BinaryContentError
+
+    store.write_bytes("c1", "sources/logo.png", PNG_BYTES, "Upload")
+    with pytest.raises(BinaryContentError):
+        store.read("c1", "sources/logo.png")
+
+
+def test_read_bytes_serves_text_files_too(store: CanvasStore) -> None:
+    store.write("c1", "page.html", "<p>hi</p>", "create")
+    assert store.read_bytes("c1", "page.html").data == b"<p>hi</p>"
+
+
+def test_write_bytes_respects_base_revision(store: CanvasStore) -> None:
+    first = store.write_bytes("c1", "sources/a.bin", b"\x00\x01", "v1")
+    store.write_bytes("c1", "sources/a.bin", b"\x00\x02", "v2")
+    with pytest.raises(RevisionMismatchError):
+        store.write_bytes("c1", "sources/a.bin", b"\x00\x03", "stale", base_revision=first.revision)
+
+
+def test_read_bytes_at_historic_revision(store: CanvasStore) -> None:
+    first = store.write_bytes("c1", "sources/a.bin", b"\x00\x01", "v1")
+    store.write_bytes("c1", "sources/a.bin", b"\x00\x02", "v2")
+    assert store.read_bytes("c1", "sources/a.bin", revision=first.revision).data == b"\x00\x01"
+
+
+def test_list_files_includes_binary_sizes(store: CanvasStore) -> None:
+    store.write_bytes("c1", "sources/a.bin", b"\x00" * 10, "upload")
+    infos = {i.path: i.size for i in store.list_files("c1")}
+    assert infos["sources/a.bin"] == 10

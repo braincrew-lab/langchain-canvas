@@ -18,7 +18,7 @@ import { ExportMenu } from "./ExportMenu";
 import { RendererBoundary } from "./RendererBoundary";
 import { SelectionBar } from "./SelectionBar";
 import { StylePanel } from "./StylePanel";
-import { useCanvasImport } from "../hooks/useCanvasImport";
+import { useCanvasImport, type CanvasImportOptions } from "../hooks/useCanvasImport";
 import { useCanvasSave, type CanvasSaveHandler } from "../hooks/useCanvasSave";
 import { useCanvasStore } from "../hooks/useCanvasStore";
 
@@ -50,12 +50,37 @@ export interface CanvasProps {
    * stay in-memory exactly as before.
    */
   onSave?: CanvasSaveHandler;
+  /**
+   * Fired with the raw files whenever the user opens files (picker or drop),
+   * before any import parsing — the hook for a host to upload originals to
+   * its store so the agent can read them. When provided, the file picker
+   * accepts every file type (the canvas still previews only what it can
+   * import; the host decides what to do with the rest).
+   */
+  onFilesOpened?: (files: File[]) => void;
+  /** Fired per successfully imported file with its canvas artifact (see `useCanvasImport`). */
+  onImported?: CanvasImportOptions["onImported"];
 }
 
-export function Canvas({ registry = builtinRenderers, emptyState, onEditElement, onUserEdit, onSave }: CanvasProps) {
+export function Canvas({
+  registry = builtinRenderers,
+  emptyState,
+  onEditElement,
+  onUserEdit,
+  onSave,
+  onFilesOpened,
+  onImported,
+}: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
-      <CanvasPanel emptyState={emptyState} onEditElement={onEditElement} onUserEdit={onUserEdit} onSave={onSave} />
+      <CanvasPanel
+        emptyState={emptyState}
+        onEditElement={onEditElement}
+        onUserEdit={onUserEdit}
+        onSave={onSave}
+        onFilesOpened={onFilesOpened}
+        onImported={onImported}
+      />
     </CanvasRegistryProvider>
   );
 }
@@ -65,7 +90,12 @@ function CanvasPanel({
   onEditElement,
   onUserEdit,
   onSave,
-}: Pick<CanvasProps, "emptyState" | "onEditElement" | "onUserEdit" | "onSave">) {
+  onFilesOpened,
+  onImported,
+}: Pick<
+  CanvasProps,
+  "emptyState" | "onEditElement" | "onUserEdit" | "onSave" | "onFilesOpened" | "onImported"
+>) {
   const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
@@ -73,8 +103,14 @@ function CanvasPanel({
   const selections = useCanvasStore((s) => s.selections);
   const setSelections = useCanvasStore((s) => s.setSelections);
   const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
-  const { importFiles } = useCanvasImport();
+  const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
+
+  // Open = hand the raw files to the host (upload) + preview what we can import.
+  const openFiles = (files: FileList) => {
+    onFilesOpened?.(Array.from(files));
+    void importFiles(files);
+  };
 
   // Keep the store's write-back handler in sync with the latest prop.
   useEffect(() => {
@@ -116,7 +152,7 @@ function CanvasPanel({
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       setDropping(false);
-      if (e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
+      if (e.dataTransfer.files.length) openFiles(e.dataTransfer.files);
     },
   };
   const dropOverlay = dropping ? <div className="cv-canvas__drop">Drop to open on the canvas</div> : null;
@@ -124,7 +160,7 @@ function CanvasPanel({
   if (!active) {
     return (
       <aside className="cv-canvas cv-canvas--empty" {...dropProps}>
-        {emptyState ?? <EmptyState onOpenFiles={importFiles} />}
+        {emptyState ?? <EmptyState onOpenFiles={openFiles} acceptAll={Boolean(onFilesOpened)} />}
         {dropOverlay}
       </aside>
     );
@@ -343,7 +379,14 @@ function StatusBadge({ status }: { status: Artifact["status"] }) {
   return <span className={`cv-badge cv-badge--${status}`}>{label}</span>;
 }
 
-function EmptyState({ onOpenFiles }: { onOpenFiles?: (files: FileList) => void }) {
+function EmptyState({
+  onOpenFiles,
+  acceptAll = false,
+}: {
+  onOpenFiles?: (files: FileList) => void;
+  /** Accept every file type (the host uploads originals beyond the importable set). */
+  acceptAll?: boolean;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="cv-empty">
@@ -357,7 +400,7 @@ function EmptyState({ onOpenFiles }: { onOpenFiles?: (files: FileList) => void }
           <input
             ref={inputRef}
             type="file"
-            accept={ACCEPT}
+            accept={acceptAll ? undefined : ACCEPT}
             multiple
             hidden
             onChange={(e) => {
@@ -365,7 +408,9 @@ function EmptyState({ onOpenFiles }: { onOpenFiles?: (files: FileList) => void }
               e.target.value = "";
             }}
           />
-          <p className="cv-empty__formats">CSV · Excel · Markdown · HTML · JSON</p>
+          <p className="cv-empty__formats">
+            {acceptAll ? "Any file — tables and pages open here, the rest goes to the agent" : "CSV · Excel · Markdown · HTML · JSON"}
+          </p>
         </>
       )}
     </div>

@@ -2,12 +2,14 @@
 
 from .base import (
     AsyncFromSyncMixin,
+    BinaryContentError,
     CanvasFileNotFoundError,
     CanvasNotFoundError,
     CanvasStore,
     CanvasStoreError,
     Commit,
     EditConflictError,
+    FileBytes,
     FileContent,
     FileInfo,
     RevisionMismatchError,
@@ -21,12 +23,14 @@ from .memory import InMemoryCanvasStore
 
 __all__ = [
     "AsyncFromSyncMixin",
+    "BinaryContentError",
     "CanvasFileNotFoundError",
     "CanvasNotFoundError",
     "CanvasStore",
     "CanvasStoreError",
     "Commit",
     "EditConflictError",
+    "FileBytes",
     "FileCanvasStore",
     "FileContent",
     "FileInfo",

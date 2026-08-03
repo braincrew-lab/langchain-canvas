@@ -111,6 +111,13 @@ body {
 }
 .chat__banner a { color: var(--cv-accent); text-decoration: none; }
 
+.chat__sources {
+  padding: 6px 20px;
+  font-size: 12px;
+  color: var(--cv-muted);
+  border-bottom: 1px solid var(--cv-border);
+}
+
 .chat__suggestions {
   display: flex;
   flex-direction: column;

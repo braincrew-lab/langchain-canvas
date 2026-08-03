@@ -15,6 +15,7 @@ import {
   Canvas,
   useCanvasStore,
   useCanvasStream,
+  type Artifact,
   type CanvasSaveHandler,
   type StreamEvent,
 } from "@braincrew-lab/langchain-canvas";
@@ -71,27 +72,37 @@ export default function ChatPage() {
       .catch(() => {});
   }, [threadId, applyEvents]);
 
-  // Persist hand edits as described commits; stamp the new revision back in.
-  // Pages save their raw html; tables save the artifact envelope to a
-  // `.table.json` store file. Other artifact types have no store path yet.
-  const handleSave = useCallback<CanvasSaveHandler>(
-    async ({ artifactId, artifact, baseRevision }) => {
-      const html = (artifact.data as { html?: string }).html;
-      let body: Record<string, unknown>;
-      if (typeof html === "string") {
-        body = { html, baseRevision, path: artifactId };
-      } else if (artifact.type === "table") {
-        const path = artifactId.endsWith(".table.json")
-          ? artifactId
-          : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}.table.json`;
-        body = {
-          artifact: { type: "table", title: artifact.title, data: artifact.data },
-          baseRevision,
-          path,
-        };
-      } else {
-        return;
+  // The stored source files (user uploads) — shown so "what the agent can see"
+  // is never a mystery.
+  const [sources, setSources] = useState<{ path: string; size: number }[]>([]);
+  const refreshSources = useCallback(() => {
+    if (threadId === "ssr") return;
+    fetch(`${SERVER}/api/canvas/${threadId}/files`)
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then(({ files }: { files: { path: string; size: number }[] }) =>
+        setSources(files.filter((f) => f.path.startsWith("sources/"))),
+      )
+      .catch(() => {});
+  }, [threadId]);
+  useEffect(refreshSources, [refreshSources]);
+
+  // Opened files upload to the store under sources/ so the agent can read them.
+  const handleFilesOpened = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        void fetch(`${SERVER}/api/canvas/${threadId}/upload`, { method: "POST", body: form })
+          .then(refreshSources)
+          .catch(() => {});
       }
+    },
+    [threadId, refreshSources],
+  );
+
+  // POST one save body; on success stamp the described commit onto the artifact.
+  const postSave = useCallback(
+    async (artifactId: string, body: Record<string, unknown>) => {
       const res = await fetch(`${SERVER}/api/canvas/${threadId}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -105,10 +116,60 @@ export default function ChatPage() {
     [threadId, applyEvent],
   );
 
+  /** Store path for a table artifact's working copy. */
+  const tablePath = (artifactId: string) =>
+    artifactId.endsWith(".table.json")
+      ? artifactId
+      : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}.table.json`;
+
+  // Persist hand edits as described commits. Pages save raw html; tables save
+  // the artifact envelope to a `.table.json` file; text-source previews
+  // (sources/*.md and friends) write their text back to the source file.
+  const handleSave = useCallback<CanvasSaveHandler>(
+    async ({ artifactId, artifact, baseRevision }) => {
+      const html = (artifact.data as { html?: string }).html;
+      if (typeof html === "string") {
+        await postSave(artifactId, { html, baseRevision, path: artifactId });
+      } else if (artifact.type === "table") {
+        await postSave(artifactId, {
+          artifact: { type: "table", title: artifact.title, data: artifact.data },
+          baseRevision,
+          path: tablePath(artifactId),
+        });
+      } else if (artifact.type === "document" && artifactId.startsWith("sources/")) {
+        const content = (artifact.data as { content?: string }).content;
+        if (typeof content !== "string") return;
+        await postSave(artifactId, { text: content, baseRevision, path: artifactId });
+      }
+    },
+    [postSave],
+  );
+
+  // An imported table (csv/xlsx) persists a working copy right away, so it
+  // survives reloads and the agent can read it — the original bytes land under
+  // sources/ via the upload above.
+  const handleImported = useCallback(
+    (artifact: Artifact) => {
+      if (artifact.type !== "table") return;
+      void postSave(artifact.id, {
+        artifact: { type: "table", title: artifact.title, data: artifact.data },
+        path: tablePath(artifact.id),
+        description: `Open ${artifact.title}`,
+      });
+    },
+    [postSave],
+  );
+
   return (
     <main className="app">
       <section className="app__chat">
         <div className="chat__banner">Live mode — the canvas persists across reloads.</div>
+        {sources.length > 0 && (
+          <div className="chat__sources">
+            Files the agent can read:{" "}
+            {sources.map((s) => s.path.slice("sources/".length)).join(" · ")}
+          </div>
+        )}
         <Chat
           messages={stream.messages}
           isStreaming={stream.isStreaming}
@@ -120,7 +181,12 @@ export default function ChatPage() {
         />
       </section>
       <section className="app__canvas">
-        <Canvas onEditElement={stream.editSelection} onSave={handleSave} />
+        <Canvas
+          onEditElement={stream.editSelection}
+          onSave={handleSave}
+          onFilesOpened={handleFilesOpened}
+          onImported={handleImported}
+        />
       </section>
     </main>
   );

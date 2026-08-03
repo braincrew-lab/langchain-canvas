@@ -19,12 +19,24 @@ from collections.abc import Callable
 from typing import Any
 
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
-from .store import CanvasStore
+from .store import BinaryContentError, CanvasStore
 
 TABLE_SUFFIX = ".table.json"
 
 ARTIFACT_SUFFIXES: tuple[str, ...] = (".html", TABLE_SUFFIX)
 """Store path suffixes that render as canvas artifacts (see module docstring)."""
+
+SOURCES_PREFIX = "sources/"
+"""Store prefix for uploaded source files (the user's original material)."""
+
+_SOURCE_PREVIEW_SUFFIXES: tuple[str, ...] = (".md", ".markdown", ".txt", ".json", ".html", ".htm")
+
+
+def _replayable(path: str) -> bool:
+    """True when a committed path produces wire events on replay."""
+    if path.startswith(SOURCES_PREFIX):
+        return path.lower().endswith(_SOURCE_PREVIEW_SUFFIXES)
+    return path.endswith(ARTIFACT_SUFFIXES)
 
 
 def encode_table(title: str, data: dict[str, Any]) -> str:
@@ -72,6 +84,10 @@ def events_for_commit(
     :data:`ARTIFACT_SUFFIXES`) — and malformed ``.table.json`` content —
     produce no events.
     """
+    if path.startswith(SOURCES_PREFIX):
+        return _source_preview_events(
+            path, content, is_new=is_new, revision=revision, description=description
+        )
     if path.endswith(TABLE_SUFFIX):
         payload = _table_payload(content)
         if payload is None:
@@ -118,6 +134,56 @@ def events_for_commit(
     return events
 
 
+def _source_preview_events(
+    path: str, content: str, *, is_new: bool, revision: str, description: str
+) -> list[dict]:
+    """Wire events previewing a text source file (markdown/html/json).
+
+    Uploads render read-only-ish previews so a reload shows what was opened:
+    markdown-ish files as document artifacts, html as an html artifact, json
+    as a fenced document. Table-like sources (csv/xlsx) get no preview here —
+    the client persists a `.table.json` working copy at import time, which
+    replays through the artifact path instead. Binary sources produce no
+    events (they are the agent's reading material, not canvas renders).
+    """
+    lowered = path.lower()
+    title = path.rsplit("/", 1)[-1]
+    if lowered.endswith((".html", ".htm")):
+        artifact_type = "html"
+        data: dict[str, Any] = {"html": content}
+        patch: dict[str, Any] = {"html": content}
+    elif lowered.endswith(".json"):
+        artifact_type = "document"
+        fenced = f"```json\n{content}\n```"
+        data = {"format": "markdown", "content": fenced}
+        patch = {"content": fenced}
+    elif lowered.endswith((".md", ".markdown", ".txt")):
+        artifact_type = "document"
+        data = {"format": "markdown", "content": content}
+        patch = {"content": content}
+    else:
+        return []
+
+    events: list[dict] = []
+    if is_new:
+        events.append(
+            CanvasCreate(
+                artifact=Artifact(id=path, type=artifact_type, title=title, data=data)
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
+        events.append(
+            CanvasStatus(id=path, status="complete").model_dump(by_alias=True, exclude_none=True)
+        )
+    else:
+        events.append(CanvasPatch(id=path, patch=patch).model_dump(by_alias=True))
+    events.append(
+        CanvasCommit(id=path, description=description, revision=revision).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+    return events
+
+
 def hydrate_events(
     store: CanvasStore,
     canvas_id: str,
@@ -141,9 +207,12 @@ def hydrate_events(
     seen: set[str] = set()
     for commit in reversed(store.history(canvas_id)):  # oldest first
         for path in commit.paths:
-            if not path.endswith(ARTIFACT_SUFFIXES):
+            if not _replayable(path):
                 continue
-            content = store.read(canvas_id, path, revision=commit.revision).content
+            try:
+                content = store.read(canvas_id, path, revision=commit.revision).content
+            except BinaryContentError:
+                continue  # a text-suffixed upload that didn't decode — no preview
             produced = events_for_commit(
                 path,
                 content,
