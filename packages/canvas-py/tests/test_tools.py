@@ -289,3 +289,35 @@ def test_broadcast_applies_title_and_meta_conventions() -> None:
     artifact = runtime.events[0]["artifact"]
     assert artifact["title"] == "Intro"
     assert artifact["meta"] == {"kind": "slide", "ratio": "16:9"}
+
+
+def test_table_write_broadcasts_table_artifact() -> None:
+    from langchain_canvas import encode_table
+
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    runtime = _streaming_runtime("t1")
+    content = encode_table("Compare", {"columns": [{"key": "a", "label": "A"}], "rows": [{"a": 1}]})
+    _invoke(
+        tools["write_canvas"],
+        runtime,
+        path="compare.table.json",
+        content=content,
+        description="table",
+    )
+    kinds = [e["type"] for e in runtime.events]
+    assert kinds == ["canvas.create", "canvas.status", "canvas.commit"]
+    assert runtime.events[0]["artifact"]["type"] == "table"
+    assert runtime.events[0]["artifact"]["data"]["rows"] == [{"a": 1}]
+
+    # A malformed table file persists (it may be mid-repair) but broadcasts nothing.
+    revision = store.read("t1", "compare.table.json").revision
+    _invoke(
+        tools["write_canvas"],
+        runtime,
+        path="compare.table.json",
+        content="not json {",
+        description="broken",
+        revision=revision,
+    )
+    assert [e["type"] for e in runtime.events] == kinds

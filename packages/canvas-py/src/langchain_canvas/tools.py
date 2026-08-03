@@ -9,9 +9,10 @@ Four file-level primitives over a :class:`~langchain_canvas.store.CanvasStore`:
   not by prompt discipline)
 - ``list_canvas_files`` — files currently on the canvas
 
-The tools persist through the store **and** broadcast each committed ``.html``
-change as wire events (``canvas.create``/``patch``/``commit``) through the
-run's stream writer, so a connected client redraws live. Without a stream
+The tools persist through the store **and** broadcast each committed
+artifact-file change (``.html`` pages, ``.table.json`` tables) as wire events
+(``canvas.create``/``patch``/``commit``) through the run's stream writer, so a
+connected client redraws live. Without a stream
 writer (unit tests, plain scripts) the broadcast is a silent no-op — same
 contract as :class:`~langchain_canvas.emitter.Canvas`. Which canvas they act
 on is resolved per call: ``canvas_id`` in the runtime context (or
@@ -31,7 +32,7 @@ from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 
-from .replay import events_for_commit
+from .replay import ARTIFACT_SUFFIXES, events_for_commit
 from .store import (
     CanvasFileNotFoundError,
     CanvasStore,
@@ -89,7 +90,7 @@ def create_canvas_tools(
     ) -> None:
         # Same silent no-op contract as the Canvas emitter: no writer, no wire.
         writer = getattr(runtime, "stream_writer", None)
-        if writer is None or not path.endswith(".html"):
+        if writer is None or not path.endswith(ARTIFACT_SUFFIXES):
             return
         content = store.read(canvas_id, path, revision=commit.revision).content
         for event in events_for_commit(

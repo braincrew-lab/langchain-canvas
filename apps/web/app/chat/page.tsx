@@ -72,17 +72,34 @@ export default function ChatPage() {
   }, [threadId, applyEvents]);
 
   // Persist hand edits as described commits; stamp the new revision back in.
+  // Pages save their raw html; tables save the artifact envelope to a
+  // `.table.json` store file. Other artifact types have no store path yet.
   const handleSave = useCallback<CanvasSaveHandler>(
     async ({ artifactId, artifact, baseRevision }) => {
       const html = (artifact.data as { html?: string }).html;
-      if (typeof html !== "string") return;
+      let body: Record<string, unknown>;
+      if (typeof html === "string") {
+        body = { html, baseRevision, path: artifactId };
+      } else if (artifact.type === "table") {
+        const path = artifactId.endsWith(".table.json")
+          ? artifactId
+          : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}.table.json`;
+        body = {
+          artifact: { type: "table", title: artifact.title, data: artifact.data },
+          baseRevision,
+          path,
+        };
+      } else {
+        return;
+      }
       const res = await fetch(`${SERVER}/api/canvas/${threadId}/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ html, baseRevision, path: artifactId }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) return; // 409 = stale — the next agent read still wins
-      const { revision, description } = await res.json();
+      const { revision, description, changed } = await res.json();
+      if (changed === false) return; // no-op save (e.g. an editor's mount re-serialization)
       applyEvent({ type: "canvas.commit", id: artifactId, description, revision });
     },
     [threadId, applyEvent],
