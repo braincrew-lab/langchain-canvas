@@ -46,3 +46,37 @@ def test_custom_converter_plugs_in() -> None:
     got = converter_for("sources/a.shout", [UpperConverter()])
     assert got is not None
     assert got.convert(b"hi", path="sources/a.shout").blocks[0]["text"] == "HI"
+
+
+def _tiny_xlsx() -> bytes:
+    import io
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Scores"
+    ws.append(["model", "score"])
+    ws.append(["A", 91])
+    ws.append(["B", 87])
+    wb.create_sheet("Notes").append(["비고", "테스트"])
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def test_xlsx_converter_renders_each_sheet() -> None:
+    from langchain_canvas.converters import XlsxSourceConverter
+
+    got = XlsxSourceConverter().convert(_tiny_xlsx(), path="sources/scores.xlsx")
+    text = got.blocks[0]["text"]
+    assert "### sheet: Scores" in text
+    assert "model,score" in text
+    assert "A,91" in text
+    assert "### sheet: Notes" in text
+    assert "비고,테스트" in text
+    assert got.metadata["sheets"] == "Scores, Notes"
+
+
+def test_xlsx_converter_is_in_the_default_set() -> None:
+    assert converter_for("sources/report.xlsx", default_converters()) is not None

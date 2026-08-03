@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Reference FastAPI server for @langchain-canvas."
 requires-python = ">=3.11"
 dependencies = [
-    "langchain-canvas",
+    "langchain-canvas[xlsx]",
     "langchain-anthropic>=0.3",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

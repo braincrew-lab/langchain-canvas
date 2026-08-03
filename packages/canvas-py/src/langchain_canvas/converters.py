@@ -18,6 +18,8 @@ the core package stays dependency-free.
 
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -89,6 +91,42 @@ class TextSourceConverter:
         )
 
 
+class XlsxSourceConverter:
+    """Excel workbooks, one CSV-shaped section per sheet.
+
+    Reads cached values (what Excel last computed), so formula cells show
+    their results. Requires ``openpyxl`` — installed by the ``xlsx`` extra.
+    """
+
+    suffixes: tuple[str, ...] = (".xlsx",)
+
+    def convert(self, data: bytes, *, path: str) -> ConvertedSource:
+        try:
+            from openpyxl import load_workbook  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise MissingConverterDependencyError(
+                "reading .xlsx needs openpyxl — install langchain-canvas[xlsx] "
+                "or register your own converter for .xlsx"
+            ) from exc
+
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        sections: list[str] = []
+        sheet_names: list[str] = []
+        for sheet in workbook.worksheets:
+            sheet_names.append(sheet.title)
+            out = io.StringIO()
+            writer = csv.writer(out)
+            for row in sheet.iter_rows(values_only=True):
+                writer.writerow(["" if cell is None else str(cell) for cell in row])
+            body = out.getvalue().rstrip("\n") or "(empty)"
+            sections.append(f"### sheet: {sheet.title}\n{body}")
+        workbook.close()
+        return ConvertedSource(
+            blocks=[{"type": "text", "text": "\n\n".join(sections)}],
+            metadata={"sheets": ", ".join(sheet_names), "values": "cached results"},
+        )
+
+
 def default_converters() -> list[SourceConverter]:
     """The built-in converter set. Grows as format tiers land."""
-    return [TextSourceConverter()]
+    return [TextSourceConverter(), XlsxSourceConverter()]
