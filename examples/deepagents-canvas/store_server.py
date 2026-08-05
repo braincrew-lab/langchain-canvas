@@ -8,6 +8,7 @@ cannot move into the browser is access to the canvas store on disk:
 - ``POST /api/canvas/{thread_id}/save``   — persist a hand edit as a commit
 - ``POST /api/canvas/{thread_id}/upload`` — land a user file under ``sources/``
 - ``GET  /api/canvas/{thread_id}/files``  — the store's file listing
+- ``GET  /api/canvas/{thread_id}/file``   — one file's bytes, as a download
 
 Both are a few lines over the SDK (``hydrate_events`` + ``store.write``).
 This is also where an adopter would enforce authorization and multi-tenancy —
@@ -21,12 +22,15 @@ Run it:  uv run uvicorn store_server:app --port 8000
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 from pathlib import PurePosixPath
+from urllib.parse import quote
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
@@ -174,6 +178,26 @@ async def upload(thread_id: str, file: UploadFile) -> dict:
 def files(thread_id: str) -> dict:
     """The canvas's current files (path + size), sources included."""
     return {"files": [info.model_dump() for info in STORE.list_files(_thread_uuid(thread_id))]}
+
+
+@app.get("/api/canvas/{thread_id}/file")
+def file_download(thread_id: str, path: str) -> Response:
+    """One stored file's raw bytes, served as a download (exports, sources)."""
+    try:
+        got = STORE.read_bytes(_thread_uuid(thread_id), path)
+    except CanvasFileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    name = PurePosixPath(path).name
+    ascii_name = name.encode("ascii", "ignore").decode() or "download"
+    return Response(
+        content=got.data,
+        media_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(name)}'
+            )
+        },
+    )
 
 
 @app.get("/health")
