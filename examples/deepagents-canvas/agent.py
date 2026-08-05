@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 
-from langchain_canvas import FileCanvasStore, create_canvas_tools
+from langchain_canvas import FileCanvasStore, create_canvas_tools, create_export_tool
 
 from doc_check import make_check_document
 
@@ -101,6 +101,11 @@ When asked for a written document (report, summary, memo, plan):
 4. When the user asks for a specific change, re-run check_document with
    `expect` set to the exact phrase(s) that must now appear — the change is
    not done until the check passes.
+5. When the user wants the document as a Word file (or asks to export or
+   download it), call export_canvas with path "report/" and target "docx" —
+   the sections merge, in order, into one file under exports/ that the user
+   can download. Export a table with its .table.json path and target "xlsx".
+   Files under exports/ are downloads for the user — never read or edit them.
 
 {DOC_STYLE}
 
@@ -130,6 +135,10 @@ def _slide_meta_for(path: str) -> dict | None:
 
 graph = create_deep_agent(
     model=model,
-    tools=[*create_canvas_tools(STORE, meta_for=_slide_meta_for), make_check_document(STORE)],
+    tools=[
+        *create_canvas_tools(STORE, meta_for=_slide_meta_for),
+        make_check_document(STORE),
+        create_export_tool(STORE),
+    ],
     system_prompt=SYSTEM_PROMPT,
 )

@@ -73,18 +73,25 @@ export default function ChatPage() {
   }, [threadId, applyEvents]);
 
   // The stored source files (user uploads) — shown so "what the agent can see"
-  // is never a mystery.
+  // is never a mystery. Exports are the reverse direction: files the agent
+  // produced for the user to download.
   const [sources, setSources] = useState<{ path: string; size: number }[]>([]);
+  const [exportsList, setExportsList] = useState<{ path: string; size: number }[]>([]);
   const refreshSources = useCallback(() => {
     if (threadId === "ssr") return;
     fetch(`${SERVER}/api/canvas/${threadId}/files`)
       .then((r) => (r.ok ? r.json() : { files: [] }))
-      .then(({ files }: { files: { path: string; size: number }[] }) =>
-        setSources(files.filter((f) => f.path.startsWith("sources/"))),
-      )
+      .then(({ files }: { files: { path: string; size: number }[] }) => {
+        setSources(files.filter((f) => f.path.startsWith("sources/")));
+        setExportsList(files.filter((f) => f.path.startsWith("exports/")));
+      })
       .catch(() => {});
   }, [threadId]);
   useEffect(refreshSources, [refreshSources]);
+  // Agent-produced exports appear when a run finishes.
+  useEffect(() => {
+    if (!stream.isStreaming) refreshSources();
+  }, [stream.isStreaming, refreshSources]);
 
   // Opened files upload to the store under sources/ so the agent can read them.
   const handleFilesOpened = useCallback(
@@ -168,6 +175,21 @@ export default function ChatPage() {
           <div className="chat__sources">
             Files the agent can read:{" "}
             {sources.map((s) => s.path.slice("sources/".length)).join(" · ")}
+          </div>
+        )}
+        {exportsList.length > 0 && (
+          <div className="chat__sources">
+            Exported files:{" "}
+            {exportsList.map((f, i) => (
+              <span key={f.path}>
+                {i > 0 && " · "}
+                <a
+                  href={`${SERVER}/api/canvas/${threadId}/file?path=${encodeURIComponent(f.path)}`}
+                >
+                  {f.path.slice("exports/".length)}
+                </a>
+              </span>
+            ))}
           </div>
         )}
         <Chat

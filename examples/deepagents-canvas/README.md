@@ -44,6 +44,9 @@ Then open http://localhost:3000/chat and ask for a deck.
   After every write or edit the agent runs `check_document` (headless render
   → ERROR/WARNING report) and fixes until it is clean — including checking
   that the exact change you asked for actually appears.
+- Ask for the report "as a Word file" and the agent calls `export_canvas`:
+  the sections merge into one `.docx` under `exports/`, and the chat shows a
+  download link. Tables export the same way to `.xlsx`.
 - Verified against `langgraph dev` (local). Hosted LangGraph Platform is
   untested — open an issue if you need it.
 - Thread ids: LangGraph requires UUIDs. Non-UUID thread ids are mapped
