@@ -1,8 +1,9 @@
 # deepagents-canvas
 
 A [deepagents](https://docs.langchain.com/oss/python/deepagents/overview) agent
-that builds slide decks on a persistent canvas, using only the four standard
-canvas tools — and a browser UI that talks to the LangGraph server directly.
+that builds slide decks and written reports on a persistent canvas, using the
+four standard canvas tools plus one verification tool (`check_document`) — and
+a browser UI that talks to the LangGraph server directly.
 
 ## What runs where
 
@@ -27,6 +28,7 @@ lines over the SDK's `hydrate_events` and `store.write`.
 ```bash
 cd examples/deepagents-canvas
 uv venv && uv pip install -e .
+uv run playwright install chromium   # for check_document (renders documents headlessly)
 cp .env.example .env   # fill in your model credentials
 uv run langgraph dev                            # terminal 1
 uv run uvicorn store_server:app --port 8000     # terminal 2
@@ -38,6 +40,10 @@ Then open http://localhost:3000/chat and ask for a deck.
 
 ## Notes
 
+- Reports live as one HTML file per section under `report/` on the canvas.
+  After every write or edit the agent runs `check_document` (headless render
+  → ERROR/WARNING report) and fixes until it is clean — including checking
+  that the exact change you asked for actually appears.
 - Verified against `langgraph dev` (local). Hosted LangGraph Platform is
   untested — open an issue if you need it.
 - Thread ids: LangGraph requires UUIDs. Non-UUID thread ids are mapped
