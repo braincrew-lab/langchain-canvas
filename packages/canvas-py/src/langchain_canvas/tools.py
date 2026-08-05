@@ -38,6 +38,12 @@ from .converters import (
     converter_for,
     default_converters,
 )
+from .exporters import (
+    Exporter,
+    MissingExporterDependencyError,
+    default_exporters,
+    exporter_for,
+)
 from .replay import ARTIFACT_SUFFIXES, events_for_commit
 from .store import (
     BinaryContentError,
@@ -293,3 +299,78 @@ def create_canvas_tools(
         return "\n".join(f"{info.path} ({info.size} bytes)" for info in infos)
 
     return [read_canvas, write_canvas, edit_canvas, list_canvas_files]
+
+
+def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:
+    """Build an ``export_canvas`` tool bound to ``store``.
+
+    Kept separate from :func:`create_canvas_tools` so the four standard tools
+    stay a stable contract — add this tool when your agent should hand users
+    office files. ``exporters`` defaults to the built-in set (see
+    :mod:`langchain_canvas.exporters`) and is fully replaceable with your own
+    pipeline. Exported files land on the canvas under ``exports/``.
+    """
+    active_exporters = default_exporters() if exporters is None else exporters
+
+    @tool
+    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str:
+        """Export canvas work into a downloadable office file.
+
+        ``path`` is one canvas file (``report/02-overview.html``,
+        ``sales.table.json``) or a directory prefix ending in ``/``
+        (``report/``), which merges every .html file under it, in name
+        order, into one document with a page break between sections.
+        ``target`` is the output format: ``docx`` for .html files,
+        ``xlsx`` for .table.json tables. The result is saved under
+        ``exports/`` on the canvas, where the user can download it.
+        """
+        canvas_id = _canvas_id(runtime)
+        try:
+            if path.endswith("/"):
+                section_paths = sorted(
+                    info.path
+                    for info in store.list_files(canvas_id)
+                    if info.path.startswith(path) and info.path.lower().endswith((".html", ".htm"))
+                )
+                if not section_paths:
+                    return f"Error: no .html files under {path} to export."
+                content = "\n<hr/>\n".join(
+                    store.read(canvas_id, section).content for section in section_paths
+                )
+                sample = section_paths[0]
+            else:
+                content = store.read(canvas_id, path).content
+                sample = path
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except BinaryContentError:
+            return f"Error: {path} is binary; export reads text canvas files (.html, .table.json)."
+
+        exporter = exporter_for(sample, target, active_exporters)
+        if exporter is None:
+            available = sorted(
+                {e.target for e in active_exporters if sample.lower().endswith(e.suffixes)}
+            )
+            hint = f" Formats available for this file: {', '.join(available)}." if available else ""
+            return f"Error: no exporter turns {sample} into {target!r}.{hint}"
+        try:
+            exported = exporter.export(content, path=path)
+        except MissingExporterDependencyError as exc:
+            return f"Error: {exc}"
+        except ValueError as exc:
+            return f"Error: {exc}"
+
+        out_path = f"exports/{exported.filename}"
+        commit = store.write_bytes(
+            canvas_id,
+            out_path,
+            exported.data,
+            f"Export {path} -> {exported.filename}",
+            actor="agent",
+        )
+        return (
+            f"Exported {path} to {out_path} ({len(exported.data)} bytes, revision "
+            f"{commit.revision}). The user can download it from the canvas file list."
+        )
+
+    return export_canvas
