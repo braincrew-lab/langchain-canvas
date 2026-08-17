@@ -18,8 +18,15 @@ from langchain.tools import ToolRuntime, tool
 import json
 import re
 
-from langchain_canvas import Canvas, create_canvas_tools, create_export_tool
+from langchain_canvas import (
+    Canvas,
+    create_canvas_tools,
+    create_export_tool,
+    encode_chart,
+    encode_table,
+)
 from langchain_canvas.protocol import ChartSeries, TableColumn
+from langchain_canvas.replay import CHART_SUFFIX, DOCUMENT_SUFFIX, TABLE_SUFFIX
 
 from .store import (
     MANIFEST_PATH,
@@ -28,6 +35,7 @@ from .store import (
     SLIDE_META,
     SLIDE_WIDTH,
     STORE,
+    artifact_path,
     slide_path,
 )
 
@@ -152,16 +160,23 @@ def write_report(topic: str, runtime: ToolRuntime) -> str:
 
     Use this for anything long-form: reports, drafts, explanations, summaries.
     """
+    path = artifact_path(topic, DOCUMENT_SUFFIX)
     canvas = Canvas.from_runtime(runtime)
-    doc = canvas.open_document(title=f"Report: {topic}")
+    doc = canvas.open_document(title=f"Report: {topic}", id=path)
 
     model = init_chat_model(_WRITER_MODEL)
     prompt = f"Write a well-structured markdown report about: {topic}. Use headings and bullet points."
+    chunks: list[str] = []
     for chunk in model.stream(prompt):
-        doc.append(_text_of(chunk))
+        text = _text_of(chunk)
+        chunks.append(text)
+        doc.append(text)
     doc.complete()
 
-    return f"Drafted a report on “{topic}” — it's on the canvas."
+    description = f"Write report: {topic[:50]}"
+    commit = STORE.write(thread_id(runtime), path, "".join(chunks), description, actor="agent")
+    doc.commit(description, revision=commit.revision)
+    return f"Drafted a report on “{topic}” — saved as {path} (revision {commit.revision})."
 
 
 @tool
@@ -182,18 +197,29 @@ def build_chart(
         series_label: Legend label for the plotted series.
         chart: One of "bar", "line", "area", "pie".
     """
+    path = artifact_path(title, CHART_SUFFIX)
     canvas = Canvas.from_runtime(runtime)
     handle = canvas.open_chart(
         title=title,
         chart=chart,
         x_key="category",
         series=[ChartSeries(key="value", label=series_label)],
+        id=path,
     )
     rows = [{"category": c, "value": v} for c, v in zip(categories, values, strict=False)]
     handle.set_rows(rows)
     handle.complete()
 
-    return f"Rendered a {chart} chart “{title}” on the canvas."
+    data = {
+        "chart": chart,
+        "xKey": "category",
+        "series": [{"key": "value", "label": series_label}],
+        "rows": rows,
+    }
+    description = f"Build chart: {title[:50]}"
+    commit = STORE.write(thread_id(runtime), path, encode_chart(title, data), description, actor="agent")
+    handle.commit(description, revision=commit.revision)
+    return f"Rendered a {chart} chart “{title}” — saved as {path} (revision {commit.revision})."
 
 
 @tool
@@ -210,15 +236,27 @@ def build_table(
         columns: Column keys, in display order.
         rows: One dict per row, keyed by column.
     """
+    path = artifact_path(title, TABLE_SUFFIX)
+    norm_columns = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
     canvas = Canvas.from_runtime(runtime)
     handle = canvas.open_table(
         title=title,
-        columns=[TableColumn(key=c, label=c.replace("_", " ").title()) for c in columns],
+        columns=[TableColumn(**col) for col in norm_columns],
+        id=path,
     )
     handle.set_rows(rows)
     handle.complete()
 
-    return f"Rendered a table “{title}” with {len(rows)} rows on the canvas."
+    description = f"Build table: {title[:50]}"
+    commit = STORE.write(
+        thread_id(runtime),
+        path,
+        encode_table(title, {"columns": norm_columns, "rows": rows}),
+        description,
+        actor="agent",
+    )
+    handle.commit(description, revision=commit.revision)
+    return f"Rendered a table “{title}” with {len(rows)} rows — saved as {path} (revision {commit.revision})."
 
 
 def _slide_meta_for(path: str) -> dict | None:

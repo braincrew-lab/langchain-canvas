@@ -138,7 +138,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
         with self._write_lock:
-            self._check_base(canvas_dir, base_revision)
+            self._check_base(canvas_dir, base_revision, path)
             target = canvas_dir / _HEAD / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, "utf-8")
@@ -156,7 +156,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
         with self._write_lock:
-            self._check_base(canvas_dir, base_revision)
+            self._check_base(canvas_dir, base_revision, path)
             target = canvas_dir / _HEAD / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -177,7 +177,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         with self._write_lock:
             if not target.is_file():
                 raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-            self._check_base(canvas_dir, base_revision)
+            self._check_base(canvas_dir, base_revision, path)
             try:
                 current = target.read_text("utf-8")
             except UnicodeDecodeError as exc:
@@ -209,15 +209,30 @@ class FileCanvasStore(AsyncFromSyncMixin):
             if line.strip()
         ]
 
-    def _check_base(self, canvas_dir: Path, base_revision: str | None) -> None:
+    def _check_base(self, canvas_dir: Path, base_revision: str | None, path: str) -> None:
+        """Reject a write whose base is older than the file's own last change.
+
+        A base is stale only when ``path`` itself changed after
+        ``base_revision`` — commits that touched other files don't invalidate
+        it (a multi-artifact canvas would otherwise reject every edit of a
+        non-latest artifact). An unknown base revision is always stale.
+        """
         if base_revision is None:
             return
         commits = self._commits(canvas_dir)
         if not commits:
             return
-        head = commits[-1].revision
-        if base_revision != head:
-            raise RevisionMismatchError(f"base revision {base_revision!r} is behind head {head!r}")
+        revisions = [commit.revision for commit in commits]
+        if base_revision not in revisions:
+            raise RevisionMismatchError(
+                f"base revision {base_revision!r} is not in this canvas's history"
+            )
+        for commit in commits[revisions.index(base_revision) + 1 :]:
+            if path in commit.paths:
+                raise RevisionMismatchError(
+                    f"base revision {base_revision!r} is behind {commit.revision!r}, "
+                    f"which changed {path!r}"
+                )
 
     def _commit(
         self, canvas_dir: Path, description: str, paths: list[str], actor: str | None

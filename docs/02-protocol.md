@@ -203,6 +203,13 @@ From Python, prefer the emitters — they set `type` and shape for you:
 `canvas.open_html`, `canvas.open_document`, `canvas.open_slides`,
 `canvas.open_table`, `canvas.open_chart` (see `03-getting-started.md`).
 
+Emitters are **wire-only**: they draw on the connected client and persist
+nothing, so an artifact that is only emitted disappears on reload. To make it
+survive, write it to the canvas store as a file — `.html` (page), `.md`
+(document), `.table.json` / `.chart.json` / `.slides.json` (JSON envelopes) —
+and the standard replay path rebuilds it. Emitting without persisting is a
+valid choice for ephemeral renders; make it on purpose.
+
 ## Rendering HTML you already have — the substrate approach
 
 If your backend produces **pre-rendered HTML** for everything (a common reality

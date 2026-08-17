@@ -123,30 +123,46 @@ export default function ChatPage() {
     [threadId, applyEvent],
   );
 
-  /** Store path for a table artifact's working copy. */
-  const tablePath = (artifactId: string) =>
-    artifactId.endsWith(".table.json")
-      ? artifactId
-      : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}.table.json`;
+  /** Store file suffix per structured (JSON-envelope) artifact type. */
+  const ENVELOPE_SUFFIX: Record<string, string> = {
+    table: ".table.json",
+    chart: ".chart.json",
+    slides: ".slides.json",
+  };
 
-  // Persist hand edits as described commits. Pages save raw html; tables save
-  // the artifact envelope to a `.table.json` file; text-source previews
-  // (sources/*.md and friends) write their text back to the source file.
+  /** Store path for an artifact's working copy (the id when already a path). */
+  const artifactPath = (artifactId: string, suffix: string) =>
+    artifactId.endsWith(suffix)
+      ? artifactId
+      : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}${suffix}`;
+
+  // Persist hand edits as described commits. Pages save raw html; documents
+  // save their markdown as text (sources/*.md previews write back to the
+  // source file); table/chart/slides save the artifact envelope to a typed
+  // JSON file. An emitter-only artifact materializes a working copy on its
+  // first hand edit.
   const handleSave = useCallback<CanvasSaveHandler>(
     async ({ artifactId, artifact, baseRevision }) => {
       const html = (artifact.data as { html?: string }).html;
+      const envelopeSuffix = ENVELOPE_SUFFIX[artifact.type];
       if (typeof html === "string") {
         await postSave(artifactId, { html, baseRevision, path: artifactId });
-      } else if (artifact.type === "table") {
+      } else if (envelopeSuffix) {
         await postSave(artifactId, {
-          artifact: { type: "table", title: artifact.title, data: artifact.data },
+          artifact: { type: artifact.type, title: artifact.title, data: artifact.data },
           baseRevision,
-          path: tablePath(artifactId),
+          path: artifactPath(artifactId, envelopeSuffix),
         });
-      } else if (artifact.type === "document" && artifactId.startsWith("sources/")) {
+      } else if (artifact.type === "document") {
         const content = (artifact.data as { content?: string }).content;
         if (typeof content !== "string") return;
-        await postSave(artifactId, { text: content, baseRevision, path: artifactId });
+        // Source previews write back to the source file whatever its suffix;
+        // canvas documents live at (or materialize) a .md path.
+        const path =
+          artifactId.startsWith("sources/") || artifactId.endsWith(".md")
+            ? artifactId
+            : artifactPath(artifactId, ".md");
+        await postSave(artifactId, { text: content, baseRevision, path });
       }
     },
     [postSave],
@@ -160,7 +176,7 @@ export default function ChatPage() {
       if (artifact.type !== "table") return;
       void postSave(artifact.id, {
         artifact: { type: "table", title: artifact.title, data: artifact.data },
-        path: tablePath(artifact.id),
+        path: artifactPath(artifact.id, ".table.json"),
         description: `Open ${artifact.title}`,
       });
     },

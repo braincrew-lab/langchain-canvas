@@ -12,13 +12,13 @@ def test_empty_canvas_replays_nothing() -> None:
 def test_replay_creates_then_patches_and_commits() -> None:
     store = InMemoryCanvasStore()
     first = store.write("c1", "page.html", "<p>v1</p>", "create page")
-    store.write("c1", "notes.md", "not html", "side notes")
+    store.write("c1", "notes.txt", "not an artifact", "side notes")
     second = store.edit("c1", "page.html", "v1", "v2", "tweak", base_revision=None)
 
     events = hydrate_events(store, "c1")
     kinds = [e["type"] for e in events]
     # First appearance: create + complete status; later commits patch. The
-    # non-html file is skipped entirely.
+    # non-artifact file (.txt) is skipped entirely.
     assert kinds == [
         "canvas.create",
         "canvas.status",
@@ -137,3 +137,88 @@ def test_csv_and_binary_sources_produce_no_preview() -> None:
     store.write("c1", "sources/rows.csv", "a,b\n1,2", "Upload rows.csv", actor="human")
     store.write_bytes("c1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
     assert hydrate_events(store, "c1") == []
+
+
+def test_chart_file_replays_as_chart_artifact() -> None:
+    from langchain_canvas import encode_chart
+
+    store = InMemoryCanvasStore()
+    data = {
+        "chart": "bar",
+        "xKey": "quarter",
+        "series": [{"key": "value"}],
+        "rows": [{"quarter": "Q1", "value": 10}],
+        "options": {"title": "Quarterly"},
+    }
+    store.write("t", "revenue.chart.json", encode_chart("Revenue", data), "Build chart")
+
+    events = hydrate_events(store, "t")
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert create["artifact"]["type"] == "chart"
+    assert create["artifact"]["title"] == "Revenue"
+    assert create["artifact"]["data"]["options"] == {"title": "Quarterly"}
+
+
+def test_slides_file_replays_as_slides_artifact() -> None:
+    from langchain_canvas import encode_slides
+
+    store = InMemoryCanvasStore()
+    data = {"slides": [{"layout": "title", "title": "Hello", "padding": 6}]}
+    store.write("t", "deck.slides.json", encode_slides("Pitch", data), "Build deck")
+
+    events = hydrate_events(store, "t")
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert create["artifact"]["type"] == "slides"
+    assert create["artifact"]["title"] == "Pitch"
+    assert create["artifact"]["data"]["slides"][0]["padding"] == 6
+
+
+def test_markdown_file_replays_as_document_with_heading_title() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t", "report.md", "# Renewable Energy\n\nBody text.", "Write report")
+    store.write("t", "report.md", "# Renewable Energy\n\nBody text, edited.", "Edit")
+
+    events = hydrate_events(store, "t")
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert create["artifact"]["type"] == "document"
+    assert create["artifact"]["title"] == "Renewable Energy"
+    assert create["artifact"]["data"] == {
+        "format": "markdown",
+        "content": "# Renewable Energy\n\nBody text.",
+    }
+    patch = next(e for e in events if e["type"] == "canvas.patch")
+    assert patch["patch"] == {"content": "# Renewable Energy\n\nBody text, edited."}
+
+
+def test_markdown_without_heading_falls_back_to_host_title() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t", "notes.md", "just prose, no heading", "Write notes")
+
+    events = hydrate_events(store, "t")
+    create = next(e for e in events if e["type"] == "canvas.create")
+    assert create["artifact"]["title"] == "notes.md"
+
+
+def test_malformed_chart_envelope_is_skipped() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t", "bad.chart.json", "not json at all", "Corrupt")
+
+    assert hydrate_events(store, "t") == []
+
+
+def test_encode_artifact_validates_type_data_and_suffix() -> None:
+    import pytest
+
+    from langchain_canvas import encode_artifact
+
+    ok = encode_artifact(
+        {"type": "chart", "title": "Rev", "data": {"chart": "bar"}}, "rev.chart.json"
+    )
+    assert '"type": "chart"' in ok
+
+    with pytest.raises(ValueError, match="JSON envelopes"):
+        encode_artifact({"type": "document", "data": {}}, "doc.md")
+    with pytest.raises(ValueError, match="data object"):
+        encode_artifact({"type": "slides"}, "deck.slides.json")
+    with pytest.raises(ValueError, match=r"must end with \.slides\.json"):
+        encode_artifact({"type": "slides", "data": {"slides": []}}, "deck.json")
