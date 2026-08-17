@@ -46,6 +46,46 @@ describe("toStandaloneHtml", () => {
 });
 
 describe("dataExporters", () => {
+  it("keeps '=' row values as formulas with cached results in xlsx", async () => {
+    const { Workbook } = await import("exceljs");
+    const data: TableData = {
+      columns: [{ key: "a", label: "A" }],
+      rows: [{ a: 10 }, { a: 20 }, { a: "=SUM(A2:A3)" }],
+    };
+    const xlsx = dataExporters.table.find((e) => e.extension === "xlsx")!;
+    const buffer = (await xlsx.build({ id: "t", type: "table", title: "t", version: 1, status: "complete", data })) as ArrayBuffer;
+    const workbook = new Workbook();
+    await workbook.xlsx.load(buffer);
+    const cell = workbook.worksheets[0].getCell(4, 1);
+    expect(cell.formula).toBe("SUM(A2:A3)");
+    expect(cell.result).toBe(30);
+  });
+
+  it("keeps a grid-typed formula (celldata `f`) as a formula in xlsx", async () => {
+    const { Workbook } = await import("exceljs");
+    const data: TableData = {
+      columns: [],
+      rows: [],
+      sheet: [
+        {
+          name: "S",
+          celldata: [
+            { r: 0, c: 0, v: { v: 1 } },
+            { r: 1, c: 0, v: { v: 2 } },
+            { r: 2, c: 0, v: { v: 3, f: "=SUM(A1:A2)" } },
+          ],
+        },
+      ],
+    } as TableData;
+    const xlsx = dataExporters.table.find((e) => e.extension === "xlsx")!;
+    const buffer = (await xlsx.build({ id: "t", type: "table", title: "t", version: 1, status: "complete", data })) as ArrayBuffer;
+    const workbook = new Workbook();
+    await workbook.xlsx.load(buffer);
+    const cell = workbook.worksheets[0].getCell(3, 1);
+    expect(cell.formula).toBe("SUM(A1:A2)");
+    expect(cell.result).toBe(3);
+  });
+
   it("exports a table to CSV", async () => {
     const table: TableData = {
       columns: [{ key: "name", label: "Name" }, { key: "n", label: "N" }],
