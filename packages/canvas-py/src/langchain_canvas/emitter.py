@@ -273,7 +273,12 @@ class ChartHandle(_Handle):
 
 
 class TableHandle(_Handle):
-    """A data grid whose rows can be filled in progressively."""
+    """A data grid whose rows can be filled in progressively.
+
+    Row values starting with ``=`` are spreadsheet formulas — the client
+    computes their results on load (see :mod:`langchain_canvas.formulas`
+    for the supported function list).
+    """
 
     def set_rows(self, rows: list[dict[str, Any]]) -> "TableHandle":
         self._canvas._emit(CanvasPatch(id=self.id, patch={"rows": rows}))

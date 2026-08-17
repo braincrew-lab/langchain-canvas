@@ -23,6 +23,7 @@ from .agent import create_canvas_agent
 from .converters import ConvertedSource, SourceConverter, default_converters
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
 from .exporters import ExportedFile, Exporter, default_exporters
+from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .replay import encode_artifact, encode_chart, encode_slides, encode_table, hydrate_events
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
@@ -30,6 +31,7 @@ from .tools import create_canvas_tools, create_export_tool
 
 __all__ = [
     "Canvas",
+    "SUPPORTED_FORMULA_FUNCTIONS",
     "CanvasStore",
     "ConvertedSource",
     "DocumentHandle",
@@ -50,6 +52,7 @@ __all__ = [
     "encode_chart",
     "encode_slides",
     "encode_table",
+    "formula_guidance",
     "hydrate_events",
     "sse_from_agent",
 ]
