@@ -148,10 +148,12 @@ class BinaryContentError(CanvasStoreError):
 
 
 class RevisionMismatchError(CanvasStoreError):
-    """``base_revision`` no longer matches the canvas head.
+    """``base_revision`` is stale for the file being written.
 
-    Someone (human or agent) committed after the caller's last read. The
-    caller must re-read and retry — never overwrite blindly.
+    Someone (human or agent) changed *this file* after the caller's last
+    read (commits that touched other files don't count), or the base
+    revision is unknown to the canvas. The caller must re-read and retry —
+    never overwrite blindly.
     """
 
 
@@ -197,8 +199,9 @@ class CanvasStore(Protocol):
         """Create or fully replace one file, as a new commit.
 
         ``base_revision`` (from a prior ``read``) enables optimistic
-        concurrency: if given and the canvas head has moved past it,
-        :class:`RevisionMismatchError` is raised instead of overwriting.
+        concurrency: if given and ``path`` itself changed after that
+        revision, :class:`RevisionMismatchError` is raised instead of
+        overwriting. Commits that touched other files don't invalidate it.
         ``actor`` is recorded on the commit (see :attr:`Commit.actor`).
         """
         ...

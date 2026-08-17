@@ -271,3 +271,31 @@ def test_list_files_includes_binary_sizes(store: CanvasStore) -> None:
     store.write_bytes("c1", "sources/a.bin", b"\x00" * 10, "upload")
     infos = {i.path: i.size for i in store.list_files("c1")}
     assert infos["sources/a.bin"] == 10
+
+
+def test_base_revision_is_per_file_not_per_canvas(store: CanvasStore) -> None:
+    # A commit to another file must not invalidate a base for this one — a
+    # multi-artifact canvas would otherwise reject every edit of a non-latest
+    # artifact.
+    chart = store.write("c", "rev.chart.json", "{}", "chart")
+    store.write("c", "report.md", "# Report", "report")
+
+    commit = store.write(
+        "c", "rev.chart.json", "{'v':2}", "hand edit", base_revision=chart.revision
+    )
+    assert commit.revision  # accepted: rev.chart.json itself never moved
+
+
+def test_base_revision_stale_when_the_same_file_moved(store: CanvasStore) -> None:
+    first = store.write("c", "a.md", "one", "v1")
+    store.write("c", "a.md", "two", "v2")
+
+    with pytest.raises(RevisionMismatchError):
+        store.write("c", "a.md", "three", "late", base_revision=first.revision)
+
+
+def test_unknown_base_revision_is_rejected(store: CanvasStore) -> None:
+    store.write("c", "a.md", "one", "v1")
+
+    with pytest.raises(RevisionMismatchError):
+        store.write("c", "a.md", "two", "late", base_revision="v999")

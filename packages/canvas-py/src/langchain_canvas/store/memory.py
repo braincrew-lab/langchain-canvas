@@ -110,7 +110,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         validate_relpath(path)
         with self._write_lock:
             record = self._canvases.setdefault(canvas_id, _CanvasRecord())
-            self._check_base(record, base_revision)
+            self._check_base(record, base_revision, path)
             record.files[path] = content
             return self._commit(record, description, [path], actor)
 
@@ -127,7 +127,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         validate_relpath(path)
         with self._write_lock:
             record = self._canvases.setdefault(canvas_id, _CanvasRecord())
-            self._check_base(record, base_revision)
+            self._check_base(record, base_revision, path)
             record.files[path] = data
             return self._commit(record, description, [path], actor)
 
@@ -147,7 +147,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             record = self._canvases.get(canvas_id)
             if record is None or path not in record.files:
                 raise CanvasFileNotFoundError(f"no file {path!r} in canvas {canvas_id!r}")
-            self._check_base(record, base_revision)
+            self._check_base(record, base_revision, path)
             current = _as_text(record.files[path], path)
             occurrences = current.count(old)
             if occurrences == 0:
@@ -168,12 +168,26 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         return record.commits[-1].revision
 
     @staticmethod
-    def _check_base(record: _CanvasRecord, base_revision: str | None) -> None:
+    def _check_base(record: _CanvasRecord, base_revision: str | None, path: str) -> None:
+        """Reject a write whose base is older than the file's own last change.
+
+        Same per-file staleness rule as the filesystem backend: commits that
+        touched other files don't invalidate a base; an unknown base is
+        always stale.
+        """
         if base_revision is None or not record.commits:
             return
-        head = record.commits[-1].revision
-        if base_revision != head:
-            raise RevisionMismatchError(f"base revision {base_revision!r} is behind head {head!r}")
+        revisions = [commit.revision for commit in record.commits]
+        if base_revision not in revisions:
+            raise RevisionMismatchError(
+                f"base revision {base_revision!r} is not in this canvas's history"
+            )
+        for commit in record.commits[revisions.index(base_revision) + 1 :]:
+            if path in commit.paths:
+                raise RevisionMismatchError(
+                    f"base revision {base_revision!r} is behind {commit.revision!r}, "
+                    f"which changed {path!r}"
+                )
 
     @staticmethod
     def _commit(

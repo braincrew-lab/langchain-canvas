@@ -23,8 +23,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from langchain_canvas import encode_table, hydrate_events
-from langchain_canvas.replay import SOURCES_PREFIX, TABLE_SUFFIX
+from langchain_canvas import encode_artifact, hydrate_events
+from langchain_canvas.replay import SOURCES_PREFIX
 from langchain_canvas.store import CanvasFileNotFoundError, RevisionMismatchError
 
 from ..agent.store import MANIFEST_PATH, PAGE_PATH, SLIDE_META, STORE
@@ -57,7 +57,8 @@ def hydrate(thread_id: str) -> list[dict]:
 
 
 class SaveRequest(BaseModel):
-    """One hand edit: raw ``html`` for a page, or a table ``artifact`` envelope."""
+    """One hand edit: raw ``html`` for a page, ``text`` for a document/source
+    file, or a structured ``artifact`` envelope (table / chart / slides)."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
@@ -80,15 +81,10 @@ def save_content(request: SaveRequest) -> str:
         return request.html
     if request.text is not None:
         return request.text
-    artifact = request.artifact or {}
-    if artifact.get("type") != "table" or not isinstance(artifact.get("data"), dict):
-        raise HTTPException(
-            status_code=422, detail="only table artifacts persist today (type + data required)"
-        )
-    if not request.path.endswith(TABLE_SUFFIX):
-        raise HTTPException(status_code=422, detail=f"table path must end with {TABLE_SUFFIX}")
-    title = artifact.get("title")
-    return encode_table(title if isinstance(title, str) else request.path, artifact["data"])
+    try:
+        return encode_artifact(request.artifact or {}, request.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/api/canvas/{thread_id}/save")

@@ -19,6 +19,13 @@ opens artifacts; the handles it gets back stream content in and mark completion:
 All the envelope construction, the `append`-vs-`patch` decision, and version
 bumping live here — so the wire protocol can evolve without changing a single
 tool.
+
+**Emitting is wire-only.** A `Canvas` draws on the connected client and
+persists nothing; whatever is only emitted disappears on reload. Content that
+must survive lives as a store file — written by the standard canvas tools, or
+by your own `store.write` next to the emit (see the `replay` module for the
+file-suffix mapping). Emitting without persisting is a valid choice for
+ephemeral renders; make it on purpose.
 """
 
 from __future__ import annotations
@@ -55,6 +62,10 @@ class Canvas:
     When constructed without a writer (e.g. a tool invoked as a plain function
     in a unit test), every emission is a silent no-op, so tools stay callable
     outside a LangGraph execution context.
+
+    Wire-only: nothing opened here persists by itself — pair the emit with a
+    ``store`` write when the artifact must survive a reload (see the module
+    docstring).
     """
 
     def __init__(self, writer: StreamWriter | None) -> None:

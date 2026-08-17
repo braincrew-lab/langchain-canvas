@@ -30,8 +30,20 @@ SLIDE_WIDTH = 1280
 SLIDE_HEIGHT = 720
 
 
+def _slug(title: str, fallback: str) -> str:
+    slug = "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-")
+    return "-".join(part for part in slug.split("-") if part)[:40] or fallback
+
+
 def slide_path(index: int, title: str) -> str:
     """File name for slide `index` (1-based): ``01-<slug>.html``."""
-    slug = "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-")
-    slug = "-".join(part for part in slug.split("-") if part)[:40] or "slide"
-    return f"{index:02d}-{slug}.html"
+    return f"{index:02d}-{_slug(title, 'slide')}.html"
+
+
+def artifact_path(title: str, suffix: str) -> str:
+    """Store path for a titled artifact: ``<slug><suffix>``.
+
+    The artifact id doubles as the file path, so reloads and hand-edit saves
+    address the same store file the tool wrote.
+    """
+    return f"{_slug(title, 'artifact')}{suffix}"
