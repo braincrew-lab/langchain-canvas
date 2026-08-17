@@ -14,6 +14,7 @@
 
 import type { TableColumn, TableData } from "../protocol/artifacts";
 import { loadOptional } from "../optionalImport";
+import { customFormulaFunctions } from "./formulaFunctions";
 
 /** Map of `"<celldataRow>,<col>"` → computed value, for formula cells only. */
 export type FormulaValues = Map<string, string | number>;
@@ -66,6 +67,8 @@ export async function computeFormulas(columns: TableColumn[], rows: TableData["r
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const parser = new (FormulaParser as any)({
+    // Overrides the library's empty classic-function stubs (SUMIFS, MATCH, …).
+    functions: customFormulaFunctions(),
     onCell: ({ row, col }: { row: number; col: number }) => valueAt(row, col),
     onRange: (ref: { from: { row: number; col: number }; to: { row: number; col: number } }) => {
       // Clamp to the actual data extent so full-column refs like =SUM(A:A) don't

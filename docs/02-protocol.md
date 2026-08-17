@@ -104,6 +104,12 @@ type TableData = {
   columns: Array<{ key: string; label?: string; align?: "left" | "right" | "center" }>;
   rows: Array<Record<string, string | number>>;
 };
+// A row value starting with "=" is a spreadsheet formula. The client computes
+// its result on load and the cell stays a formula in the stored artifact.
+// References use on-screen coordinates: row 1 is the header, data starts at
+// row 2. The supported function list lives in code — `SUPPORTED_FORMULA_FUNCTIONS`
+// in `canvas-react/src/io/formulaFunctions.ts` (mirrored in the Python package,
+// parity-tested) — so it cannot drift from what actually evaluates.
 
 // type: "slides"
 type SlidesData = { slides: Slide[] };

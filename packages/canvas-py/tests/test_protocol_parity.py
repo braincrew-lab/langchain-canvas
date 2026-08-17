@@ -82,6 +82,20 @@ def _ts_literals(expression: str) -> set[str] | None:
     return None
 
 
+def test_supported_formula_functions_match_ts():
+    # The formula contract is one list defined twice — the TS side is the one
+    # the engine tests cover, the Python side is what tool docstrings promise.
+    from langchain_canvas.formulas import SUPPORTED_FORMULA_FUNCTIONS
+
+    ts_source = (TS_PATH.parents[1] / "io" / "formulaFunctions.ts").read_text()
+    match = re.search(
+        r"SUPPORTED_FORMULA_FUNCTIONS[^=]*=\s*\[(.*?)\]", ts_source, re.S
+    )
+    assert match, "SUPPORTED_FORMULA_FUNCTIONS not found in formulaFunctions.ts"
+    ts_names = re.findall(r'"(\w+)"', match.group(1))
+    assert list(SUPPORTED_FORMULA_FUNCTIONS) == ts_names
+
+
 def test_parser_sees_every_interface():
     # A new TS interface must get a pydantic twin and a PAIRS row.
     assert set(_ts_interfaces()) == {ts_name for _, ts_name in PAIRS}

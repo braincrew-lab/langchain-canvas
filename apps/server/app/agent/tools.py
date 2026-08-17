@@ -24,6 +24,7 @@ from langchain_canvas import (
     create_export_tool,
     encode_chart,
     encode_table,
+    formula_guidance,
 )
 from langchain_canvas.protocol import ChartSeries, TableColumn
 from langchain_canvas.replay import CHART_SUFFIX, DOCUMENT_SUFFIX, TABLE_SUFFIX
@@ -257,6 +258,11 @@ def build_table(
     )
     handle.commit(description, revision=commit.revision)
     return f"Rendered a table “{title}” with {len(rows)} rows — saved as {path} (revision {commit.revision})."
+
+
+# The formula contract comes from the same constant the engine tests cover,
+# so this promise cannot drift from what actually evaluates.
+build_table.description += "\n\n" + formula_guidance()
 
 
 def _slide_meta_for(path: str) -> dict | None:
