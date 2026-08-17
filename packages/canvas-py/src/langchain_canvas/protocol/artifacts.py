@@ -56,6 +56,7 @@ class ChartSeries(_CamelModel):
 class ChartOptions(_CamelModel):
     stacked: bool = False
     y_label: str | None = None  # serialized as `yLabel`
+    title: str | None = None  # chart title shown above the plot
     colors: list[str] | None = None  # per-slice colors for pie charts
 
 
@@ -73,6 +74,10 @@ class ChartData(_CamelModel):
     x_key: str  # serialized as `xKey`
     series: list[ChartSeries] = Field(default_factory=list)
     options: ChartOptions | None = None
+    # Raw ECharts `option`, rendered verbatim when present — an escape hatch for
+    # emitters that already produce a full ECharts config (the tidy rows/series
+    # model is ignored, and inline editing is disabled). Wire: `echartsOption`.
+    echarts_option: dict[str, Any] | None = None
 
 
 class TableColumn(_CamelModel):
@@ -96,7 +101,7 @@ class TableData(_CamelModel):
 
 class SlideElement(_CamelModel):
     id: str
-    type: Literal["text", "image"]
+    type: Literal["text", "image", "shape"]
     x: float
     y: float
     w: float
@@ -107,6 +112,8 @@ class SlideElement(_CamelModel):
     bold: bool | None = None
     color: str | None = None
     align: Literal["left", "center", "right"] | None = None
+    shape: Literal["rect", "ellipse", "line"] | None = None  # for `type: "shape"`
+    fill: str | None = None  # fill (rect/ellipse) or stroke (line) color
 
 
 class Slide(_CamelModel):
@@ -120,6 +127,9 @@ class Slide(_CamelModel):
     background: str | None = None
     text_color: str | None = None
     notes: str | None = None
+    # Content padding as a percent of the slide width — a safe margin around the
+    # free canvas, applied in the editor, present view, thumbnails, and export.
+    padding: float | None = None
 
 
 class SlidesData(_CamelModel):

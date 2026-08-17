@@ -51,3 +51,24 @@ def test_commit_without_revision_omits_the_field() -> None:
     commit = next(e for e in events if e["type"] == "canvas.commit")
     assert "revision" not in commit  # exclude_none keeps the wire lean
     assert commit["description"] == "Manual edit: 1 change"
+
+
+def test_open_chart_carries_options_and_echarts_option() -> None:
+    # The TS renderer reads options.title and echartsOption; the emitter must
+    # be able to send them (protocol parity is enforced by test_protocol_parity).
+    from langchain_canvas.protocol import ChartOptions, ChartSeries
+
+    events: list[dict[str, Any]] = []
+    canvas = Canvas(events.append)
+    canvas.open_chart(
+        title="Revenue",
+        chart="bar",
+        x_key="quarter",
+        series=[ChartSeries(key="value")],
+        options=ChartOptions(title="Quarterly revenue", stacked=True),
+        echarts_option={"series": [{"type": "bar"}]},
+    )
+
+    data = next(e for e in events if e["type"] == "canvas.create")["artifact"]["data"]
+    assert data["options"] == {"stacked": True, "title": "Quarterly revenue"}
+    assert data["echartsOption"] == {"series": [{"type": "bar"}]}
