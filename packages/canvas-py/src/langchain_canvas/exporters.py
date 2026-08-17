@@ -86,9 +86,12 @@ class TableXlsxExporter:
 
     Values first: the ``columns``/``rows`` shape becomes one sheet with a
     bold header row; an edited Fortune-sheet state (``data.sheet``) exports
-    every sheet's cell values and merged ranges. Rich per-cell styling stays
-    with the browser export menu or an adopter's pipeline. Requires
-    ``openpyxl`` — installed by the ``xlsx`` extra.
+    every sheet's cell values and merged ranges. Formula cells stay live
+    formulas in the workbook (an ``=``-prefixed row value, or a typed
+    formula's ``f`` field in the sheet state) — spreadsheet apps recalculate
+    them on open. Rich per-cell styling stays with the browser export menu
+    or an adopter's pipeline. Requires ``openpyxl`` — installed by the
+    ``xlsx`` extra.
     """
 
     suffixes: tuple[str, ...] = (".table.json",)
@@ -119,7 +122,16 @@ class TableXlsxExporter:
             ws = workbook.create_sheet(str(sheet.get("name") or "Sheet1"))
             for cell in sheet.get("celldata") or []:
                 v = cell.get("v")
-                value = (v.get("v") if v.get("v") is not None else v.get("m")) if isinstance(v, dict) else v
+                # A typed formula lives in ``f`` — keep it a formula (openpyxl
+                # stores no cached value; spreadsheet apps recalculate on open).
+                formula = v.get("f") if isinstance(v, dict) else None
+                value: Any
+                if isinstance(formula, str) and formula:
+                    value = formula if formula.startswith("=") else "=" + formula
+                elif isinstance(v, dict):
+                    value = v.get("v") if v.get("v") is not None else v.get("m")
+                else:
+                    value = v
                 ws.cell(row=int(cell["r"]) + 1, column=int(cell["c"]) + 1, value=value)
             for merge in ((sheet.get("config") or {}).get("merge") or {}).values():
                 try:

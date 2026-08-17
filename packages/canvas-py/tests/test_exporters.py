@@ -88,6 +88,51 @@ def test_table_fortune_sheet_export_values_and_merges():
     assert [str(r) for r in sheet.merged_cells.ranges] == ["A1:B1"]
 
 
+def test_table_formula_rows_stay_formulas():
+    # An "="-prefixed row value must land as a live formula, not a frozen string.
+    content = json.dumps(
+        {
+            "type": "table",
+            "data": {
+                "columns": [{"key": "a", "label": "A"}],
+                "rows": [{"a": 10}, {"a": 20}, {"a": "=SUM(A2:A3)"}],
+            },
+        }
+    )
+    result = TableXlsxExporter().export(content, path="sums.table.json")
+    sheet = load_workbook(io.BytesIO(result.data)).worksheets[0]
+    cell = sheet.cell(row=4, column=1)
+    assert cell.value == "=SUM(A2:A3)"
+    assert cell.data_type == "f"  # stored as a formula, recalculated on open
+
+
+def test_table_fortune_sheet_typed_formula_stays_a_formula():
+    # A grid-typed formula carries `f` next to the cached `v` — export the
+    # formula (openpyxl stores no cached value; apps recalculate on open).
+    content = json.dumps(
+        {
+            "type": "table",
+            "data": {
+                "sheet": [
+                    {
+                        "name": "S",
+                        "celldata": [
+                            {"r": 0, "c": 0, "v": {"v": 1}},
+                            {"r": 1, "c": 0, "v": {"v": 2}},
+                            {"r": 2, "c": 0, "v": {"v": 3, "f": "=SUM(A1:A2)"}},
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    result = TableXlsxExporter().export(content, path="s.table.json")
+    sheet = load_workbook(io.BytesIO(result.data))["S"]
+    cell = sheet.cell(row=3, column=1)
+    assert cell.value == "=SUM(A1:A2)"
+    assert cell.data_type == "f"
+
+
 # --- html -> docx ----------------------------------------------------------------
 
 _PNG_1PX = (

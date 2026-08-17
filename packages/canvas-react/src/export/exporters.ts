@@ -93,7 +93,19 @@ async function tableToXlsx(data: TableData): Promise<BlobPart> {
   } else {
     const sheet = workbook.addWorksheet("Sheet1");
     sheet.addRow(data.columns.map((c) => c.label ?? c.key));
-    for (const row of data.rows) sheet.addRow(data.columns.map((c) => row[c.key] ?? ""));
+    // "=..." cells stay formulas in the workbook, with the computed value as
+    // the cached result — the exported sheet keeps recalculating.
+    const { computeFormulas } = await import("../io/formula");
+    const results = await computeFormulas(data.columns, data.rows);
+    data.rows.forEach((row, dataIdx) => {
+      sheet.addRow(
+        data.columns.map((c, colIdx) => {
+          const v = row[c.key] ?? "";
+          if (typeof v !== "string" || !v.startsWith("=")) return v;
+          return { formula: v.slice(1), result: results.get(`${dataIdx + 1},${colIdx}`) };
+        }),
+      );
+    });
     sheet.getRow(1).font = { bold: true };
   }
   return workbook.xlsx.writeBuffer();
@@ -108,7 +120,10 @@ function fortuneToWorkbook(workbook: any, sheets: Array<Record<string, any>>): v
       const v = cell.v;
       const value = v && typeof v === "object" ? v.v ?? v.m ?? null : v;
       const xc = ws.getCell(cell.r + 1, cell.c + 1);
-      xc.value = value;
+      // A typed formula lives in `v.f` — keep it a formula, with the grid's
+      // computed value as the cached result, instead of freezing the value.
+      const formula = v && typeof v === "object" && typeof v.f === "string" ? v.f : null;
+      xc.value = formula ? { formula: formula.replace(/^=/, ""), result: value ?? undefined } : value;
       if (v && typeof v === "object") {
         if (v.bl) xc.font = { ...xc.font, bold: true };
         if (v.it) xc.font = { ...xc.font, italic: true };
