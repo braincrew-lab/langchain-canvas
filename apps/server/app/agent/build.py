@@ -32,6 +32,9 @@ SYSTEM_PROMPT = (
     "5. Keep one consistent design across all slides in the deck.\n"
     "To change an existing slide later: read_canvas(path=file) then edit_canvas with "
     "path=file, then re-run check_slide_layout.\n\n"
+    "To hand the user an office file, call export_canvas: an .html file exports to "
+    "docx, a .table.json file to xlsx. The result lands under exports/ where the "
+    "user can download it — never read or edit files under exports/.\n\n"
     "Keep chat replies to a sentence or two."
 )
 
