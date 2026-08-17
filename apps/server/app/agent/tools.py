@@ -18,7 +18,7 @@ from langchain.tools import ToolRuntime, tool
 import json
 import re
 
-from langchain_canvas import Canvas, create_canvas_tools
+from langchain_canvas import Canvas, create_canvas_tools, create_export_tool
 from langchain_canvas.protocol import ChartSeries, TableColumn
 
 from .store import (
@@ -232,6 +232,7 @@ def _slide_meta_for(path: str) -> dict | None:
 CANVAS_TOOLS = [
     build_page,
     *create_canvas_tools(STORE, meta_for=_slide_meta_for),
+    create_export_tool(STORE),
     plan_deck,
     write_slide,
     write_report,
