@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Protocol
 from uuid import uuid4
 
-from .protocol.artifacts import Artifact, ChartSeries, Slide, TableColumn
+from .protocol.artifacts import Artifact, ChartOptions, ChartSeries, Slide, TableColumn
 from .protocol.events import (
     CanvasCommit,
     CanvasAppend,
@@ -123,22 +123,35 @@ class Canvas:
         x_key: str,
         series: list[ChartSeries] | list[dict[str, Any]],
         rows: list[dict[str, Any]] | None = None,
+        options: ChartOptions | dict[str, Any] | None = None,
+        echarts_option: dict[str, Any] | None = None,
         id: str | None = None,
     ) -> "ChartHandle":
         norm_series = [
             s.model_dump(exclude_none=True) if isinstance(s, ChartSeries) else s
             for s in series
         ]
+        data: dict[str, Any] = {
+            "chart": chart,
+            "xKey": x_key,
+            "series": norm_series,
+            "rows": rows or [],
+        }
+        if options is not None:
+            data["options"] = (
+                options.model_dump(by_alias=True, exclude_none=True)
+                if isinstance(options, ChartOptions)
+                else options
+            )
+        if echarts_option is not None:
+            # Rendered verbatim by the frontend; the tidy rows/series model is
+            # ignored while this is present.
+            data["echartsOption"] = echarts_option
         artifact = Artifact(
             id=id or _new_id("chart"),
             type="chart",
             title=title,
-            data={
-                "chart": chart,
-                "xKey": x_key,
-                "series": norm_series,
-                "rows": rows or [],
-            },
+            data=data,
         )
         self._emit(CanvasCreate(artifact=artifact))
         return ChartHandle(self, artifact)
