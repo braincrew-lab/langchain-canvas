@@ -17,10 +17,12 @@ from langchain.tools import ToolRuntime, tool
 
 import json
 import re
+from pathlib import Path
 
 from langchain_canvas import (
     Canvas,
     create_canvas_tools,
+    create_check_table_tool,
     create_export_tool,
     encode_chart,
     encode_table,
@@ -270,6 +272,17 @@ def _slide_meta_for(path: str) -> dict | None:
     return SLIDE_META if re.fullmatch(r"\d{2}-.+\.html", path) else None
 
 
+# The check_table evaluator: the formula CLI built next to the client's
+# formula modules (pnpm build in packages/canvas-react) — same engine, same
+# registered functions, so the check matches what the canvas displays.
+_FORMULA_CLI = (
+    Path(__file__).resolve().parents[4]  # repo root
+    / "packages"
+    / "canvas-react"
+    / "dist"
+    / "formula-cli.js"
+)
+
 # Domain tools (LLM-assisted authoring) plus the SDK's standard canvas tools
 # (read/write/edit_canvas + list_canvas_files) — the reference server runs on
 # the same primitives it ships, so a break in them shows up here first.
@@ -277,6 +290,9 @@ CANVAS_TOOLS = [
     build_page,
     *create_canvas_tools(STORE, meta_for=_slide_meta_for),
     create_export_tool(STORE),
+    create_check_table_tool(
+        STORE, evaluator=("node", str(_FORMULA_CLI)) if _FORMULA_CLI.exists() else None
+    ),
     plan_deck,
     write_slide,
     write_report,

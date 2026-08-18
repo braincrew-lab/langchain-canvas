@@ -1,7 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: { index: "src/index.ts", "langgraph/index": "src/langgraph/index.ts" },
+  entry: {
+    index: "src/index.ts",
+    "langgraph/index": "src/langgraph/index.ts",
+    // Node CLI for the check_table tool — same formula modules as the client.
+    "formula-cli": "src/io/formulaCli.ts",
+  },
   format: ["esm"],
   dts: true,
   sourcemap: false, // keep the published tarball small; heavy deps are external anyway

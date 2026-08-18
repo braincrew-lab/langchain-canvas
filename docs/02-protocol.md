@@ -109,7 +109,9 @@ type TableData = {
 // References use on-screen coordinates: row 1 is the header, data starts at
 // row 2. The supported function list lives in code — `SUPPORTED_FORMULA_FUNCTIONS`
 // in `canvas-react/src/io/formulaFunctions.ts` (mirrored in the Python package,
-// parity-tested) — so it cannot drift from what actually evaluates.
+// parity-tested) — so it cannot drift from what actually evaluates. Agents
+// verify their formulas with the `check_table` tool (create_check_table_tool),
+// which runs the same engine through a one-shot Node CLI (dist/formula-cli.js).
 
 // type: "slides"
 type SlidesData = { slides: Slide[] };
