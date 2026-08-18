@@ -27,7 +27,10 @@ Build them with :func:`create_canvas_tools`, which closes over your store::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+import re
+import subprocess
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from langchain.tools import ToolRuntime, tool
@@ -44,6 +47,7 @@ from .exporters import (
     default_exporters,
     exporter_for,
 )
+from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .replay import ARTIFACT_SUFFIXES, events_for_commit
 from .store import (
     BinaryContentError,
@@ -374,3 +378,164 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         )
 
     return export_canvas
+
+
+_EXPECT_PATTERN = re.compile(r"^\s*(?P<key>[^\[\]=]+)\[(?P<row>\d+)\]\s*=\s*(?P<value>.*?)\s*$")
+_FUNCTION_NAME_PATTERN = re.compile(r"([A-Z][A-Z0-9.]*)\s*\(")
+
+
+def _values_equal(got: object, want: str) -> bool:
+    """Loose comparison for expect assertions: numeric when both parse."""
+    try:
+        return float(str(got)) == float(want)
+    except ValueError:
+        return str(got).strip() == want
+
+
+def _error_hint(formula: str) -> str:
+    """Why a formula likely failed, steering toward supported classics."""
+    unsupported = sorted(
+        name
+        for name in set(_FUNCTION_NAME_PATTERN.findall(formula.upper()))
+        if name not in SUPPORTED_FORMULA_FUNCTIONS
+    )
+    if unsupported:
+        return (
+            f"{', '.join(unsupported)} is not supported on this canvas — rewrite with "
+            "classic equivalents (SUMIFS, MATCH, TEXTJOIN, ...; see the supported list "
+            "in this tool's description)"
+        )
+    return "the formula failed to evaluate — check references and argument types"
+
+
+def create_check_table_tool(
+    store: CanvasStore, *, evaluator: Sequence[str] | None = None
+) -> Any:
+    """Build a ``check_table`` tool bound to ``store``.
+
+    Closes the write → check → fix loop for table formulas: the tool
+    evaluates every formula cell of a ``.table.json`` file and reports the
+    results — and errors — back as text the agent can act on.
+
+    ``evaluator`` is the command that does the evaluating: an argv sequence
+    that reads a ``{"columns": ..., "rows": ...}`` JSON payload on stdin and
+    writes ``{"results": [...]}`` on stdout. The reference command is
+    ``("node", "<canvas-react>/dist/formula-cli.js")`` — a one-shot
+    subprocess around the *same* engine and function registrations the
+    client uses to display formula results, so the check can never drift
+    from what the canvas shows. With ``evaluator=None`` (or a missing
+    runtime) the tool stays mounted but answers with honest guidance
+    instead of a false verdict.
+    """
+
+    @tool
+    def check_table(
+        path: str, runtime: ToolRuntime, expect: list[str] | None = None
+    ) -> str:
+        """Evaluate the formulas of a .table.json file and report every result.
+
+        Run this after writing or editing a table that contains formulas
+        ("=..." cell values). It computes each formula with the same engine
+        the canvas uses, so what it reports is what the user sees. Fix every
+        ERROR (read_canvas + edit_canvas) and re-check until it reports
+        0 errors. ``expect`` optionally asserts computed values, one entry
+        per assertion in the form ``column_key[row_index]=value`` with the
+        0-based index into ``rows`` — for example ``["total[2]=1250"]``.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not path.endswith(".table.json"):
+            return f"Error: check_table reads .table.json files (got {path})."
+        try:
+            content = store.read(canvas_id, path).content
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+
+        try:
+            envelope = json.loads(content)
+            data = envelope.get("data") or {}
+            columns = data.get("columns") or []
+            rows = data.get("rows") or []
+        except (ValueError, AttributeError):
+            return f"Error: {path} does not contain valid table JSON."
+
+        typed = sum(
+            1
+            for sheet in data.get("sheet") or []
+            for cell in sheet.get("celldata") or []
+            if isinstance(cell.get("v"), dict) and cell["v"].get("f")
+        )
+        typed_note = (
+            f"\nNote: {typed} typed formula(s) exist in the sheet editor state; they "
+            "evaluate in the grid and are not checked here."
+            if typed
+            else ""
+        )
+
+        formula_cells = sum(
+            1
+            for row in rows
+            for value in row.values()
+            if isinstance(value, str) and value.startswith("=")
+        )
+        if formula_cells == 0 and not expect:
+            return f"0 ERROR — no formula cells in {path} rows.{typed_note}"
+
+        if evaluator is None:
+            return (
+                "Error: check_table has no formula evaluator configured. The host "
+                "must pass `evaluator` to create_check_table_tool (normally "
+                "('node', '<canvas-react>/dist/formula-cli.js')). The formulas were "
+                "NOT verified."
+            )
+        payload = json.dumps({"columns": columns, "rows": rows})
+        try:
+            proc = subprocess.run(  # noqa: S603 — host-configured argv, no shell
+                list(evaluator), input=payload.encode(), capture_output=True, timeout=60
+            )
+            output = json.loads(proc.stdout.decode())
+            results = output["results"]
+        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+            return (
+                f"Error: the formula evaluator could not run ({exc}). The formulas "
+                "were NOT verified — is Node.js installed and the canvas package built?"
+            )
+
+        lines: list[str] = []
+        errors = 0
+        computed: dict[tuple[str, int], object] = {}
+        for cell in results:
+            key, row_idx = str(cell["key"]), int(cell["row"])
+            value = cell.get("value")
+            computed[(key, row_idx)] = value
+            if value == "#ERR":
+                errors += 1
+                lines.append(
+                    f"ERROR {key}[{row_idx}]: {cell['formula']} -> #ERR — "
+                    + _error_hint(str(cell["formula"]))
+                )
+            else:
+                lines.append(f"ok    {key}[{row_idx}]: {cell['formula']} -> {value}")
+
+        for assertion in expect or []:
+            match = _EXPECT_PATTERN.match(assertion)
+            if not match:
+                errors += 1
+                lines.append(
+                    f"ERROR expect {assertion!r}: not in the form column_key[row_index]=value"
+                )
+                continue
+            key, row_idx = match["key"].strip(), int(match["row"])
+            got = computed.get((key, row_idx))
+            if got is None:
+                got = rows[row_idx].get(key) if row_idx < len(rows) else None
+            if _values_equal(got, match["value"]):
+                lines.append(f"ok    expect {key}[{row_idx}] = {match['value']}")
+            else:
+                errors += 1
+                lines.append(f"ERROR expect {key}[{row_idx}] = {match['value']}, got {got}")
+
+        summary = f"{errors} ERROR — {len(results)} formula cell(s) evaluated in {path}."
+        return "\n".join([summary, *lines]) + typed_note
+
+    check_table.description += "\n\n" + formula_guidance()
+    return check_table

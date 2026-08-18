@@ -27,7 +27,7 @@ from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .replay import encode_artifact, encode_chart, encode_slides, encode_table, hydrate_events
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
-from .tools import create_canvas_tools, create_export_tool
+from .tools import create_canvas_tools, create_check_table_tool, create_export_tool
 
 __all__ = [
     "Canvas",
@@ -45,6 +45,7 @@ __all__ = [
     "SlidesHandle",
     "create_canvas_agent",
     "create_canvas_tools",
+    "create_check_table_tool",
     "create_export_tool",
     "default_converters",
     "default_exporters",
