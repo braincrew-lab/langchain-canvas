@@ -16,6 +16,7 @@
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
 import { resolveElements } from "../client/slideElements";
+import { mergeRowsIntoSheet, projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
 export interface FileExport {
@@ -76,8 +77,13 @@ ${renderedHtml}
 // --- table → csv / xlsx ---------------------------------------------------------
 
 function tableToCsv(data: TableData): string {
+  // A person's grid edits live in `sheet` — project them into rows first so
+  // the CSV shows what the person sees, not stale structured rows.
+  const rows = data.sheet?.length
+    ? projectSheetIntoRows(data.columns, data.rows, data.sheet)
+    : data.rows;
   const header = data.columns.map((c) => csvCell(c.label ?? c.key)).join(",");
-  const body = data.rows
+  const body = rows
     .map((row) => data.columns.map((c) => csvCell(String(row[c.key] ?? ""))).join(","))
     .join("\n");
   return `${header}\n${body}`;
@@ -88,8 +94,17 @@ async function tableToXlsx(data: TableData): Promise<BlobPart> {
   const workbook = new Workbook();
 
   if (data.sheet?.length) {
-    // Prefer the edited Fortune-sheet state — carries merges, fonts, formats.
-    fortuneToWorkbook(workbook, data.sheet);
+    // The edited Fortune-sheet state carries merges, fonts and formats; rows
+    // the agent wrote after the person's last edit are merged in first, so
+    // the export never drops an agent change.
+    const { computeFormulas } = await import("../io/formula");
+    const merged = mergeRowsIntoSheet(
+      data.columns,
+      data.rows,
+      data.sheet,
+      await computeFormulas(data.columns, data.rows),
+    );
+    fortuneToWorkbook(workbook, merged as Array<Record<string, unknown>>);
   } else {
     const sheet = workbook.addWorksheet("Sheet1");
     sheet.addRow(data.columns.map((c) => c.label ?? c.key));
