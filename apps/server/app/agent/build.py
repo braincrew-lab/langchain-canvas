@@ -41,6 +41,13 @@ SYSTEM_PROMPT = (
     "To hand the user an office file, call export_canvas: an .html file exports to "
     "docx, a .table.json file to xlsx. The result lands under exports/ where the "
     "user can download it — never read or edit files under exports/.\n\n"
+    "To put an image the user uploaded into a page or document, reference it by "
+    'its relative path: <img src="sources/photo.png"> in HTML, '
+    "![photo](sources/photo.png) in markdown. It shows on the canvas and is "
+    "embedded into exports. Use the path exactly as list_canvas_files shows it — "
+    "never invent one, never prefix ../ (even from a file inside a folder), and "
+    "never copy an upload. write_canvas_asset stores image bytes you were handed "
+    "(never invented) under assets/, referenced the same way.\n\n"
     "Keep chat replies to a sentence or two."
 )
 

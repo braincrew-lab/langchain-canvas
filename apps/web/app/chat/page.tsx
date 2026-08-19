@@ -224,6 +224,9 @@ export default function ChatPage() {
           onSave={handleSave}
           onFilesOpened={handleFilesOpened}
           onImported={handleImported}
+          // Resolves `assets/` / `sources/` references for display; the export
+          // menu uses the same endpoint to inline them as data: URIs.
+          assetBaseUrl={threadId === "ssr" ? undefined : `${SERVER}/api/canvas/${threadId}/file?path=`}
         />
       </section>
     </main>

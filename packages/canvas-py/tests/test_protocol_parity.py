@@ -96,6 +96,19 @@ def test_supported_formula_functions_match_ts():
     assert list(SUPPORTED_FORMULA_FUNCTIONS) == ts_names
 
 
+def test_asset_reference_prefixes_match_ts():
+    # The asset reference contract (which relative prefixes point at canvas
+    # files) is one list defined twice — py drives the export inliner, ts
+    # drives display resolution and the browser export menu.
+    from langchain_canvas.assets import ASSET_REFERENCE_PREFIXES
+
+    ts_source = (TS_PATH.parents[1] / "io" / "canvasAssets.ts").read_text()
+    match = re.search(r"ASSET_REFERENCE_PREFIXES\s*=\s*\[(.*?)\]", ts_source, re.S)
+    assert match, "ASSET_REFERENCE_PREFIXES not found in canvasAssets.ts"
+    ts_prefixes = re.findall(r'"([^"]+)"', match.group(1))
+    assert list(ASSET_REFERENCE_PREFIXES) == ts_prefixes
+
+
 def test_parser_sees_every_interface():
     # A new TS interface must get a pydantic twin and a PAIRS row.
     assert set(_ts_interfaces()) == {ts_name for _, ts_name in PAIRS}

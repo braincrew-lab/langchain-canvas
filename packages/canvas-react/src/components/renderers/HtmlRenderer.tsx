@@ -352,6 +352,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const sendIframeCommand = useCanvasStore((s) => s.sendIframeCommand);
   const selections = useCanvasStore((s) => s.selections);
   const iframeCommand = useCanvasStore((s) => s.iframeCommand);
+  const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
   const [device, setDevice] = useState<(typeof DEVICES)[number]["id"]>("desktop");
   const [mode, setMode] = useState<"design" | "code">("design");
   const [a11y, setA11y] = useState<string[] | null>(null);
@@ -374,12 +375,12 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const isFixedSlide = Boolean(artifact.meta?.ratio);
   const srcDoc = useMemo(() => {
     if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
-    const base = withInspector(artifact.data.html);
+    const base = withInspector(artifact.data.html, assetBaseUrl ?? undefined);
     srcDocRef.current = isFixedSlide ? base : withScrollableBody(base);
     lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html, mode, isFixedSlide]);
+  }, [artifact.data.html, mode, isFixedSlide, assetBaseUrl]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 

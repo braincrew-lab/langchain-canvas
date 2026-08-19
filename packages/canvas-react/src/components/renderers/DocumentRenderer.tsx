@@ -7,11 +7,12 @@
  */
 
 import { useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { DocumentData } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
+import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
 
 function wordStats(text: string): { words: number; minutes: number } {
@@ -25,6 +26,11 @@ export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
   const [draft, setDraft] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const editing = draft !== null;
+  // Canvas-asset references (`![…](assets/…)`) display through the host's file
+  // endpoint; the markdown source keeps the relative path. Composed with the
+  // default transform so its sanitization still applies.
+  const assetUrl = useAssetUrl();
+  const urlTransform = (url: string) => defaultUrlTransform(assetUrl(url) ?? url);
 
   const commit = () => {
     if (draft !== null && draft !== content) patch({ content: draft });
@@ -95,7 +101,7 @@ export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
             title="Click to edit"
             onClick={() => artifact.status !== "streaming" && setDraft(content)}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform}>{content}</ReactMarkdown>
             {artifact.status === "streaming" && <span className="cv-caret" aria-hidden />}
           </article>
         )}

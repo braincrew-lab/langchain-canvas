@@ -91,6 +91,12 @@ export interface CanvasStore {
   /** Host callback fired after a user edit reconciles — the write-back hook. */
   onUserEdit: UserEditHandler | null;
 
+  /** URL prefix that resolves a canvas-relative asset path (see `resolveAssetUrl`).
+   *  Renderers use it to display `assets/` / `sources/` references live; the
+   *  export menu uses it to inline them. Null = no file endpoint (references
+   *  stay unresolved, everything else behaves as before). */
+  assetBaseUrl: string | null;
+
   // actions
   applyEvent: (event: StreamEvent) => void;
   /** Apply a batch of events in a single store write (one re-render per frame). */
@@ -106,6 +112,7 @@ export interface CanvasStore {
   sendIframeCommand: (command: Omit<IframeCommand, "seq">) => void;
   /** Register (or clear) the user-edit write-back handler. */
   setOnUserEdit: (handler: UserEditHandler | null) => void;
+  setAssetBaseUrl: (url: string | null) => void;
   reset: () => void;
 }
 
@@ -121,6 +128,7 @@ const initialState = () => ({
   undoStack: [] as CanvasState[],
   redoStack: [] as CanvasState[],
   onUserEdit: null as UserEditHandler | null,
+  assetBaseUrl: null as string | null,
 });
 
 /** Create an isolated canvas store. */
@@ -179,8 +187,10 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
       set((state) => ({ iframeCommand: { ...command, seq: (state.iframeCommand?.seq ?? 0) + 1 } })),
 
     setOnUserEdit: (handler) => set({ onUserEdit: handler }),
+    setAssetBaseUrl: (url) => set({ assetBaseUrl: url }),
 
-    reset: () => set(initialState()),
+    // Host configuration (the asset endpoint) survives a session reset.
+    reset: () => set({ ...initialState(), assetBaseUrl: get().assetBaseUrl }),
   }));
 }
 

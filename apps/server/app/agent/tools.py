@@ -21,6 +21,7 @@ from pathlib import Path
 
 from langchain_canvas import (
     Canvas,
+    create_asset_tool,
     create_canvas_tools,
     create_check_table_tool,
     create_export_tool,
@@ -289,6 +290,7 @@ _FORMULA_CLI = (
 CANVAS_TOOLS = [
     build_page,
     *create_canvas_tools(STORE, meta_for=_slide_meta_for),
+    create_asset_tool(STORE),
     create_export_tool(STORE),
     create_check_table_tool(
         STORE, evaluator=("node", str(_FORMULA_CLI)) if _FORMULA_CLI.exists() else None

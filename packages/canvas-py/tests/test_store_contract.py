@@ -188,6 +188,22 @@ def test_traversal_and_malformed_paths_rejected(store: CanvasStore, bad_path: st
         store.write("c1", bad_path, "content", "should not land")
 
 
+@pytest.mark.parametrize(
+    "bad_path", ["../evil.html", "/etc/passwd", "a/../b.html", " padded.html", ""]
+)
+def test_traversal_rejected_on_reads_too(store: CanvasStore, bad_path: str) -> None:
+    """Read paths guard the same way — file-serving endpoints (downloads, asset
+    display) pass user-supplied paths straight to ``read_bytes``, so a hostile
+    path must die here, not in each server."""
+    from langchain_canvas.store import CanvasStoreError
+
+    store.write("c1", "page.html", "<p>hi</p>", "create")
+    with pytest.raises(CanvasStoreError):
+        store.read("c1", bad_path)
+    with pytest.raises(CanvasStoreError):
+        store.read_bytes("c1", bad_path)
+
+
 @pytest.mark.parametrize("bad_id", ["../up", "a/b", "", " padded"])
 def test_malformed_canvas_ids_rejected(store: CanvasStore, bad_id: str) -> None:
     from langchain_canvas.store import CanvasStoreError

@@ -25,7 +25,11 @@ from pydantic.alias_generators import to_camel
 
 from langchain_canvas import encode_artifact, hydrate_events
 from langchain_canvas.replay import SOURCES_PREFIX
-from langchain_canvas.store import CanvasFileNotFoundError, RevisionMismatchError
+from langchain_canvas.store import (
+    CanvasFileNotFoundError,
+    CanvasStoreError,
+    RevisionMismatchError,
+)
 
 from ..agent.store import MANIFEST_PATH, PAGE_PATH, SLIDE_META, STORE
 
@@ -148,11 +152,18 @@ def files(thread_id: str) -> dict:
 
 @router.get("/api/canvas/{thread_id}/file")
 def file_download(thread_id: str, path: str) -> Response:
-    """One stored file's raw bytes, served as a download (exports, sources)."""
+    """One stored file's raw bytes (downloads, and the asset display endpoint).
+
+    Traversal safety lives in the store contract (`validate_relpath`, pinned by
+    the contract tests) — a hostile ``path`` surfaces here as a clean 400, not
+    file contents.
+    """
     try:
         got = STORE.read_bytes(thread_id, path)
     except CanvasFileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CanvasStoreError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     name = PurePosixPath(path).name
     ascii_name = name.encode("ascii", "ignore").decode() or "download"
     return Response(

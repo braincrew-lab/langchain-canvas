@@ -60,6 +60,14 @@ export interface CanvasProps {
   onFilesOpened?: (files: File[]) => void;
   /** Fired per successfully imported file with its canvas artifact (see `useCanvasImport`). */
   onImported?: CanvasImportOptions["onImported"];
+  /**
+   * URL prefix that resolves a canvas-relative asset path (`assets/…`,
+   * `sources/…`) to fetchable bytes — the whole encoded path is appended, e.g.
+   * `http://host/api/canvas/<id>/file?path=`. With it, asset references in
+   * artifacts display live and export inlined as `data:` URIs. Omit it and
+   * references stay unresolved — everything else behaves exactly as before.
+   */
+  assetBaseUrl?: string;
 }
 
 export function Canvas({
@@ -70,6 +78,7 @@ export function Canvas({
   onSave,
   onFilesOpened,
   onImported,
+  assetBaseUrl,
 }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
@@ -80,6 +89,7 @@ export function Canvas({
         onSave={onSave}
         onFilesOpened={onFilesOpened}
         onImported={onImported}
+        assetBaseUrl={assetBaseUrl}
       />
     </CanvasRegistryProvider>
   );
@@ -92,9 +102,16 @@ function CanvasPanel({
   onSave,
   onFilesOpened,
   onImported,
+  assetBaseUrl,
 }: Pick<
   CanvasProps,
-  "emptyState" | "onEditElement" | "onUserEdit" | "onSave" | "onFilesOpened" | "onImported"
+  | "emptyState"
+  | "onEditElement"
+  | "onUserEdit"
+  | "onSave"
+  | "onFilesOpened"
+  | "onImported"
+  | "assetBaseUrl"
 >) {
   const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
@@ -103,8 +120,15 @@ function CanvasPanel({
   const selections = useCanvasStore((s) => s.selections);
   const setSelections = useCanvasStore((s) => s.setSelections);
   const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
+  const setAssetBaseUrl = useCanvasStore((s) => s.setAssetBaseUrl);
   const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
+
+  // Publish the host's asset endpoint so renderers and the export menu can
+  // resolve `assets/` / `sources/` references.
+  useEffect(() => {
+    setAssetBaseUrl(assetBaseUrl ?? null);
+  }, [assetBaseUrl, setAssetBaseUrl]);
 
   // Open = hand the raw files to the host (upload) + preview what we can import.
   const openFiles = (files: FileList) => {

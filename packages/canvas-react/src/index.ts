@@ -64,3 +64,15 @@ export { printToPdf } from "./export/pdf";
 // import layer (file → artifact) — round-trip
 export { importFile, parseCsv, canImport, IMPORTABLE_EXTENSIONS } from "./io/importers";
 export { useCanvasImport } from "./hooks/useCanvasImport";
+
+// canvas-asset references (assets/ · sources/) — display resolution + export inlining
+export {
+  ASSET_REFERENCE_PREFIXES,
+  isAssetReference,
+  normalizeAssetReference,
+  resolveAssetUrl,
+  fetchAssetDataUri,
+  inlineHtmlAssets,
+  inlineArtifactAssets,
+} from "./io/canvasAssets";
+export { useAssetUrl } from "./hooks/useAssetUrl";

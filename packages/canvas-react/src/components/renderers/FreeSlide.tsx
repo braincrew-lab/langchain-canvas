@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { SlideElement } from "../../protocol/artifacts";
+import { useAssetUrl } from "../../hooks/useAssetUrl";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
@@ -58,6 +59,9 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
 
 export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
   const slideRef = useRef<HTMLDivElement>(null);
+  // Display-only: a canvas-asset src resolves to a URL; stored elements keep
+  // the relative reference (onChange never touches src).
+  const assetUrl = useAssetUrl();
   const [els, setEls] = useState(elements);
   const [selected, setSelected] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -228,7 +232,7 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
           ) : el.type === "shape" ? (
             <div style={shapeStyle(el)} />
           ) : (
-            <img className="cv-free__img" src={el.src} alt="" draggable={false} />
+            <img className="cv-free__img" src={assetUrl(el.src)} alt="" draggable={false} />
           )}
 
           {selected === el.id && el.type === "text" && (
