@@ -27,6 +27,8 @@ Build them with :func:`create_canvas_tools`, which closes over your store::
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 import subprocess
@@ -35,6 +37,7 @@ from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 
+from .assets import ASSET_IMAGE_MIME, ASSETS_PREFIX, inline_canvas_assets
 from .converters import (
     MAX_IMAGES_PER_CALL,
     MissingConverterDependencyError,
@@ -314,6 +317,13 @@ def create_canvas_tools(
         user edited it by hand), the call is rejected instead of silently
         overwriting their work. Omit `revision` only for brand-new files.
         Files under `sources/` (the user's uploads) are read-only.
+
+        Images already on the canvas embed by relative path — an .html page
+        uses `<img src="sources/photo.png">` (or `assets/...`), a document
+        uses `![photo](sources/photo.png)`. Use the path exactly as
+        list_canvas_files shows it, even from a file inside a folder (never
+        `../`). The canvas shows them live and exports inline the bytes, so
+        never copy an upload to reference it.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _SOURCES_READONLY
@@ -436,6 +446,12 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         except BinaryContentError:
             return f"Error: {path} is binary; export reads text canvas files (.html, .table.json)."
 
+        # Relative asset references (assets/, sources/) become data: URIs here,
+        # before the exporter runs — exporters keep their one-method contract
+        # and the exported file leaves self-contained, images included.
+        if sample.lower().endswith((".html", ".htm")):
+            content = inline_canvas_assets(content, store, canvas_id)
+
         exporter = exporter_for(sample, target, active_exporters)
         if exporter is None:
             available = sorted(
@@ -464,6 +480,83 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         )
 
     return export_canvas
+
+
+def create_asset_tool(store: CanvasStore) -> Any:
+    """Build a ``write_canvas_asset`` tool bound to ``store``.
+
+    The intake wiring for binary assets: it moves image bytes the agent
+    already holds (handed over by the host, produced by a separate pipeline)
+    onto the canvas under ``assets/``, where every canvas file can reference
+    them by relative path. It creates nothing — image *generation* belongs to
+    the adopter's own tools, not the canvas core. Kept separate from
+    :func:`create_canvas_tools` so the four standard tools stay a stable
+    contract.
+    """
+
+    @tool
+    def write_canvas_asset(
+        path: str, content_base64: str, description: str, runtime: ToolRuntime
+    ) -> str:
+        """Store an image the canvas can reference, under `assets/`.
+
+        `path` is a file name like `logo.png` (stored as `assets/logo.png`)
+        or an explicit `assets/...` path. `content_base64` is the raw image
+        bytes, base64-encoded — this tool stores bytes you already have; it
+        does not create or fetch images. `description` is the version-history
+        entry.
+
+        Reference the stored file from canvas files by its relative path:
+        `<img src="assets/logo.png">` in an .html page,
+        `![logo](assets/logo.png)` in a document, `src: "assets/logo.png"`
+        on a slide image element. The canvas displays it live and exports
+        inline the bytes into the exported file. The user's uploads under
+        `sources/` are referenced the same way — never copy them here.
+        """
+        canvas_id = _canvas_id(runtime)
+        path = path.strip()
+        if path.startswith(ASSETS_PREFIX):
+            pass
+        elif "/" not in path and path:
+            path = ASSETS_PREFIX + path
+        elif path.startswith(_SOURCES_PREFIX):
+            return (
+                "Error: files under sources/ are the user's uploads. Reference "
+                'them directly (<img src="sources/...">) instead of copying.'
+            )
+        else:
+            return (
+                f"Error: assets live under {ASSETS_PREFIX} — pass a file name "
+                f"or an {ASSETS_PREFIX}... path (got {path!r})."
+            )
+        dot = path.rfind(".")
+        suffix = path[dot:].lower() if dot != -1 else ""
+        if suffix not in ASSET_IMAGE_MIME:
+            supported = ", ".join(sorted(ASSET_IMAGE_MIME))
+            return (
+                f"Error: {suffix or 'no extension'} is not an embeddable image "
+                f"type ({supported}). For text content use write_canvas."
+            )
+        # Models often hand back a full data: URI — accept it, keep the bytes.
+        encoded = content_base64.strip()
+        if encoded.startswith("data:"):
+            encoded = encoded.partition(",")[2]
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            return "Error: content_base64 is not valid base64."
+        if not data:
+            return "Error: content_base64 decoded to zero bytes."
+        try:
+            commit = store.write_bytes(canvas_id, path, data, description, actor="agent")
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        return (
+            f"Wrote {path} ({len(data)} bytes, revision {commit.revision}). "
+            f'Reference it by relative path, e.g. <img src="{path}">.'
+        )
+
+    return write_canvas_asset
 
 
 _EXPECT_PATTERN = re.compile(r"^\s*(?P<key>[^\[\]=]+)\[(?P<row>\d+)\]\s*=\s*(?P<value>.*?)\s*$")

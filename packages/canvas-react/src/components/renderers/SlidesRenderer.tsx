@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Slide, SlideElement, SlidesData } from "../../protocol/artifacts";
 import { resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
+import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
 import { FreeSlide, shapeStyle } from "./FreeSlide";
 
@@ -63,6 +64,8 @@ const newElementId = () => `el_${Date.now().toString(36)}_${elementSeq++}`;
 export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const slides = artifact.data.slides ?? [];
   const patch = useArtifactPatch(artifact.id);
+  // Display-only resolution of canvas-asset image srcs (stored data stays relative).
+  const assetUrl = useAssetUrl();
   const [index, setIndex] = useState(0);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [presenting, setPresenting] = useState(false);
@@ -184,7 +187,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   ) : el.type === "shape" ? (
                     <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el) }} />
                   ) : (
-                    <img key={el.id} src={el.src} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
+                    <img key={el.id} src={assetUrl(el.src)} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
                   ),
                 )}
                 </div>
@@ -278,7 +281,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   </div>
                 ) : (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
-                    <img className="cv-free__img" src={el.src} alt="" />
+                    <img className="cv-free__img" src={assetUrl(el.src)} alt="" />
                   </div>
                 ),
               )}

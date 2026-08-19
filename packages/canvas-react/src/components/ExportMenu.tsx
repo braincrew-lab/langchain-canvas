@@ -13,6 +13,8 @@ import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
 import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
+import { inlineArtifactAssets, inlineHtmlAssets } from "../io/canvasAssets";
+import { useCanvasStore } from "../hooks/useCanvasStore";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
 const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
@@ -26,54 +28,62 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
   const stem = slugify(artifact.title);
   const dataOptions = dataExporters[artifact.type] ?? [];
+  const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
 
-  const exportHtml = () => {
+  // Every export path leaves through these two: canvas-asset references become
+  // data: URIs so the exported file is self-contained. Without an asset
+  // endpoint both are identity.
+  const prepare = () => inlineArtifactAssets(artifact, assetBaseUrl);
+  const prepareHtml = (html: string) =>
+    assetBaseUrl ? inlineHtmlAssets(html, assetBaseUrl) : Promise.resolve(html);
+
+  const exportHtml = async () => {
     if (artifact.type === "html") {
       // The artifact *is* a full HTML document — export the real source, not the
       // iframe wrapper (capturing the rendered DOM would yield an empty <iframe>).
       // A fixed-aspect slide gets slide sizing + an @page rule so the downloaded
       // file both displays the slide correctly and prints to a slide-sized page.
       const ratio = artifact.meta?.ratio as string | undefined;
-      const html = (artifact.data as HtmlData).html;
+      const html = ((await prepare()).data as HtmlData).html;
       downloadBlob(`${stem}.html`, "text/html", ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;
-      downloadBlob(`${stem}.html`, "text/html", toStandaloneHtml(artifact.title, html));
+      downloadBlob(`${stem}.html`, "text/html", toStandaloneHtml(artifact.title, await prepareHtml(html)));
     }
     setOpen(false);
   };
 
   const exportData = async (option: FileExport) => {
-    const content = await option.build(artifact);
+    const content = await option.build(await prepare());
     downloadBlob(`${stem}.${option.extension}`, option.mime, content);
     setOpen(false);
   };
 
-  const exportPdf = () => {
+  const exportPdf = async () => {
     if (artifact.type === "slides") {
-      printToPdf(slidesToPrintHtml(artifact.data as SlidesData, artifact.title));
+      printToPdf(slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title));
     } else if (artifact.type === "html") {
       const ratio = artifact.meta?.ratio as string | undefined;
-      const html = (artifact.data as HtmlData).html;
+      const html = ((await prepare()).data as HtmlData).html;
       // A fixed-aspect slide prints to a slide-sized landscape page (no A4 clip);
       // a fluid web page prints as-is.
       printToPdf(ratio ? htmlSlideToPrintHtml(html, ratio) : html);
     } else {
       const html = getRenderedHtml();
       if (html == null) return;
-      printToPdf(toStandaloneHtml(artifact.title, html));
+      printToPdf(toStandaloneHtml(artifact.title, await prepareHtml(html)));
     }
     setOpen(false);
   };
 
-  const openInTab = () => {
+  const openInTab = async () => {
     const html =
       artifact.type === "html"
-        ? (artifact.data as HtmlData).html
+        ? (((await prepare()).data as HtmlData).html)
         : artifact.type === "slides"
-          ? slidesToPrintHtml(artifact.data as SlidesData, artifact.title)
-          : (() => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, h); })();
+          ? slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title)
+          : await (async () => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, await prepareHtml(h)); })();
     if (html == null) return;
     const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     window.open(url, "_blank", "noopener");
@@ -83,11 +93,11 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
 
   const [copied, setCopied] = useState(false);
   const copyHtml = async () => {
-    const html = artifact.type === "html" ? (artifact.data as HtmlData).html : getRenderedHtml();
+    const html = artifact.type === "html" ? ((await prepare()).data as HtmlData).html : getRenderedHtml();
     if (html == null) return;
     try {
       await navigator.clipboard.writeText(
-        artifact.type === "html" ? html : toStandaloneHtml(artifact.title, html),
+        artifact.type === "html" ? html : toStandaloneHtml(artifact.title, await prepareHtml(html)),
       );
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);

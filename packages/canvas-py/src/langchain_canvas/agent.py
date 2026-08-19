@@ -27,6 +27,13 @@ If the canvas tools (read_canvas / write_canvas / edit_canvas / list_canvas_file
 are available, the canvas is persistent and the user may edit it by hand:
 always read_canvas a file right before editing it, and prefer a targeted
 edit_canvas over rewriting a whole file.
+
+Images already on the canvas (the user's uploads under sources/, assets under
+assets/) embed by relative path: `<img src="sources/photo.png">` in an .html
+page, `![photo](sources/photo.png)` in a document, `src: "assets/logo.png"`
+on a slide image element. They display live and exports inline the bytes.
+Use the path exactly as list_canvas_files shows it — never invent one, and
+never prefix `../`, even from a file inside a folder.
 """.strip()
 
 

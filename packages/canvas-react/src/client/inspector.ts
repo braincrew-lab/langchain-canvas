@@ -24,10 +24,18 @@ export const INSPECTOR_MARK = "langchain-canvas";
 /** Inject the inspector into an HTML string, before `</body>` when present. The
  *  injected nodes are tagged `data-lcx` so a full-document save can strip them.
  *  Also ensures a responsive viewport meta so device-width media queries behave
- *  the same in the preview, in export, and on a real device. */
-export function withInspector(html: string): string {
+ *  the same in the preview, in export, and on a real device.
+ *
+ *  With `assetBaseUrl`, the inspector also resolves canvas-asset references
+ *  (`src="assets/…"` / `src="sources/…"`) for display: the original relative
+ *  src is kept in `data-lcx-src` and restored on every serialization, so the
+ *  stored document never sees a resolved URL. */
+export function withInspector(html: string, assetBaseUrl?: string): string {
   let out = withViewport(html);
-  const injection = `<style data-lcx>${INSPECTOR_CSS}</style><script data-lcx>${INSPECTOR_SCRIPT}</script>`;
+  const config = assetBaseUrl
+    ? `<script data-lcx>window.__LCX_ASSET_BASE=${JSON.stringify(assetBaseUrl)}</script>`
+    : "";
+  const injection = `<style data-lcx>${INSPECTOR_CSS}</style>${config}<script data-lcx>${INSPECTOR_SCRIPT}</script>`;
   const marker = "</body>";
   const at = out.lastIndexOf(marker);
   out = at === -1 ? out + injection : out.slice(0, at) + injection + out.slice(at);
@@ -102,6 +110,33 @@ const INSPECTOR_SCRIPT = `
     el.removeAttribute("contenteditable");
     if (el.classList) { el.classList.remove("lcx-hover"); el.classList.remove("lcx-selected"); }
     if (el.getAttribute && el.getAttribute("class") === "") el.removeAttribute("class");
+    // A display-resolved asset src goes back to its stored relative form.
+    var orig = el.getAttribute && el.getAttribute("data-lcx-src");
+    if (orig) { el.setAttribute("src", orig); el.removeAttribute("data-lcx-src"); }
+  }
+  // --- canvas-asset references: resolve for display, keep the source relative ---
+  var ASSET_BASE = window.__LCX_ASSET_BASE || "";
+  var ASSET_REF = /^(?:\\.\\.?\\/)*(?:assets|sources)\\//;
+  // Leading ./ and ../ fold onto the canvas root (assets/ and sources/ exist
+  // only there) — same lenient reading as canvasAssets.normalizeAssetReference.
+  function foldAssetRef(s) {
+    while (s.lastIndexOf("./", 0) === 0 || s.lastIndexOf("../", 0) === 0) {
+      s = s.lastIndexOf("./", 0) === 0 ? s.slice(2) : s.slice(3);
+    }
+    return s;
+  }
+  function rewriteAssetSrcs() {
+    if (!ASSET_BASE) return;
+    var imgs = document.querySelectorAll("img[src]");
+    for (var i = 0; i < imgs.length; i++) {
+      var el = imgs[i];
+      if (el.hasAttribute("data-lcx-src")) continue;
+      var src = el.getAttribute("src") || "";
+      if (ASSET_REF.test(src)) {
+        el.setAttribute("data-lcx-src", src);
+        el.setAttribute("src", ASSET_BASE + encodeURIComponent(foldAssetRef(src)));
+      }
+    }
   }
   function emitEdit(el) {
     // Serialize the *canonical* HTML — strip the inspector's own injected
@@ -109,7 +144,7 @@ const INSPECTOR_SCRIPT = `
     var cid = el.getAttribute("data-cid");
     var clone = el.cloneNode(true);
     scrub(clone);
-    var inner = clone.querySelectorAll ? clone.querySelectorAll("[data-cid],[contenteditable],.lcx-hover,.lcx-selected") : [];
+    var inner = clone.querySelectorAll ? clone.querySelectorAll("[data-cid],[contenteditable],[data-lcx-src],.lcx-hover,.lcx-selected") : [];
     for (var i = 0; i < inner.length; i++) scrub(inner[i]);
     parent.postMessage({ source: MARK, type: "node_edit", cid: cid, html: clone.outerHTML }, "*");
   }
@@ -124,7 +159,7 @@ const INSPECTOR_SCRIPT = `
     var clone = document.documentElement.cloneNode(true);
     var injected = clone.querySelectorAll("[data-lcx]");
     for (var i = 0; i < injected.length; i++) injected[i].parentNode && injected[i].parentNode.removeChild(injected[i]);
-    var marked = clone.querySelectorAll("[data-cid],[contenteditable],.lcx-hover,.lcx-selected");
+    var marked = clone.querySelectorAll("[data-cid],[contenteditable],[data-lcx-src],.lcx-hover,.lcx-selected");
     for (var j = 0; j < marked.length; j++) scrub(marked[j]);
     parent.postMessage({ source: MARK, type: "doc_edit", self: !!selfApplied, html: "<!doctype html>\\n" + clone.outerHTML }, "*");
   }
@@ -227,6 +262,15 @@ const INSPECTOR_SCRIPT = `
   }
   function start() {
     assign(document.body, "e");
+    // Resolve asset references now and after any change (insert_html, set_src,
+    // duplicate). Idempotent: rewritten images carry data-lcx-src and are
+    // skipped, so the observer settles after one pass.
+    rewriteAssetSrcs();
+    if (ASSET_BASE) {
+      new MutationObserver(rewriteAssetSrcs).observe(document.documentElement, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ["src"]
+      });
+    }
     var hovered = null;
     var selected = [];               // currently highlighted elements
     var marquee = null, sx = 0, sy = 0, dragging = false, moved = false, suppressClick = false;
@@ -552,7 +596,18 @@ const INSPECTOR_SCRIPT = `
         if (root && d.style) { for (var sk in d.style) { try { root.style[sk] = d.style[sk]; } catch (_e) {} } emitDoc(); }
         return;
       }
-      if (d.type === "set_src") { var ei = byCid(d.cid); if (ei) { ei.setAttribute("src", d.value); emitEdit(ei); } return; }
+      if (d.type === "set_src") {
+        var ei = byCid(d.cid);
+        if (ei) {
+          // Drop stale asset bookkeeping first, or scrub would restore the old
+          // src over the new one. The observer re-resolves if the new value is
+          // itself an asset reference.
+          ei.removeAttribute("data-lcx-src");
+          ei.setAttribute("src", d.value);
+          emitEdit(ei);
+        }
+        return;
+      }
       if (d.type === "commit") { var el2 = byCid(d.cid); if (el2) emitEdit(el2); return; }
 
       // Structural edits — mutate the tree, then persist the whole document.
