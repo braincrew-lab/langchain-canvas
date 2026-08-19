@@ -8,6 +8,8 @@ A store file maps to a wire artifact by its path suffix:
 - ``.table.json``  → ``table`` artifact
 - ``.chart.json``  → ``chart`` artifact
 - ``.slides.json`` → ``slides`` artifact
+- ``sources/*``    → text formats preview as document/html artifacts; every
+  other upload becomes a ``file`` artifact (see :func:`source_preview_events`)
 
 The three ``.json`` forms share one JSON envelope — ``{"type": ..., "title":
 ..., "data": ...}`` — written by the save endpoints / tools and
@@ -24,12 +26,22 @@ both paths draw the same canvas.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
+import mimetypes
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
+from .converters import (
+    MissingConverterDependencyError,
+    PageRenderable,
+    converter_for,
+    default_converters,
+)
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
-from .store import BinaryContentError, CanvasStore
+from .store import BinaryContentError, CanvasStore, CanvasStoreError
 from .table_merge import project_sheet_into_rows
 
 TABLE_SUFFIX = ".table.json"
@@ -59,9 +71,14 @@ _SOURCE_PREVIEW_SUFFIXES: tuple[str, ...] = (".md", ".markdown", ".txt", ".json"
 
 
 def _replayable(path: str) -> bool:
-    """True when a committed path produces wire events on replay."""
+    """True when a committed path produces wire events on replay.
+
+    Every upload under ``sources/`` does: text formats replay as editable-ish
+    previews, everything else as a ``file`` artifact — the person who uploaded
+    a file always sees it on the canvas.
+    """
     if path.startswith(SOURCES_PREFIX):
-        return path.lower().endswith(_SOURCE_PREVIEW_SUFFIXES)
+        return True
     return path.endswith(ARTIFACT_SUFFIXES)
 
 
@@ -285,6 +302,192 @@ def _source_preview_events(
     return events
 
 
+def source_preview_events(
+    store: CanvasStore,
+    canvas_id: str,
+    path: str,
+    *,
+    is_new: bool,
+    revision: str,
+    description: str,
+) -> list[dict]:
+    """Wire events showing one ``sources/`` file at a revision.
+
+    The single builder both replay (:func:`hydrate_events`) and a host's
+    upload endpoint use, so the canvas drawn live at upload time and the one
+    rebuilt on reload can never disagree. Text formats get the editable-ish
+    preview; every other file becomes a ``file`` artifact — a card with
+    whatever honest preview the installed converters can derive (page-one
+    cover, text excerpt), or the bare facts (name, size, type) when nothing
+    can be.
+    """
+    if path.lower().endswith(_SOURCE_PREVIEW_SUFFIXES):
+        try:
+            content = store.read(canvas_id, path, revision=revision).content
+        except BinaryContentError:
+            pass  # text-suffixed upload that didn't decode — show it as a file
+        except CanvasStoreError:
+            return []
+        else:
+            return _source_preview_events(
+                path, content, is_new=is_new, revision=revision, description=description
+            )
+    return _file_preview_events(
+        store, canvas_id, path, is_new=is_new, revision=revision, description=description
+    )
+
+
+_FILE_DATA_KEYS = ("path", "name", "mediaType", "size", "cover", "excerpt", "detail")
+
+# Derived previews only — the stored file stays the truth. Bounded so a canvas
+# with many uploads cannot grow the process without limit.
+_PREVIEW_CACHE: OrderedDict[tuple[str, str, str], dict[str, Any]] = OrderedDict()
+_PREVIEW_CACHE_MAX = 128
+
+_EXCERPT_MAX_CHARS = 400
+_COVER_MAX_SIZE = (480, 640)
+
+
+def _file_preview_events(
+    store: CanvasStore,
+    canvas_id: str,
+    path: str,
+    *,
+    is_new: bool,
+    revision: str,
+    description: str,
+) -> list[dict]:
+    """Wire events for one binary (or non-previewed) source file."""
+    data = _file_preview_data(store, canvas_id, path, revision)
+    if data is None:
+        return []
+    events: list[dict] = []
+    if is_new:
+        events.append(
+            CanvasCreate(
+                artifact=Artifact(id=path, type="file", title=data["name"], data=data)
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
+        events.append(
+            CanvasStatus(id=path, status="complete").model_dump(by_alias=True, exclude_none=True)
+        )
+    else:
+        # Patch every key so a re-upload clears previews the new bytes lost
+        # (mergePatch on the client deletes keys patched with null).
+        events.append(
+            CanvasPatch(id=path, patch={key: data.get(key) for key in _FILE_DATA_KEYS}).model_dump(
+                by_alias=True
+            )
+        )
+    events.append(
+        CanvasCommit(id=path, description=description, revision=revision).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+    return events
+
+
+def _file_preview_data(
+    store: CanvasStore, canvas_id: str, path: str, revision: str
+) -> dict[str, Any] | None:
+    """The ``FileData`` payload for one stored file at a revision (cached).
+
+    Previews step down honestly: a page-one cover (page-renderable sources),
+    else a text excerpt through the source converter, else nothing beyond the
+    file's bare facts. A derivation failure never blocks the card — showing
+    the file's existence is the point; previews are a bonus.
+    """
+    key = (canvas_id, path, revision)
+    cached = _PREVIEW_CACHE.get(key)
+    if cached is not None:
+        _PREVIEW_CACHE.move_to_end(key)
+        return dict(cached)
+    try:
+        got = store.read_bytes(canvas_id, path, revision=revision)
+    except CanvasStoreError:
+        return None
+    name = path.rsplit("/", 1)[-1]
+    media_type = mimetypes.guess_type(name)[0]
+    data: dict[str, Any] = {
+        "path": path,
+        "name": name,
+        "mediaType": media_type,
+        "size": len(got.data),
+        "cover": None,
+        "excerpt": None,
+        "detail": None,
+    }
+    # Images need no derived preview — the renderer shows the original bytes
+    # straight from the store (one truth, nothing duplicated on the wire).
+    if not (media_type or "").startswith("image/"):
+        cover, detail = _derive_cover(path, got.data)
+        data["cover"] = cover
+        data["detail"] = detail
+        if cover is None:
+            excerpt, fallback_detail = _derive_excerpt(path, got.data)
+            data["excerpt"] = excerpt
+            data["detail"] = detail or fallback_detail
+    _PREVIEW_CACHE[key] = dict(data)
+    while len(_PREVIEW_CACHE) > _PREVIEW_CACHE_MAX:
+        _PREVIEW_CACHE.popitem(last=False)
+    return data
+
+
+def _derive_cover(path: str, data: bytes) -> tuple[str | None, str | None]:
+    """(cover data-URI, detail line) via the page-render pipeline, or Nones.
+
+    Reuses the same ``PageRenderable`` slot the agent's eye uses — one
+    pipeline, two audiences. The full-size page-one render is shrunk to a
+    card thumbnail here; sizing is this derivation layer's policy, so the
+    converter contract stays untouched.
+    """
+    converter = converter_for(path, default_converters())
+    if converter is None or not isinstance(converter, PageRenderable):
+        return None, None
+    try:
+        converted = converter.render_pages(data, path=path, pages=[1])
+        block = next(b for b in converted.blocks if b.get("type") == "image")
+        png = base64.b64decode(block["data"])
+        from PIL import Image  # the page render itself needed pillow already
+
+        image = Image.open(io.BytesIO(png))
+        image.thumbnail(_COVER_MAX_SIZE)
+        out = io.BytesIO()
+        image.convert("RGB").save(out, format="JPEG", quality=80)
+        cover = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
+    except Exception:  # noqa: BLE001 — a failed derivation degrades to the card
+        return None, None
+    pages = converted.metadata.get("pages")
+    return cover, f"{pages} pages" if isinstance(pages, int) else None
+
+
+def _derive_excerpt(path: str, data: bytes) -> tuple[str | None, str | None]:
+    """(text excerpt, detail line) via the source converter, or Nones.
+
+    The same converter the agent reads through — what the card shows is a
+    sample of exactly what the agent sees. Missing optional dependencies (an
+    uninstalled extra) degrade to the bare card, honestly.
+    """
+    converter = converter_for(path, default_converters())
+    if converter is None:
+        return None, None
+    try:
+        converted = converter.convert(data, path=path)
+    except MissingConverterDependencyError:
+        return None, None
+    except Exception:  # noqa: BLE001 — malformed bytes must not block the card
+        return None, None
+    text = "\n".join(
+        str(block.get("text", "")) for block in converted.blocks if block.get("type") == "text"
+    ).strip()
+    excerpt = (text[:_EXCERPT_MAX_CHARS] + "…") if len(text) > _EXCERPT_MAX_CHARS else text
+    detail = " · ".join(
+        f"{value} {key}" if isinstance(value, int) else f"{key}: {value}"
+        for key, value in converted.metadata.items()
+    )
+    return excerpt or None, (detail[:80] or None) if detail else None
+
+
 def hydrate_events(
     store: CanvasStore,
     canvas_id: str,
@@ -310,19 +513,29 @@ def hydrate_events(
         for path in commit.paths:
             if not _replayable(path):
                 continue
-            try:
-                content = store.read(canvas_id, path, revision=commit.revision).content
-            except BinaryContentError:
-                continue  # a text-suffixed upload that didn't decode — no preview
-            produced = events_for_commit(
-                path,
-                content,
-                is_new=path not in seen,
-                revision=commit.revision,
-                description=commit.description,
-                title=title_for(path) if title_for else None,
-                meta=meta_for(path) if meta_for else None,
-            )
+            if path.startswith(SOURCES_PREFIX):
+                produced = source_preview_events(
+                    store,
+                    canvas_id,
+                    path,
+                    is_new=path not in seen,
+                    revision=commit.revision,
+                    description=commit.description,
+                )
+            else:
+                try:
+                    content = store.read(canvas_id, path, revision=commit.revision).content
+                except BinaryContentError:
+                    continue  # binary bytes at an artifact suffix — nothing to draw
+                produced = events_for_commit(
+                    path,
+                    content,
+                    is_new=path not in seen,
+                    revision=commit.revision,
+                    description=commit.description,
+                    title=title_for(path) if title_for else None,
+                    meta=meta_for(path) if meta_for else None,
+                )
             if produced:
                 events.extend(produced)
                 seen.add(path)

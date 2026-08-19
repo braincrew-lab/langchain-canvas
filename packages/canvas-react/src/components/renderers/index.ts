@@ -13,8 +13,11 @@ const ChartRenderer = lazy(() => import("./ChartRenderer").then((m) => ({ defaul
 const DocumentRenderer = lazy(() => import("./DocumentRenderer").then((m) => ({ default: m.DocumentRenderer })));
 const TableRenderer = lazy(() => import("./TableRenderer").then((m) => ({ default: m.TableRenderer })));
 const SlidesRenderer = lazy(() => import("./SlidesRenderer").then((m) => ({ default: m.SlidesRenderer })));
+// The file card is dependency-free like the html substrate, but rare enough on
+// most canvases that it still splits into an on-demand chunk.
+const FileRenderer = lazy(() => import("./FileRenderer").then((m) => ({ default: m.FileRenderer })));
 
-export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, SlidesRenderer };
+export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, SlidesRenderer, FileRenderer };
 
 /**
  * The batteries-included renderers. `html` is the base substrate (sandboxed
@@ -28,4 +31,5 @@ export const builtinRenderers: ArtifactRegistry = {
   chart: ChartRenderer,
   table: TableRenderer,
   slides: SlidesRenderer,
+  file: FileRenderer,
 };

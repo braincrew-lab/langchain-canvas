@@ -19,6 +19,7 @@ const TYPE_META: Record<string, CardMeta> = {
   chart: { icon: "📊", label: "Chart" },
   table: { icon: "🔢", label: "Excel sheet" },
   slides: { icon: "📽️", label: "PowerPoint deck" },
+  file: { icon: "📎", label: "File" },
 };
 
 // Keyed on a producer-supplied logical kind (`meta.kind`). A host that renders

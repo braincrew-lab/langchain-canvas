@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Canvas,
+  canImport,
   useCanvasStore,
   useCanvasStream,
   type Artifact,
@@ -94,17 +95,27 @@ export default function ChatPage() {
   }, [stream.isStreaming, refreshSources]);
 
   // Opened files upload to the store under sources/ so the agent can read them.
+  // The upload response carries wire events (built by the same function reloads
+  // use); apply them for files the importer can't open locally, so a PNG/PDF/
+  // office upload shows on the canvas right away. Importable files keep their
+  // richer local preview (editable table, document) — no double display.
   const handleFilesOpened = useCallback(
     (files: File[]) => {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
         void fetch(`${SERVER}/api/canvas/${threadId}/upload`, { method: "POST", body: form })
-          .then(refreshSources)
+          .then(async (res) => {
+            if (res.ok && !canImport(file)) {
+              const { events } = (await res.json()) as { events?: StreamEvent[] };
+              if (events?.length) applyEvents(events);
+            }
+            refreshSources();
+          })
           .catch(() => {});
       }
     },
-    [threadId, refreshSources],
+    [threadId, refreshSources, applyEvents],
   );
 
   // POST one save body; on success stamp the described commit onto the artifact.

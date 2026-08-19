@@ -23,7 +23,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from langchain_canvas import encode_artifact, hydrate_events
+from langchain_canvas import encode_artifact, hydrate_events, source_preview_events
 from langchain_canvas.replay import SOURCES_PREFIX
 from langchain_canvas.store import (
     CanvasFileNotFoundError,
@@ -124,6 +124,10 @@ async def upload(thread_id: str, file: UploadFile) -> dict:
     reloads can preview them); everything else is stored as raw bytes for
     the format converters. Authorization and size limits are the adopter's
     boundary, same as the save endpoint.
+
+    The response carries the wire ``events`` that show the upload on the
+    canvas right away — built by the same function replay uses, so what the
+    uploader sees now and what a reload rebuilds can never disagree.
     """
     name = PurePosixPath(file.filename or "upload").name
     path = f"{SOURCES_PREFIX}{name}"
@@ -136,12 +140,21 @@ async def upload(thread_id: str, file: UploadFile) -> dict:
                 break
             except UnicodeDecodeError:
                 continue
+    existed = any(info.path == path for info in STORE.list_files(thread_id))
     description = f"Upload {name}"
     if text is not None:
         commit = STORE.write(thread_id, path, text, description, actor="human")
     else:
         commit = STORE.write_bytes(thread_id, path, data, description, actor="human")
-    return {"path": path, "revision": commit.revision}
+    events = source_preview_events(
+        STORE,
+        thread_id,
+        path,
+        is_new=not existed,
+        revision=commit.revision,
+        description=description,
+    )
+    return {"path": path, "revision": commit.revision, "events": events}
 
 
 @router.get("/api/canvas/{thread_id}/files")
