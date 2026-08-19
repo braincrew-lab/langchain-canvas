@@ -30,6 +30,7 @@ from typing import Any
 
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import BinaryContentError, CanvasStore
+from .table_merge import project_sheet_into_rows
 
 TABLE_SUFFIX = ".table.json"
 CHART_SUFFIX = ".chart.json"
@@ -104,6 +105,11 @@ def encode_artifact(artifact: dict[str, Any], path: str) -> str:
     requires ``path`` to end with the matching suffix; raises ``ValueError``
     with an honest reason otherwise, so save endpoints can turn it into a 422.
     Document edits are plain text saves to a ``.md`` path — no envelope.
+
+    A table save with a grid editor state (``data["sheet"]``) also projects
+    that state's data rectangle into ``rows`` before encoding, so stored
+    rows always reflect what the person sees (typed formulas included, as
+    their source text). See :mod:`langchain_canvas.table_merge`.
     """
     artifact_type = artifact.get("type")
     suffix = _ENVELOPE_SUFFIX_FOR.get(artifact_type) if isinstance(artifact_type, str) else None
@@ -114,8 +120,14 @@ def encode_artifact(artifact: dict[str, Any], path: str) -> str:
         raise ValueError(f"{artifact_type} artifact needs a data object")
     if not path.endswith(suffix):
         raise ValueError(f"{artifact_type} path must end with {suffix}")
+    data = artifact["data"]
+    if artifact_type == "table" and data.get("sheet") and data.get("columns"):
+        data = {
+            **data,
+            "rows": project_sheet_into_rows(data["columns"], data.get("rows") or [], data["sheet"]),
+        }
     title = artifact.get("title")
-    return _encode_envelope(artifact_type, title if isinstance(title, str) else path, artifact["data"])
+    return _encode_envelope(artifact_type, title if isinstance(title, str) else path, data)
 
 
 def _envelope_payload(content: str) -> tuple[str | None, dict[str, Any]] | None:

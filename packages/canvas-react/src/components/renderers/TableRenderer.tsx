@@ -20,6 +20,7 @@ import type { WorkbookInstance } from "@fortune-sheet/react";
 
 import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
+import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 
@@ -193,9 +194,16 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
 
   // Identity of the streamed data — the workbook re-keys on change (uncontrolled
   // afterward, so in-session edits are preserved between renders). `version` is
-  // bumped on `canvas.replace`, so a new agent version refreshes even when the
-  // row/column counts are unchanged.
-  const dataKey = `${artifact.id}:v${artifact.version}:${columns.length}x${rows.length}`;
+  // bumped on `canvas.replace`; the content signature covers agent writes that
+  // change cell values without changing the row count (an in-place edit must
+  // reach the screen). Human edits patch only `sheet`, so typing never re-keys.
+  const rowsSig = useMemo(() => {
+    const json = JSON.stringify(rows);
+    let hash = 5381;
+    for (let i = 0; i < json.length; i++) hash = ((hash << 5) + hash + json.charCodeAt(i)) | 0;
+    return (hash >>> 0).toString(36);
+  }, [rows]);
+  const dataKey = `${artifact.id}:v${artifact.version}:${columns.length}x${rows.length}:${rowsSig}`;
   const hasFormulas = useMemo(
     () => rows.slice(0, 400).some((row) => columns.some((col) => isFormula(row[col.key]))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -270,7 +278,9 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
       viewActive
         ? toWorkbook(columns, viewRows, formulas)
         : hasSheet
-          ? normalizeSheets(artifact.data.sheet)!
+          ? // Rows the agent wrote after the person's last edit win their cells;
+            // the person's formatting and out-of-table cells survive.
+            mergeRowsIntoSheet(columns, rows, normalizeSheets(artifact.data.sheet), formulas)!
           : toWorkbook(columns, rows, formulas),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [wbKey, formulasReady],
@@ -320,7 +330,9 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   }
   // Wait for formula pre-computation before mounting, so the workbook mounts once
   // with final values — no remount that could interrupt an in-progress edit.
-  if (!hasSheet && !formulasReady) {
+  // (Applies to sheet-backed tables too: the merge seeds cached results for
+  // agent-written formula cells.)
+  if (!formulasReady) {
     return <div className="cv-sheet cv-sheet--empty">Calculating…</div>;
   }
 

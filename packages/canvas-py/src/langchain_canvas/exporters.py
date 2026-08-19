@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
 
+from .table_merge import merge_rows_into_sheet
+
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -118,7 +120,14 @@ class TableXlsxExporter:
         if default_sheet is not None:
             workbook.remove(default_sheet)
 
-        for sheet in data.get("sheet") or []:
+        # Rows the agent wrote after the person's last edit are merged into the
+        # sheet state first, so the export never drops an agent change.
+        sheets = data.get("sheet") or []
+        if sheets and data.get("columns"):
+            sheets = (
+                merge_rows_into_sheet(data["columns"], data.get("rows") or [], sheets) or sheets
+            )
+        for sheet in sheets:
             ws = workbook.create_sheet(str(sheet.get("name") or "Sheet1"))
             for cell in sheet.get("celldata") or []:
                 v = cell.get("v")
