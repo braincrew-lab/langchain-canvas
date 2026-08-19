@@ -20,7 +20,7 @@ under ``langchain_canvas.store``.
 """
 
 from .agent import create_canvas_agent
-from .converters import ConvertedSource, SourceConverter, default_converters
+from .converters import ConvertedSource, PageRenderable, SourceConverter, default_converters
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
 from .exporters import ExportedFile, Exporter, default_exporters
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
@@ -40,6 +40,7 @@ __all__ = [
     "FileCanvasStore",
     "ChartHandle",
     "InMemoryCanvasStore",
+    "PageRenderable",
     "SourceConverter",
     "TableHandle",
     "SlidesHandle",

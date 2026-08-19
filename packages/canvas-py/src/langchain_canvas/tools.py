@@ -36,7 +36,9 @@ from typing import Any
 from langchain.tools import ToolRuntime, tool
 
 from .converters import (
+    MAX_IMAGES_PER_CALL,
     MissingConverterDependencyError,
+    PageRenderable,
     SourceConverter,
     converter_for,
     default_converters,
@@ -108,6 +110,30 @@ def _sliced(content: str, offset: int, limit: int) -> tuple[str, str]:
     return numbered, note + "]"
 
 
+def _parse_pages(spec: str) -> list[int]:
+    """1-based page numbers from a spec like ``"3"``, ``"2-5"`` or ``"1,4,7"``.
+
+    Order-preserving and de-duplicated; raises ``ValueError`` with an honest
+    message on anything else, so the tool can relay it verbatim.
+    """
+    pages: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        lo, dash, hi = part.partition("-")
+        if dash and lo.strip().isdigit() and hi.strip().isdigit():
+            start, end = int(lo), int(hi)
+            if start < 1 or start > end:
+                raise ValueError(f"page range {part!r} is not ascending from 1 or higher")
+            pages.extend(range(start, end + 1))
+        elif part.isdigit() and int(part) >= 1:
+            pages.append(int(part))
+        else:
+            raise ValueError(
+                f'pages must be "grid", or page numbers like "3", "2-5", "1,4,7" (got {spec!r})'
+            )
+    return list(dict.fromkeys(pages))
+
+
 def create_canvas_tools(
     store: CanvasStore,
     *,
@@ -150,6 +176,53 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
+    def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
+        """Rendered page images (or the grid overview) for one paged source.
+
+        Renders are recomputed on every call by design — a persistent
+        preview belongs to the file-artifact track, not the read tool.
+        """
+        converter = converter_for(path, active_converters)
+        if converter is None or not isinstance(converter, PageRenderable):
+            renderable = sorted(
+                {
+                    suffix
+                    for c in active_converters
+                    if isinstance(c, PageRenderable)
+                    for suffix in c.suffixes
+                }
+            )
+            supported = ", ".join(renderable) if renderable else "none installed"
+            return (
+                f"Error: `pages` applies to page-renderable sources ({supported}); "
+                f"{path} is not one — read it without `pages` for the text view."
+            )
+        try:
+            got = store.read_bytes(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            if spec.strip().lower() == "grid":
+                converted = converter.render_grid(got.data, path=path)
+            else:
+                numbers = _parse_pages(spec)
+                if len(numbers) > MAX_IMAGES_PER_CALL:
+                    return (
+                        f"Error: asked for {len(numbers)} pages; the limit is "
+                        f"{MAX_IMAGES_PER_CALL} per call — request a narrower range "
+                        '(or pages="grid" for a thumbnail overview).'
+                    )
+                converted = converter.render_pages(got.data, path=path, pages=numbers)
+        except MissingConverterDependencyError as exc:
+            return f"Error: {exc}"
+        except ValueError as exc:
+            return f"Error: {exc}"
+        meta = ", ".join(f"{k}: {v}" for k, v in converted.metadata.items())
+        header = f"revision: {got.revision}\n{path}" + (f" ({meta})" if meta else "")
+        return [{"type": "text", "text": header}, *converted.blocks]
+
     def _read_source(canvas_id: str, path: str, offset: int, limit: int) -> str | list[dict]:
         """A binary file rendered through its converter (or an honest refusal)."""
         converter = converter_for(path, active_converters)
@@ -180,7 +253,11 @@ def create_canvas_tools(
 
     @tool
     def read_canvas(
-        path: str, runtime: ToolRuntime, offset: int = 0, limit: int = _DEFAULT_READ_LIMIT
+        path: str,
+        runtime: ToolRuntime,
+        offset: int = 0,
+        limit: int = _DEFAULT_READ_LIMIT,
+        pages: str | None = None,
     ) -> str | list[dict]:
         """Read one canvas file before viewing or editing it.
 
@@ -192,8 +269,17 @@ def create_canvas_tools(
         Long files are windowed: `offset`/`limit` select a line range and the
         output says how to read the rest. Binary uploads under `sources/` are
         rendered through a format converter instead of raw bytes.
+
+        Page-renderable sources (.pdf) can also be *seen*: observe cheaply
+        first — the default text view names the page count and which pages
+        have no text layer — then `pages="grid"` for a one-shot thumbnail
+        overview of every page, then `pages="3"` / `"2-5"` / `"1,4,7"` to
+        render just the pages that matter (scans, charts, layout questions)
+        as images. At most 8 page images per call.
         """
         canvas_id = _canvas_id(runtime)
+        if pages is not None:
+            return _read_source_pages(canvas_id, path, pages)
         offset = max(0, offset)
         limit = max(1, limit)
         try:
