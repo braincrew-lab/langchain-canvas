@@ -29,6 +29,7 @@ TS_PATH = (
 PAIRS: list[tuple[type, str]] = [
     (py.HtmlData, "HtmlData"),
     (py.DocumentData, "DocumentData"),
+    (py.FileData, "FileData"),
     (py.ChartSeries, "ChartSeries"),
     (py.ChartOptions, "ChartOptions"),
     (py.ChartData, "ChartData"),

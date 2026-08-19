@@ -132,11 +132,19 @@ def test_html_source_previews_as_html_artifact() -> None:
     assert events[0]["artifact"]["type"] == "html"
 
 
-def test_csv_and_binary_sources_produce_no_preview() -> None:
+def test_csv_and_binary_sources_replay_as_file_artifacts() -> None:
+    # Uploads outside the text-preview set still show on the canvas — as
+    # `file` artifacts (a card, plus whatever preview can be derived). The
+    # person who uploaded a file always sees it. Details: test_file_preview.py.
     store = InMemoryCanvasStore()
     store.write("c1", "sources/rows.csv", "a,b\n1,2", "Upload rows.csv", actor="human")
     store.write_bytes("c1", "sources/photo.png", b"\x89PNG\x00\xff", "Upload photo.png")
-    assert hydrate_events(store, "c1") == []
+    events = hydrate_events(store, "c1")
+    created = [e["artifact"] for e in events if e["type"] == "canvas.create"]
+    assert [(a["type"], a["id"]) for a in created] == [
+        ("file", "sources/rows.csv"),
+        ("file", "sources/photo.png"),
+    ]
 
 
 def test_chart_file_replays_as_chart_artifact() -> None:

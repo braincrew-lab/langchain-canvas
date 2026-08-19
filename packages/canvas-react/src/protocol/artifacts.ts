@@ -137,10 +137,30 @@ export interface SlidesData {
   slides: Slide[];
 }
 
+/**
+ * A stored canvas file shown as itself — a window onto the store, not a copy.
+ * `path` is the canvas-relative reference (`sources/photo.png`); the renderer
+ * resolves it against the host's asset endpoint for display and download.
+ * `cover` / `excerpt` / `detail` are *derived* previews (never stored).
+ */
+export interface FileData {
+  path: string;
+  name: string;
+  mediaType?: string;
+  size?: number;
+  /** data: URI thumbnail of page one (page-renderable sources). */
+  cover?: string;
+  /** Short text sample, via the source converter. */
+  excerpt?: string;
+  /** One-line content summary ("3 pages", "5 slides"). */
+  detail?: string;
+}
+
 // Concrete artifact aliases, handy for renderers that want a narrowed type.
 export type HtmlArtifact = Artifact<HtmlData> & { type: "html" };
 export type DocumentArtifact = Artifact<DocumentData> & { type: "document" };
 export type ChartArtifact = Artifact<ChartData> & { type: "chart" };
 export type TableArtifact = Artifact<TableData> & { type: "table" };
 export type SlidesArtifact = Artifact<SlidesData> & { type: "slides" };
-export type KnownArtifact = HtmlArtifact | DocumentArtifact | ChartArtifact | TableArtifact | SlidesArtifact;
+export type FileArtifact = Artifact<FileData> & { type: "file" };
+export type KnownArtifact = HtmlArtifact | DocumentArtifact | ChartArtifact | TableArtifact | SlidesArtifact | FileArtifact;

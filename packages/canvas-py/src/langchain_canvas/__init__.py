@@ -25,7 +25,14 @@ from .converters import ConvertedSource, PageRenderable, SourceConverter, defaul
 from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
 from .exporters import ExportedFile, Exporter, default_exporters
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
-from .replay import encode_artifact, encode_chart, encode_slides, encode_table, hydrate_events
+from .replay import (
+    encode_artifact,
+    encode_chart,
+    encode_slides,
+    encode_table,
+    hydrate_events,
+    source_preview_events,
+)
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
 from .tools import (
@@ -65,6 +72,7 @@ __all__ = [
     "formula_guidance",
     "hydrate_events",
     "inline_canvas_assets",
+    "source_preview_events",
     "sse_from_agent",
 ]
 

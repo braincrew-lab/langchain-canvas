@@ -53,6 +53,7 @@ export {
   ChartRenderer,
   TableRenderer,
   SlidesRenderer,
+  FileRenderer,
 } from "./components/renderers";
 
 // export layer (artifact → file)

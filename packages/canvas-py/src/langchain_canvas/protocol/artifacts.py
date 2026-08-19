@@ -138,9 +138,29 @@ class SlidesData(_CamelModel):
     slides: list[Slide] = Field(default_factory=list)
 
 
+class FileData(_CamelModel):
+    """A stored canvas file shown as itself — a window onto the store, not a copy.
+
+    ``path`` is the canvas-relative reference (``sources/photo.png``); the
+    renderer resolves it against the host's asset endpoint for display and
+    download, so the stored file stays the single truth. ``cover`` /
+    ``excerpt`` / ``detail`` are *derived* previews (never stored): a small
+    page-one image, a short text sample, and a one-line content summary —
+    whichever the installed converters can honestly produce.
+    """
+
+    path: str
+    name: str
+    media_type: str | None = None  # serialized as `mediaType`
+    size: int | None = None
+    cover: str | None = None  # data: URI thumbnail of page one (page-renderable sources)
+    excerpt: str | None = None  # short text sample, via the source converter
+    detail: str | None = None  # one-line content summary ("3 pages", "5 slides")
+
+
 # The union of every known artifact data shape. `data` on the wire is one of
 # these; the discriminator lives on the enclosing `Artifact.type`.
-ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, SlidesData]
+ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, SlidesData, FileData]
 
 
 # --- the envelope every artifact shares -----------------------------------------
@@ -163,4 +183,4 @@ class Artifact(_CamelModel):
     meta: dict[str, Any] | None = None
 
 
-ArtifactType = Literal["html", "document", "chart", "table", "slides"]
+ArtifactType = Literal["html", "document", "chart", "table", "slides", "file"]
