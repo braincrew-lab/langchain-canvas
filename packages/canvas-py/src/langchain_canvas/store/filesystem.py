@@ -64,6 +64,18 @@ def _safe_relpath(path: str) -> Path:
     return Path(validate_relpath(path))
 
 
+def _drop_torn_tail(log: Path) -> None:
+    """Truncate a torn final line so the next append cannot fuse with it."""
+    try:
+        data = log.read_bytes()
+    except FileNotFoundError:
+        return
+    if not data or data.endswith(b"\n"):
+        return
+    with log.open("rb+") as fh:
+        fh.truncate(data.rfind(b"\n") + 1)
+
+
 class FileCanvasStore(AsyncFromSyncMixin):
     """Directory-backed :class:`~langchain_canvas.store.base.CanvasStore`."""
 
@@ -203,11 +215,24 @@ class FileCanvasStore(AsyncFromSyncMixin):
         log = canvas_dir / _HISTORY / _COMMITS_LOG
         if not log.is_file():
             return []
-        return [
-            Commit.model_validate(json.loads(line))
-            for line in log.read_text("utf-8").splitlines()
-            if line.strip()
-        ]
+        text = log.read_text("utf-8")
+        lines = text.splitlines()
+        commits: list[Commit] = []
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                commits.append(Commit.model_validate(json.loads(line)))
+            except ValueError as exc:
+                if index == len(lines) - 1 and not text.endswith("\n"):
+                    # A torn final line is an append that never finished (a
+                    # crash mid-write): that commit never happened. Readers
+                    # skip it; the next writer truncates it (see _commit).
+                    break
+                raise CanvasStoreError(
+                    f"corrupt commit log line {index + 1} in {log}"
+                ) from exc
+        return commits
 
     def _check_base(self, canvas_dir: Path, base_revision: str | None, path: str) -> None:
         """Reject a write whose base is older than the file's own last change.
@@ -246,9 +271,14 @@ class FileCanvasStore(AsyncFromSyncMixin):
             actor=actor,
         )
         snapshot_dir = canvas_dir / _HISTORY / _SNAPSHOTS / commit.revision
+        if snapshot_dir.exists():
+            # Leftover from an append that tore before its log line landed:
+            # that commit never happened, so its snapshot is free to replace.
+            shutil.rmtree(snapshot_dir)
         shutil.copytree(canvas_dir / _HEAD, snapshot_dir)
         log = canvas_dir / _HISTORY / _COMMITS_LOG
         log.parent.mkdir(parents=True, exist_ok=True)
+        _drop_torn_tail(log)
         with log.open("a", encoding="utf-8") as fh:
             fh.write(commit.model_dump_json() + "\n")
         return commit
