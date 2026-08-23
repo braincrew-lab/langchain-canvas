@@ -1,6 +1,6 @@
 name: Publish
 
-# Publishes @langchain-canvas/react to npm when a GitHub Release is published
+# Publishes @braincrew-lab/langchain-canvas to npm when a GitHub Release is published
 # (create the release after bumping the version — see the release:* scripts in
 # packages/canvas-react/package.json). Can also be run manually.
 on:
@@ -28,13 +28,18 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # --fail-if-no-match: a wrong package name makes pnpm skip the step and
+      # exit 0, so the whole release goes green while publishing nothing. That
+      # is exactly what happened when the package was renamed and this file was
+      # not updated. Make a filter miss an error instead.
+
       # Gate the release on a green build + tests.
       - run: pnpm -r typecheck
-      - run: pnpm --filter @langchain-canvas/react test
-      - run: pnpm --filter @langchain-canvas/react build
+      - run: pnpm --fail-if-no-match --filter @braincrew-lab/langchain-canvas test
+      - run: pnpm --fail-if-no-match --filter @braincrew-lab/langchain-canvas build
 
       # publishConfig in package.json swaps main/types/exports to dist for the
       # published tarball. --provenance signs it (verifiable origin on npm).
-      - run: pnpm --filter @langchain-canvas/react publish --access public --no-git-checks --provenance
+      - run: pnpm --fail-if-no-match --filter @braincrew-lab/langchain-canvas publish --access public --no-git-checks --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
