@@ -323,6 +323,65 @@ def _data_uri_bytes(src: str) -> bytes | None:
         return None
 
 
+def _pptx_data_uri_bytes(src: str | None) -> bytes | None:
+    """The pptx bytes of an inlined template skin, or ``None``.
+
+    A non-data-URI value here means the skin reference could not be inlined
+    (file missing, wrong type) — the caller degrades to the blank export.
+    """
+    if not src:
+        return None
+    match = re.match(
+        rf"^data:{re.escape(PPTX_MIME)};base64,(.+)$", src.strip(), re.IGNORECASE
+    )
+    if not match:
+        return None
+    try:
+        return base64.b64decode(match.group(1), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _skin_presentation(template: str | None, presentation_cls: Any) -> Any | None:
+    """The template skin opened as the base presentation, or ``None``.
+
+    Drops the skin's own slides — the deck's content replaces them — while
+    its masters and layouts (logos, backgrounds, headers) stay and style
+    every slide added on top. Unreadable skin bytes degrade to ``None`` so
+    the export never dies on a bad template.
+    """
+    data = _pptx_data_uri_bytes(template)
+    if data is None:
+        return None
+    try:
+        base = presentation_cls(io.BytesIO(data))
+        id_list = base.slides._sldIdLst
+        for slide_id in list(id_list):
+            base.part.drop_rel(slide_id.rId)
+            id_list.remove(slide_id)
+    except Exception:  # noqa: BLE001 — any parse failure means "not a usable skin"
+        return None
+    return base
+
+
+def _content_layout(presentation: Any) -> Any:
+    """The least-furnished layout — the closest thing to a blank canvas.
+
+    Prefers a layout literally named "Blank" (the stock template's index 6),
+    else the one with the fewest placeholders, so skinned exports draw on
+    the emptiest surface the template offers while inheriting its master.
+    """
+    layouts = [
+        layout
+        for master in presentation.slide_masters
+        for layout in master.slide_layouts
+    ]
+    for layout in layouts:
+        if (layout.name or "").strip().lower() == "blank":
+            return layout
+    return min(layouts, key=lambda layout: len(layout.placeholders))
+
+
 def _safe_name(title: str | None) -> str | None:
     if not title or not title.strip():
         return None
@@ -413,6 +472,8 @@ def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
 # doors produce the same-looking deck. Element geometry is percent-based.
 _SLIDE_WIDTH_IN = 10.0
 _SLIDE_HEIGHT_IN = 5.625
+# python-pptx page dimensions are Emu integers (914400 per inch).
+_EMU_PER_INCH = 914400
 # Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
 _PX_TO_PT = 0.75
 _DEFAULT_FONT_PX = 24.0
@@ -509,12 +570,21 @@ class SlidesPptxExporter:
     backgrounds, and speaker notes. Structured slides (title / bullets /
     layout) derive the same elements the canvas renders.
 
-    Honest limits: no master or theme (elements sit on a blank layout — a
-    template-skin export can fill that seat later), no animations or
-    transitions, image/url backgrounds are skipped, non-data-URI image
-    references are skipped (inline assets before exporting), fonts fall back
-    to whatever the viewer has installed. Requires ``python-pptx`` —
-    installed by the ``office`` extra.
+    Template skins: when the deck's ``template`` field references a pptx
+    (inlined to a data URI before export), the export opens that file as its
+    base — the skin's masters and layouts style every slide, so the
+    original's logos, backgrounds, and headers survive; the skin's own
+    slides are dropped and its native page size is kept (percent geometry
+    projects onto any page). A missing or unreadable skin degrades to the
+    blank default below.
+
+    Honest limits: without a skin there is no master or theme (elements sit
+    on a blank 16:9 layout); the canvas preview never renders the skin
+    (export-time only); no animations, transitions, or SmartArt; image/url
+    backgrounds are skipped; an explicit slide ``background`` paints over
+    the skin's; non-data-URI image references are skipped (inline assets
+    before exporting); fonts fall back to whatever the viewer has installed.
+    Requires ``python-pptx`` — installed by the ``office`` extra.
     """
 
     suffixes: tuple[str, ...] = (".slides.json",)
@@ -555,10 +625,17 @@ class SlidesPptxExporter:
             "center": PP_ALIGN.CENTER,
             "right": PP_ALIGN.RIGHT,
         }
-        presentation = Presentation()
-        presentation.slide_width = Inches(_SLIDE_WIDTH_IN)
-        presentation.slide_height = Inches(_SLIDE_HEIGHT_IN)
-        blank_layout = presentation.slide_layouts[6]
+        presentation = _skin_presentation(deck.template, Presentation)
+        if presentation is None:
+            presentation = Presentation()
+            presentation.slide_width = Inches(_SLIDE_WIDTH_IN)
+            presentation.slide_height = Inches(_SLIDE_HEIGHT_IN)
+        # A skin keeps its native page size; percent geometry projects onto
+        # whatever the page is, so 4:3 corporate decks stay 4:3. (The stub
+        # types the dimensions Optional; a real file always carries them.)
+        page_w_in = (presentation.slide_width or Inches(_SLIDE_WIDTH_IN)) / _EMU_PER_INCH
+        page_h_in = (presentation.slide_height or Inches(_SLIDE_HEIGHT_IN)) / _EMU_PER_INCH
+        blank_layout = _content_layout(presentation)
 
         for slide_model in deck.slides or [Slide()]:
             slide = presentation.slides.add_slide(blank_layout)
@@ -574,10 +651,10 @@ class SlidesPptxExporter:
             span = 1.0 - 2.0 * pad
 
             def inch_box(element: SlideElement) -> tuple[Any, Any, Any, Any]:
-                left = (pad + (element.x / 100.0) * span) * _SLIDE_WIDTH_IN
-                top = (pad + (element.y / 100.0) * span) * _SLIDE_HEIGHT_IN
-                width = (element.w / 100.0) * span * _SLIDE_WIDTH_IN
-                height = (element.h / 100.0) * span * _SLIDE_HEIGHT_IN
+                left = (pad + (element.x / 100.0) * span) * page_w_in
+                top = (pad + (element.y / 100.0) * span) * page_h_in
+                width = (element.w / 100.0) * span * page_w_in
+                height = (element.h / 100.0) * span * page_h_in
                 return Inches(left), Inches(top), Inches(width), Inches(height)
 
             for element in _resolved_slide_elements(slide_model):

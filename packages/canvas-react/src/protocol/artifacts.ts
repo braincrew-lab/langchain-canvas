@@ -135,6 +135,11 @@ export interface Slide {
 
 export interface SlidesData {
   slides: Slide[];
+  /** Optional pptx skin: a canvas reference ("sources/brand.pptx") whose
+   *  master and layouts the pptx export builds on. Export-time only — the
+   *  canvas preview does not render the skin; a missing or unreadable skin
+   *  degrades to the blank-layout export. */
+  template?: string;
 }
 
 /**

@@ -25,6 +25,7 @@ import base64
 import json
 import re
 
+from .exporters import PPTX_MIME
 from .store import CanvasStore, CanvasStoreError
 
 ASSET_REFERENCE_PREFIXES: tuple[str, ...] = ("assets/", "sources/")
@@ -114,11 +115,13 @@ def inline_slides_assets(content: str, store: CanvasStore, canvas_id: str) -> st
     The slides twin of :func:`inline_canvas_assets`: slide decks carry their
     image references in JSON fields (each element's ``src`` and a structured
     slide's ``image``), not in HTML attributes, so the export tool inlines
-    them here before the pptx exporter runs. The same honesty applies — a
-    reference that cannot be inlined (file missing, not an image type) is
-    left untouched and the exporter skips it. Content that does not parse as
-    an envelope is returned unchanged so the exporter can raise its own
-    honest error.
+    them here before the pptx exporter runs. The deck's ``template`` skin
+    reference (a ``sources/*.pptx`` path) is inlined the same way, so the
+    exporter receives the skin bytes without touching the store. The same
+    honesty applies — a reference that cannot be inlined (file missing, not
+    an image type) is left untouched and the exporter skips it. Content that
+    does not parse as an envelope is returned unchanged so the exporter can
+    raise its own honest error.
     """
     try:
         envelope = json.loads(content)
@@ -144,7 +147,26 @@ def inline_slides_assets(content: str, store: CanvasStore, canvas_id: str) -> st
             return None
         return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
 
+    def _inlined_template(src: object) -> str | None:
+        # The skin is a pptx, not an image, so it bypasses the image-mime
+        # gate — same store read, same honest None on any miss.
+        if not isinstance(src, str) or not src.lower().endswith(".pptx"):
+            return None
+        path = normalize_asset_reference(src)
+        if path is None:
+            return None
+        try:
+            raw = store.read_bytes(canvas_id, path).data
+        except CanvasStoreError:
+            return None
+        return f"data:{PPTX_MIME};base64,{base64.b64encode(raw).decode()}"
+
     changed = False
+    if isinstance(data, dict):
+        uri = _inlined_template(data.get("template"))
+        if uri is not None:
+            data["template"] = uri
+            changed = True
     for slide in slides:
         if not isinstance(slide, dict):
             continue
