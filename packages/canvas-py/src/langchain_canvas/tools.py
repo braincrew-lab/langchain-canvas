@@ -164,24 +164,19 @@ def _refit_slides_to_page(
     scaling both keeps this exactly the file the old exporter-side
     projection produced for a page-less deck.
 
-    The projection routes through the classic canvas: undo the letterbox
-    that placed the content on the OLD page, then apply the NEW page's.
-    A direct old-to-new min-scale is not invertible (4:3 to wide keeps
-    scale 1, wide back to 4:3 shrinks by 0.75), so a skin swap would
-    neither match a from-scratch deck nor survive a round trip. Composed
-    through the canvas both hold; a first attach (old == canvas) reduces
-    to the plain letterbox.
+    The projection is the direct old-to-new letterbox, and deliberately
+    NOT round-trip exact: min-scale letterboxing is not invertible, and
+    slide software asks the user how to re-fit on a page change for the
+    same reason. What IS guaranteed is containment — coordinates inside
+    the old page land inside the new page, always. (An earlier version
+    composed through the classic canvas to make swaps path-independent;
+    that silently pushed content re-placed for the current page off the
+    page entirely. Do not bring that back — off-page content is the worse
+    failure.)
     """
-    canvas_w, canvas_h = DEFAULT_SLIDE_PAGE_IN
-    scale_old = min(old_w / canvas_w, old_h / canvas_h)
-    scale_new = min(new_w / canvas_w, new_h / canvas_h)
-    scale = scale_new / scale_old
-    offset_x = (new_w - canvas_w * scale_new) / 2.0 - (
-        (old_w - canvas_w * scale_old) / 2.0
-    ) * scale
-    offset_y = (new_h - canvas_h * scale_new) / 2.0 - (
-        (old_h - canvas_h * scale_old) / 2.0
-    ) * scale
+    scale = min(new_w / old_w, new_h / old_h)
+    offset_x = (new_w - old_w * scale) / 2.0
+    offset_y = (new_h - old_h * scale) / 2.0
     font_factor = scale
     for slide in data.get("slides") or []:
         if not isinstance(slide, dict):
@@ -287,9 +282,8 @@ def _deck_with_skin_page(
     if abs(new_w / new_h - old_w / old_h) > 1e-6:
         note = (
             f" Note: page changed to {new_w} x {new_h} in to match the "
-            "template. Existing slides were re-fitted without distortion; "
-            "re-place their elements for the new ratio if you want the "
-            "full page."
+            "template. Existing slides were scaled to fit (they now sit "
+            "letterboxed); re-place their elements to use the full page."
         )
     return json.dumps(envelope, ensure_ascii=False), None, note
 

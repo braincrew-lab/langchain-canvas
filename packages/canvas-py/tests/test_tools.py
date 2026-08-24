@@ -493,7 +493,7 @@ def test_write_canvas_refits_a_legacy_deck_for_a_new_ratio():
     )
     # The ratio change is announced, never silent.
     assert "page changed to 10.0 x 7.5 in" in result
-    assert "re-fitted" in result
+    assert "scaled to fit" in result
 
     saved = _json.loads(store.read("t1", "deck.slides.json").content)
     assert saved["data"]["page"] == {"widthIn": 10.0, "heightIn": 7.5}
@@ -530,17 +530,19 @@ def test_write_canvas_stays_quiet_for_a_same_ratio_skin():
         tools["write_canvas"], _runtime(thread_id="t1"), path="deck.slides.json",
         content=content, description="deck",
     )
-    assert "re-fitted" not in result
+    assert "scaled to fit" not in result
     saved = _json.loads(store.read("t1", "deck.slides.json").content)
     # Coordinates untouched — same ratio needs no re-fit.
     assert saved["data"]["slides"][0]["elements"][0]["x"] == 10
 
 
-def test_write_canvas_refits_again_when_the_skin_is_swapped():
-    # 4:3 first, then "make it wide": the page must follow the new skin and
-    # the geometry must land exactly where a from-scratch wide deck lands —
-    # otherwise the content stays stranded in the old ratio's letterbox
-    # (x=0/w=100 tops out at 75% of a wide page) with no way out.
+def test_skin_swaps_never_push_content_off_the_page():
+    # The refit contract, corrected: containment and uniform scale are hard;
+    # round-trip identity and path-independence are NOT promised (min-scale
+    # letterboxing is not invertible — slide software asks the user how to
+    # re-fit on a page change for the same reason). The earlier
+    # path-independent projection routed through the classic canvas and
+    # silently pushed content re-placed for the current page off the page.
     import copy as _copy
     import io as _io
     import json as _json
@@ -560,66 +562,71 @@ def test_write_canvas_refits_again_when_the_skin_is_swapped():
         skin.save(buf)
         store.write_bytes("t1", "sources/brand.pptx", buf.getvalue(), "skin")
 
-    def _measure(store):
+    def _check_export(store):
+        """Every shape inside the page; the circle still a circle."""
         content = store.read("t1", "deck.slides.json").content
         inlined = inline_slides_assets(content, store, "t1")
         deck = pptx.Presentation(
             _io.BytesIO(SlidesPptxExporter().export(inlined, path="d.slides.json").data)
         )
+        page_w, page_h = deck.slide_width, deck.slide_height
         (slide,) = deck.slides
+        for shape in slide.shapes:
+            assert shape.left >= -1 and shape.top >= -1
+            assert shape.left + shape.width <= page_w + 1
+            assert shape.top + shape.height <= page_h + 1
         (circle,) = [
             s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
         ]
-        (text,) = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text]
-        return (
-            deck.slide_width / 914400,
-            circle.width / 914400,
-            circle.width / circle.height,
-            text.text_frame.paragraphs[0].runs[0].font.size.pt,
-        )
+        assert abs(circle.width / circle.height - 1.0) < 0.001
 
+    def _rewrite(store, tools, content=None):
+        got = store.read("t1", "deck.slides.json")
+        _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
+                path="deck.slides.json", content=content or got.content,
+                description="swap", revision=got.revision)
+
+    pages = {"16:9": (10, 5.625), "4:3": (10, 7.5), "wide": (13.333, 7.5)}
+    for order in (("4:3", "wide", "16:9"), ("wide", "4:3", "wide"),
+                  ("16:9", "4:3", "wide", "4:3")):
+        store = InMemoryCanvasStore()
+        _add_skin(store, *pages[order[0]])
+        tools = _tools(store)
+        content = _json.dumps({"type": "slides",
+                               "data": _copy.deepcopy(_LEGACY_DECK_DATA)})
+        _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
+                path="deck.slides.json", content=content, description="deck")
+        _check_export(store)
+        for name in order[1:]:
+            _add_skin(store, *pages[name])
+            _rewrite(store, tools)
+            _check_export(store)
+
+    # The advertised flow: attach 4:3, RE-PLACE the elements to fill the 4:3
+    # page (as the note suggests), then swap to wide. The re-placed content
+    # is no longer inside any classic-canvas band — it must still stay on
+    # the page.
     store = InMemoryCanvasStore()
-    _add_skin(store, 10, 7.5)  # 4:3 first
+    _add_skin(store, 10, 7.5)
     tools = _tools(store)
     content = _json.dumps({"type": "slides",
                            "data": _copy.deepcopy(_LEGACY_DECK_DATA)})
     _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
             path="deck.slides.json", content=content, description="deck")
-    page_43 = _measure(store)
-
-    # Swap the skin to wide and rewrite the deck as-is (page still 4:3).
+    replaced = _json.loads(store.read("t1", "deck.slides.json").content)
+    for el in replaced["data"]["slides"][0]["elements"]:
+        if el["type"] == "shape":  # blow the circle up to the full 4:3 page
+            el.update({"x": 0, "y": 0, "w": 75, "h": 100})
+        else:
+            el.update({"x": 0, "y": 80, "w": 40, "h": 20})
+    _rewrite(store, tools, content=_json.dumps(replaced))
     _add_skin(store, 13.333, 7.5)
+    _rewrite(store, tools)
+    _check_export(store)
+
+    # A rewrite with the matching skin stays quiet and untouched.
     got = store.read("t1", "deck.slides.json")
-    stale, rev = got.content, got.revision
     result = _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
-                     path="deck.slides.json", content=stale,
-                     description="swap", revision=rev)
-    assert "page changed to 13.333 x 7.5 in" in result  # announced
-
-    saved = _json.loads(store.read("t1", "deck.slides.json").content)
-    assert saved["data"]["page"] == {"widthIn": 13.333, "heightIn": 7.5}
-    swapped = _measure(store)
-    # Same numbers a from-scratch wide deck produces.
-    assert abs(swapped[0] - 13.333) < 0.001
-    assert abs(swapped[1] - 1.3333) < 0.001  # circle width follows the page
-    assert abs(swapped[2] - 1.0) < 0.001  # still a circle
-    assert abs(swapped[3] - 39.99) < 0.05  # font rides the same scale
-
-    # Round trip: back to 4:3 lands on the original 4:3 numbers again.
-    _add_skin(store, 10, 7.5)
-    got = store.read("t1", "deck.slides.json")
-    stale, rev = got.content, got.revision
-    _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
-            path="deck.slides.json", content=stale,
-            description="swap back", revision=rev)
-    back = _measure(store)
-    for got, want in zip(back, page_43, strict=True):
-        assert abs(got - want) < 0.01
-
-    # A rewrite with the matching skin stays quiet and byte-stable.
-    got = store.read("t1", "deck.slides.json")
-    stale, rev = got.content, got.revision
-    result = _invoke(tools["write_canvas"], _runtime(thread_id="t1"),
-                     path="deck.slides.json", content=stale,
-                     description="no-op", revision=rev)
-    assert "re-fitted" not in result
+                     path="deck.slides.json", content=got.content,
+                     description="no-op", revision=got.revision)
+    assert "scaled to fit" not in result
