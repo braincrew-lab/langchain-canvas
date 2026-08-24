@@ -429,6 +429,12 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         ``xlsx`` for .table.json tables, ``pptx`` for .slides.json decks.
         The result is saved under ``exports/`` on the canvas, where the
         user can download it.
+
+        Template skin: a slides deck whose data carries
+        ``"template": "sources/brand.pptx"`` exports onto that file's
+        masters and layouts, so the original's logos, backgrounds, and
+        headers survive. A missing or unreadable skin degrades to the
+        plain blank-layout export.
         """
         canvas_id = _canvas_id(runtime)
         try:

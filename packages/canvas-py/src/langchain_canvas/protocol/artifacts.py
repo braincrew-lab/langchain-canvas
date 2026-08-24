@@ -136,6 +136,12 @@ class SlidesData(_CamelModel):
     """A slide deck; renders as an HTML deck and exports to .pptx."""
 
     slides: list[Slide] = Field(default_factory=list)
+    # Optional pptx skin: a canvas reference (``sources/brand.pptx``) whose
+    # master and layouts the pptx export builds on, so the original's logos,
+    # backgrounds, and headers survive the trip. The canvas preview does not
+    # render the skin — it applies at export time only. Missing or unreadable
+    # skins degrade to the blank-layout export.
+    template: str | None = None
 
 
 class FileData(_CamelModel):

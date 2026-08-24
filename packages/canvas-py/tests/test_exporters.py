@@ -23,6 +23,7 @@ from pptx.util import Inches
 
 from langchain_canvas import InMemoryCanvasStore, create_export_tool
 from langchain_canvas.exporters import (
+    PPTX_MIME,
     HtmlDocxExporter,
     SlidesPptxExporter,
     TableXlsxExporter,
@@ -325,6 +326,82 @@ def test_slides_pptx_rejects_non_deck_content():
         SlidesPptxExporter().export("not json", path="d.slides.json")
     with pytest.raises(ValueError):
         SlidesPptxExporter().export(json.dumps({"data": {"slides": "nope"}}), path="d.slides.json")
+
+
+def _skin_pptx_bytes() -> bytes:
+    """A 4:3 template with a branded master shape and one slide of its own."""
+    from pptx import Presentation as _P
+    from pptx.enum.shapes import MSO_SHAPE
+
+    skin = _P()
+    skin.slide_width = Inches(10)
+    skin.slide_height = Inches(7.5)
+    slide = skin.slides.add_slide(skin.slide_layouts[6])
+    logo = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.2), Inches(0.2), Inches(1), Inches(0.4)
+    )
+    logo.name = "BrandLogo"
+    # python-pptx has no master add_shape; moving the element is the test's
+    # stand-in for a real branded master.
+    skin.slide_masters[0].shapes._spTree.append(logo._element)
+    buf = io.BytesIO()
+    skin.save(buf)
+    return buf.getvalue()
+
+
+def _skin_uri() -> str:
+    return f"data:{PPTX_MIME};base64,{base64.b64encode(_skin_pptx_bytes()).decode()}"
+
+
+def test_slides_pptx_template_skin_keeps_master_and_page_size():
+    content = json.dumps({
+        "type": "slides",
+        "title": "Skinned",
+        "data": {
+            "template": _skin_uri(),
+            "slides": [
+                {"elements": [{"id": "t", "type": "text", "x": 10, "y": 10,
+                               "w": 80, "h": 20, "text": "Hello", "fontSize": 54}]},
+                {"title": "Second", "bullets": ["One"]},
+            ],
+        },
+    })
+    result = SlidesPptxExporter().export(content, path="deck.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+
+    # The skin's page (4:3) survives; its own slide is dropped — only the
+    # canvas content ships.
+    assert deck.slide_width == Inches(10)
+    assert deck.slide_height == Inches(7.5)
+    assert len(list(deck.slides)) == 2
+
+    # The branded master styles the new slides: its shape is reachable from
+    # the exported slide's own layout chain.
+    first = list(deck.slides)[0]
+    master_names = [shape.name for shape in first.slide_layout.slide_master.shapes]
+    assert "BrandLogo" in master_names
+    assert first.slide_layout.name == "Blank"
+
+    # Content still lands as real shapes with percent geometry projected
+    # onto the skin's page.
+    texts = [s for s in first.shapes if s.has_text_frame and s.text_frame.text]
+    ((run,),) = [p.runs for p in texts[0].text_frame.paragraphs]
+    assert run.text == "Hello"
+    assert run.font.size.pt == 40.5
+
+
+def test_slides_pptx_unusable_skin_degrades_to_blank_export():
+    for template in ("sources/missing.pptx",  # never inlined — reference miss
+                     f"data:{PPTX_MIME};base64,{base64.b64encode(b'junk').decode()}"):
+        content = json.dumps({
+            "type": "slides",
+            "data": {"template": template, "slides": [{"title": "T"}]},
+        })
+        result = SlidesPptxExporter().export(content, path="d.slides.json")
+        deck = Presentation(io.BytesIO(result.data))
+        assert deck.slide_width == Inches(10)
+        assert deck.slide_height == Inches(5.625)  # blank 16:9 default
+        assert len(list(deck.slides)) == 1
 
 
 # --- the export tool -------------------------------------------------------------

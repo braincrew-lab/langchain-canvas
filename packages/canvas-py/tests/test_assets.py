@@ -108,6 +108,24 @@ def test_inline_slides_replaces_element_src_and_slide_image():
     assert slides[1]["image"] == f"data:image/png;base64,{PNG_B64}"
 
 
+def test_inline_slides_inlines_the_template_skin():
+    from langchain_canvas.exporters import PPTX_MIME
+
+    store = InMemoryCanvasStore()
+    fake_pptx = b"PK\x03\x04 not a real deck but real bytes"
+    store.write_bytes("t1", "sources/brand.pptx", fake_pptx, "Upload skin")
+    deck = json.dumps({"data": {"template": "sources/brand.pptx", "slides": []}})
+    out = json.loads(inline_slides_assets(deck, store, "t1"))
+    expected = f"data:{PPTX_MIME};base64,{base64.b64encode(fake_pptx).decode()}"
+    assert out["data"]["template"] == expected
+
+    # A missing skin or a non-pptx value stays untouched — honest miss.
+    missing = json.dumps({"data": {"template": "sources/gone.pptx", "slides": []}})
+    assert inline_slides_assets(missing, store, "t1") == missing
+    not_pptx = json.dumps({"data": {"template": "sources/brand.docx", "slides": []}})
+    assert inline_slides_assets(not_pptx, store, "t1") == not_pptx
+
+
 def test_inline_slides_leaves_misses_and_non_decks_untouched():
     store = InMemoryCanvasStore()
     deck = json.dumps({"data": {"slides": [
