@@ -16,6 +16,7 @@
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
 import { resolveElements } from "../client/slideElements";
+import { deckPage } from "../client/slidePage";
 import { mergeRowsIntoSheet, projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -191,8 +192,11 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
   const PptxGenJS = (await loadOptional("pptxgenjs", () => import("pptxgenjs"))).default;
   const pptx = new PptxGenJS();
 
-  const W = 10;
-  const H = 5.625;
+  // The deck page (inches) decides the slide size — the same contract the
+  // editor box and the server-side exporter follow. Absent = classic 16:9.
+  const { widthIn: W, heightIn: H } = deckPage(data);
+  pptx.defineLayout({ name: "CV_PAGE", width: W, height: H });
+  pptx.layout = "CV_PAGE";
   for (const slide of data.slides) {
     const s = pptx.addSlide();
     // Only a solid hex background maps to a pptx slide fill; url()/gradient
@@ -234,6 +238,12 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
  */
 export function slidesToPrintHtml(data: SlidesData, title: string): string {
   const slides = data.slides.length ? data.slides : [{ title: "Empty deck" }];
+  // Print pages follow the deck page at 128px/in — the classic canvas keeps
+  // its long-standing 1280x720; a 4:3 deck prints 1280x960. Font sizes are
+  // vw-based below, so they scale with the page width on their own.
+  const page = deckPage(data);
+  const pw = Math.round(page.widthIn * 128);
+  const ph = Math.round(page.heightIn * 128);
   const pages = slides
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
@@ -263,10 +273,10 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     .join("");
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(title)}</title><style>
-    @page { size: 1280px 720px; margin: 0; }
+    @page { size: ${pw}px ${ph}px; margin: 0; }
     * { margin: 0; box-sizing: border-box; }
     body { font-family: Inter, Arial, sans-serif; }
-    .slide { position: relative; width: 1280px; height: 720px; overflow: hidden; page-break-after: always; }
+    .slide { position: relative; width: ${pw}px; height: ${ph}px; overflow: hidden; page-break-after: always; }
     .el { position: absolute; overflow: hidden; line-height: 1.25; }
     img.el { object-fit: contain; }
   </style></head><body>${pages}</body></html>`;
