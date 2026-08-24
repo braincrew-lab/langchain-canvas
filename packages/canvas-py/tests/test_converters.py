@@ -213,3 +213,53 @@ def test_pptx_converter_renders_each_slide() -> None:
 def test_office_converters_are_in_the_default_set() -> None:
     assert converter_for("sources/a.docx", default_converters()) is not None
     assert converter_for("sources/a.pptx", default_converters()) is not None
+
+
+def _bomb_zip(uncompressed_mb: int = 201) -> bytes:
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("ppt/presentation.xml", b"\x00" * (uncompressed_mb * 1024 * 1024))
+    return buf.getvalue()
+
+
+def test_archive_guard_refuses_decompression_bombs() -> None:
+    import pytest
+
+    from langchain_canvas.converters import (
+        UnsafeArchiveError,
+        ensure_archive_within_limits,
+    )
+
+    # ~200 KB compressed, >200 MB unpacked — trips size (and ratio) limits.
+    with pytest.raises(UnsafeArchiveError, match="unpacks to"):
+        ensure_archive_within_limits(_bomb_zip(), path="bomb.pptx")
+    # Not a ZIP at all is a formatting problem, not an attack — the guard
+    # leaves it to each caller's own failure path.
+    ensure_archive_within_limits(b"not a zip", path="junk.pptx")  # no raise
+
+
+def test_archive_guard_passes_a_real_office_file() -> None:
+    from langchain_canvas.converters import ensure_archive_within_limits
+
+    try:
+        from pptx import Presentation
+    except ImportError:
+        import pytest
+
+        pytest.skip("python-pptx not installed")
+    buf = io.BytesIO()
+    Presentation().save(buf)
+    ensure_archive_within_limits(buf.getvalue(), path="ok.pptx")  # no raise
+
+
+def test_pptx_converter_refuses_a_bomb_before_parsing() -> None:
+    import pytest
+
+    from langchain_canvas.converters import PptxSourceConverter, UnsafeArchiveError
+
+    pytest.importorskip("pptx")
+    with pytest.raises(UnsafeArchiveError):
+        PptxSourceConverter().convert(_bomb_zip(), path="sources/bomb.pptx")

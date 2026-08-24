@@ -400,3 +400,43 @@ def test_read_canvas_windows_long_files() -> None:
     second = _invoke(tools["read_canvas"], runtime, path="big.html", offset=400, limit=100)
     assert "line 401" in second and "line 500" in second and "line 501" not in second
     assert "offset=500" in second
+
+
+def test_write_canvas_fills_page_from_the_template_skin():
+    import io as _io
+    import json as _json
+
+    pptx = __import__("pytest").importorskip("pptx")
+    from pptx.util import Inches
+
+    skin = pptx.Presentation()
+    skin.slide_width = Inches(10)
+    skin.slide_height = Inches(7.5)
+    buf = _io.BytesIO()
+    skin.save(buf)
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/brand.pptx", buf.getvalue(), "skin")
+    tools = _tools(store)
+    content = _json.dumps(
+        {"type": "slides", "data": {"template": "sources/brand.pptx", "slides": []}}
+    )
+    result = _invoke(
+        tools["write_canvas"], _runtime(thread_id="t1"), path="deck.slides.json",
+        content=content, description="deck",
+    )
+    assert result.startswith("Wrote")
+    saved = _json.loads(store.read("t1", "deck.slides.json").content)
+    # The tool learned the skin's real page — the agent never types numbers.
+    assert saved["data"]["page"] == {"widthIn": 10.0, "heightIn": 7.5}
+
+    # A deck that already carries a page keeps it.
+    content2 = _json.dumps({"type": "slides", "data": {
+        "template": "sources/brand.pptx",
+        "page": {"widthIn": 12.0, "heightIn": 9.0}, "slides": [],
+    }})
+    _invoke(
+        tools["write_canvas"], _runtime(thread_id="t1"), path="deck2.slides.json",
+        content=content2, description="deck",
+    )
+    saved2 = _json.loads(store.read("t1", "deck2.slides.json").content)
+    assert saved2["data"]["page"] == {"widthIn": 12.0, "heightIn": 9.0}

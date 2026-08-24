@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
 
+from .converters import ensure_archive_within_limits
 from .protocol.artifacts import Slide, SlideElement, SlidesData
 from .table_merge import merge_rows_into_sheet
 
@@ -342,17 +343,47 @@ def _pptx_data_uri_bytes(src: str | None) -> bytes | None:
         return None
 
 
+def pptx_page_size_inches(data: bytes) -> tuple[float, float] | None:
+    """The (width, height) a pptx declares, in inches, or ``None``.
+
+    Reads only ``ppt/presentation.xml``'s ``sldSz`` attributes out of the
+    ZIP — no python-pptx needed — so tools can learn a skin's page size
+    cheaply. Callers gate the bytes with ``ensure_archive_within_limits``
+    first when they come from an untrusted upload.
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            xml = archive.read("ppt/presentation.xml").decode("utf-8", "replace")
+    except (zipfile.BadZipFile, KeyError):
+        return None
+    match = re.search(r'<p:sldSz[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"', xml)
+    if match is None:
+        match = re.search(r'<p:sldSz[^>]*\bcy="(\d+)"[^>]*\bcx="(\d+)"', xml)
+        if match is None:
+            return None
+        cy, cx = match.group(1), match.group(2)
+    else:
+        cx, cy = match.group(1), match.group(2)
+    return int(cx) / _EMU_PER_INCH, int(cy) / _EMU_PER_INCH
+
+
 def _skin_presentation(template: str | None, presentation_cls: Any) -> Any | None:
     """The template skin opened as the base presentation, or ``None``.
 
     Drops the skin's own slides — the deck's content replaces them — while
     its masters and layouts (logos, backgrounds, headers) stay and style
     every slide added on top. Unreadable skin bytes degrade to ``None`` so
-    the export never dies on a bad template.
+    the export never dies on a bad template; a skin whose ZIP container
+    exceeds the safety limits raises ``UnsafeArchiveError`` instead — a
+    decompression bomb is an attack to refuse loudly, not a formatting
+    mishap to absorb.
     """
     data = _pptx_data_uri_bytes(template)
     if data is None:
         return None
+    ensure_archive_within_limits(data, path="the template skin")
     try:
         base = presentation_cls(io.BytesIO(data))
         id_list = base.slides._sldIdLst
@@ -634,16 +665,28 @@ class SlidesPptxExporter:
             "center": PP_ALIGN.CENTER,
             "right": PP_ALIGN.RIGHT,
         }
+        # The deck's own page is the coordinate space its percent geometry
+        # refers to; absent means the classic 16:9 canvas.
+        canvas_w = deck.page.width_in if deck.page else _SLIDE_WIDTH_IN
+        canvas_h = deck.page.height_in if deck.page else _SLIDE_HEIGHT_IN
         presentation = _skin_presentation(deck.template, Presentation)
         if presentation is None:
             presentation = Presentation()
-            presentation.slide_width = Inches(_SLIDE_WIDTH_IN)
-            presentation.slide_height = Inches(_SLIDE_HEIGHT_IN)
-        # A skin keeps its native page size; percent geometry projects onto
-        # whatever the page is, so 4:3 corporate decks stay 4:3. (The stub
-        # types the dimensions Optional; a real file always carries them.)
-        page_w_in = (presentation.slide_width or Inches(_SLIDE_WIDTH_IN)) / _EMU_PER_INCH
-        page_h_in = (presentation.slide_height or Inches(_SLIDE_HEIGHT_IN)) / _EMU_PER_INCH
+            presentation.slide_width = Inches(canvas_w)
+            presentation.slide_height = Inches(canvas_h)
+        # A skin keeps its native page size. (The stub types the dimensions
+        # Optional; a real file always carries them.)
+        page_w_in = (presentation.slide_width or Inches(canvas_w)) / _EMU_PER_INCH
+        page_h_in = (presentation.slide_height or Inches(canvas_h)) / _EMU_PER_INCH
+        # When the page differs from the deck's canvas (a skin with another
+        # aspect ratio), project with ONE uniform scale and center the
+        # content — width and height stretched separately would distort
+        # every shape (a circle approved on the 16:9 preview must stay a
+        # circle on a 4:3 page). The leftover margins show the skin's own
+        # background, which is exactly what a branded page is for.
+        scale = min(page_w_in / canvas_w, page_h_in / canvas_h)
+        offset_x = (page_w_in - canvas_w * scale) / 2.0
+        offset_y = (page_h_in - canvas_h * scale) / 2.0
         blank_layout = _content_layout(presentation)
 
         for slide_model in deck.slides or [Slide()]:
@@ -660,10 +703,10 @@ class SlidesPptxExporter:
             span = 1.0 - 2.0 * pad
 
             def inch_box(element: SlideElement) -> tuple[Any, Any, Any, Any]:
-                left = (pad + (element.x / 100.0) * span) * page_w_in
-                top = (pad + (element.y / 100.0) * span) * page_h_in
-                width = (element.w / 100.0) * span * page_w_in
-                height = (element.h / 100.0) * span * page_h_in
+                left = offset_x + (pad + (element.x / 100.0) * span) * canvas_w * scale
+                top = offset_y + (pad + (element.y / 100.0) * span) * canvas_h * scale
+                width = (element.w / 100.0) * span * canvas_w * scale
+                height = (element.h / 100.0) * span * canvas_h * scale
                 return Inches(left), Inches(top), Inches(width), Inches(height)
 
             for element in _resolved_slide_elements(slide_model):
@@ -681,7 +724,12 @@ class SlidesPptxExporter:
                         paragraph.alignment = alignment
                         run = paragraph.add_run()
                         run.text = line
-                        run.font.size = Pt((element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT)
+                        # Text rides the same scale as the geometry, so type
+                        # and shapes keep their relative proportions on any
+                        # page size.
+                        run.font.size = Pt(
+                            (element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT * scale
+                        )
                         run.font.bold = bool(element.bold)
                         if color is not None:
                             run.font.color.rgb = RGBColor.from_string(color)

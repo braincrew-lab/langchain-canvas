@@ -412,6 +412,114 @@ def test_slides_pptx_unusable_skin_degrades_to_blank_export():
         assert len(list(deck.slides)) == 1
 
 
+def _bare_skin_uri(width_in: float, height_in: float) -> str:
+    from pptx import Presentation as _P
+
+    skin = _P()
+    skin.slide_width = Inches(width_in)
+    skin.slide_height = Inches(height_in)
+    buf = io.BytesIO()
+    skin.save(buf)
+    return f"data:{PPTX_MIME};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+_CIRCLE_DECK_SLIDES = [{
+    "elements": [
+        # A perfect circle on the 16:9 canvas: 10% of 10in == 17.7778% of 5.625in.
+        {"id": "c", "type": "shape", "shape": "ellipse", "x": 10, "y": 10,
+         "w": 10, "h": 17.7778, "fill": "#ff0000"},
+        {"id": "t", "type": "text", "x": 30, "y": 60, "w": 40, "h": 20,
+         "text": "Hi", "fontSize": 40},
+    ],
+}]
+
+
+def _circle_and_font(template: str | None) -> tuple[float, float, float]:
+    data: dict[str, Any] = {"slides": _CIRCLE_DECK_SLIDES}
+    if template:
+        data["template"] = template
+    content = json.dumps({"type": "slides", "data": data})
+    result = SlidesPptxExporter().export(content, path="d.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    (slide,) = deck.slides
+    (circle,) = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE]
+    (text,) = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text]
+    font_pt = text.text_frame.paragraphs[0].runs[0].font.size.pt
+    return circle.width / circle.height, circle.top / 914400, font_pt
+
+
+def test_slides_pptx_uniform_scale_never_distorts_shapes():
+    # A circle approved on the 16:9 preview stays a circle on every page.
+    # Width and height once scaled separately: on a 4:3 skin the same deck
+    # measured ratio 0.750 (an ellipse).
+    for template in (None, _bare_skin_uri(10, 7.5), _bare_skin_uri(13.333, 7.5)):
+        ratio, _, _ = _circle_and_font(template)
+        assert abs(ratio - 1.0) < 0.01
+
+
+def test_slides_pptx_content_centers_on_a_taller_page():
+    # 16:9 content on a 4:3 page: scale stays 1, the leftover 1.875in of
+    # height splits evenly — the circle drops by 0.9375in and the margins
+    # show the skin's own background.
+    _, top_unskinned, _ = _circle_and_font(None)
+    _, top_43, _ = _circle_and_font(_bare_skin_uri(10, 7.5))
+    assert abs(top_unskinned - 0.5625) < 0.01
+    assert abs(top_43 - (0.5625 + 0.9375)) < 0.01
+
+
+def test_slides_pptx_font_rides_the_page_scale():
+    # Shapes and images grow with the page (percent geometry); type must
+    # grow with them or it shrinks relative to everything else.
+    _, _, base_pt = _circle_and_font(None)
+    _, _, wide_pt = _circle_and_font(_bare_skin_uri(13.333, 7.5))
+    assert base_pt == 30  # 40px * 0.75, the slice-8 value — regression pin
+    assert abs(wide_pt - 30 * 13.333 / 10) < 0.1  # ~39.99pt
+
+
+def test_slides_pptx_deck_page_sets_the_unskinned_page_size():
+    content = json.dumps({"type": "slides", "data": {
+        "page": {"widthIn": 10.0, "heightIn": 7.5},
+        "slides": [{"title": "T"}],
+    }})
+    result = SlidesPptxExporter().export(content, path="d.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    assert deck.slide_width == Inches(10)
+    assert deck.slide_height == Inches(7.5)
+
+
+def test_slides_pptx_refuses_a_zip_bomb_skin():
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("ppt/presentation.xml", b"\x00" * (201 * 1024 * 1024))
+    bomb_uri = f"data:{PPTX_MIME};base64,{base64.b64encode(buf.getvalue()).decode()}"
+    content = json.dumps({"type": "slides", "data": {
+        "template": bomb_uri, "slides": [{"title": "T"}],
+    }})
+    # An attack is refused loudly — never absorbed into a blank-layout degrade.
+    with pytest.raises(ValueError, match="unpacks to"):
+        SlidesPptxExporter().export(content, path="d.slides.json")
+
+
+def test_pptx_page_size_inches_reads_the_declared_size():
+    from pptx import Presentation as _P
+
+    from langchain_canvas.exporters import pptx_page_size_inches
+
+    skin = _P()
+    skin.slide_width = Inches(13.333)
+    skin.slide_height = Inches(7.5)
+    buf = io.BytesIO()
+    skin.save(buf)
+    size = pptx_page_size_inches(buf.getvalue())
+    assert size is not None
+    assert abs(size[0] - 13.333) < 0.01
+    assert abs(size[1] - 7.5) < 0.01
+    assert pptx_page_size_inches(b"not a zip") is None
+
+
 # --- the export tool -------------------------------------------------------------
 
 

@@ -133,8 +133,19 @@ export interface Slide {
   padding?: number;
 }
 
+/** The deck's page size in inches — the coordinate space percent geometry
+ *  refers to. Absent means the classic 16:9 canvas (10 x 5.625). When a
+ *  template skin is attached, tools fill this with the skin's real page so
+ *  the editor, the preview, and the exported file agree on one aspect
+ *  ratio. */
+export interface SlidePage {
+  widthIn: number;
+  heightIn: number;
+}
+
 export interface SlidesData {
   slides: Slide[];
+  page?: SlidePage;
   /** Optional pptx skin: a canvas reference ("sources/brand.pptx") whose
    *  master and layouts the pptx export builds on. Export-time only — the
    *  canvas preview does not render the skin; a missing or unreadable skin
