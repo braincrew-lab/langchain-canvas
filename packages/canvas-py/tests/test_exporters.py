@@ -1,25 +1,38 @@
-"""Exporter contract: table -> xlsx, html -> docx, routing, the export tool.
+"""Exporter contract: table -> xlsx, html -> docx, slides -> pptx, the tool.
 
-Round-trips are asserted with the real readers (openpyxl / python-docx), so
-"exported" means a mainstream library opens the file and finds the content.
+Round-trips are asserted with the real readers (openpyxl / python-docx /
+python-pptx), so "exported" means a mainstream library opens the file and
+finds the content.
 """
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 from docx import Document
 from openpyxl import load_workbook
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches
 
 from langchain_canvas import InMemoryCanvasStore, create_export_tool
 from langchain_canvas.exporters import (
     HtmlDocxExporter,
+    SlidesPptxExporter,
     TableXlsxExporter,
     default_exporters,
     exporter_for,
+)
+
+# A real 1x1 red PNG — small enough to inline, real enough for pptx to embed.
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
 )
 
 # --- routing ---------------------------------------------------------------------
@@ -29,7 +42,9 @@ def test_exporter_routing_matches_suffix_and_target():
     exporters = default_exporters()
     assert isinstance(exporter_for("sales.table.json", "xlsx", exporters), TableXlsxExporter)
     assert isinstance(exporter_for("report/01-a.html", "docx", exporters), HtmlDocxExporter)
+    assert isinstance(exporter_for("deck.slides.json", "pptx", exporters), SlidesPptxExporter)
     assert exporter_for("sales.table.json", "docx", exporters) is None
+    assert exporter_for("deck.slides.json", "docx", exporters) is None
     assert exporter_for("photo.png", "docx", exporters) is None
 
 
@@ -187,6 +202,131 @@ def test_html_docx_title_names_the_file():
     assert result.filename == "My-Report.docx"
 
 
+# --- slides -> pptx --------------------------------------------------------------
+
+
+def _deck(slides: list[dict[str, Any]]) -> str:
+    return json.dumps({"type": "slides", "title": "Deck", "data": {"slides": slides}})
+
+
+def _png_uri() -> str:
+    return f"data:image/png;base64,{base64.b64encode(PNG_1PX).decode()}"
+
+
+def test_slides_pptx_elements_land_as_real_shapes():
+    content = _deck(
+        [
+            {
+                "background": "#112233",
+                "notes": "speaker notes here",
+                "elements": [
+                    {"id": "t", "type": "text", "x": 10, "y": 10, "w": 60, "h": 12,
+                     "text": "Hello deck", "fontSize": 40, "bold": True,
+                     "color": "#ff0000", "align": "center"},
+                    {"id": "i", "type": "image", "x": 20, "y": 30, "w": 40, "h": 40,
+                     "src": _png_uri()},
+                    {"id": "r", "type": "shape", "shape": "rect", "x": 5, "y": 80,
+                     "w": 30, "h": 10, "fill": "#00ff00"},
+                    {"id": "l", "type": "shape", "shape": "line", "x": 40, "y": 85,
+                     "w": 50, "h": 0, "fill": "#0000ff"},
+                ],
+            }
+        ]
+    )
+    result = SlidesPptxExporter().export(content, path="deck.slides.json")
+    assert result.filename == "Deck.pptx"
+
+    deck = Presentation(io.BytesIO(result.data))
+    assert deck.slide_width == Inches(10)
+    assert deck.slide_height == Inches(5.625)
+    (slide,) = deck.slides
+
+    # The slide is shapes, not one baked bitmap: text keeps its runs and
+    # font, the image is its own picture with the original bytes intact.
+    texts = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text]
+    ((run,),) = [p.runs for p in texts[0].text_frame.paragraphs]
+    assert run.text == "Hello deck"
+    assert run.font.size.pt == 30  # 40 px on the 1280px canvas -> 30 pt
+    assert run.font.bold is True
+    assert str(run.font.color.rgb) == "FF0000"
+    assert texts[0].text_frame.paragraphs[0].alignment == PP_ALIGN.CENTER
+
+    (picture,) = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    assert picture.image.blob == PNG_1PX
+
+    fills = {
+        str(s.fill.fore_color.rgb)
+        for s in slide.shapes
+        if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+    }
+    assert "00FF00" in fills
+    assert any(s.shape_type == MSO_SHAPE_TYPE.LINE for s in slide.shapes)
+
+    assert str(slide.background.fill.fore_color.rgb) == "112233"
+    assert slide.notes_slide.notes_text_frame.text == "speaker notes here"
+
+
+def test_slides_pptx_derives_structured_slides_like_the_canvas():
+    content = _deck(
+        [
+            {"layout": "title", "title": "Big Title", "subtitle": "The subtitle"},
+            {"title": "Agenda", "bullets": ["One", "Two"]},
+        ]
+    )
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    first, second = deck.slides
+
+    first_texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
+    assert "Big Title" in first_texts and "The subtitle" in first_texts
+    title_shape = next(s for s in first.shapes if s.text_frame.text == "Big Title")
+    assert title_shape.text_frame.paragraphs[0].runs[0].font.size.pt == 40.5  # 54 px
+
+    second_texts = [s.text_frame.text for s in second.shapes if s.has_text_frame]
+    assert second_texts == ["Agenda", "• One", "• Two"]
+
+
+def test_slides_pptx_padding_insets_geometry():
+    element = {"id": "t", "type": "text", "x": 0, "y": 0, "w": 100, "h": 10, "text": "x"}
+    def exported(slides: list[dict[str, Any]]) -> Presentation:
+        return Presentation(io.BytesIO(
+            SlidesPptxExporter().export(_deck(slides), path="d.slides.json").data
+        ))
+
+    plain = exported([{"elements": [element]}])
+    padded = exported([{"padding": 10, "elements": [element]}])
+    plain_box = next(iter(plain.slides)).shapes[0]
+    padded_box = next(iter(padded.slides)).shapes[0]
+    assert plain_box.left == 0 and plain_box.width == Inches(10)
+    assert padded_box.left == Inches(1.0)  # 10% of the 10in page
+    assert padded_box.width == Inches(8.0)  # spans the inset content area
+
+
+def test_slides_pptx_skips_what_it_cannot_embed():
+    content = _deck(
+        [
+            {
+                "elements": [
+                    # Not inlined (a bare reference) — skipped, never a crash.
+                    {"id": "i", "type": "image", "x": 0, "y": 0, "w": 50, "h": 50,
+                     "src": "assets/logo.png"},
+                    # url() background is out of contract for the pptx door.
+                ],
+                "background": "url(assets/bg.png)",
+            }
+        ]
+    )
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    (slide,) = deck.slides
+    assert [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE] == []
+
+
+def test_slides_pptx_rejects_non_deck_content():
+    with pytest.raises(ValueError):
+        SlidesPptxExporter().export("not json", path="d.slides.json")
+    with pytest.raises(ValueError):
+        SlidesPptxExporter().export(json.dumps({"data": {"slides": "nope"}}), path="d.slides.json")
+
+
 # --- the export tool -------------------------------------------------------------
 
 
@@ -243,3 +383,31 @@ def test_export_tool_is_honest_about_misses():
 
     empty_dir = tool_obj.func(path="deck/", target="docx", runtime=_runtime())
     assert empty_dir.startswith("Error:")
+
+
+def test_export_tool_inlines_slide_assets_before_pptx():
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "assets/logo.png", PNG_1PX, "logo", actor="agent")
+    store.write(
+        "t1",
+        "deck.slides.json",
+        _deck([
+            {"elements": [
+                {"id": "i", "type": "image", "x": 10, "y": 10, "w": 50, "h": 50,
+                 "src": "assets/logo.png"},
+            ]},
+        ]),
+        "seed",
+        actor="agent",
+    )
+    tool_obj = create_export_tool(store)
+
+    message = tool_obj.func(path="deck.slides.json", target="pptx", runtime=_runtime())
+    assert "exports/Deck.pptx" in message  # the deck's own title names the file
+
+    deck = Presentation(io.BytesIO(store.read_bytes("t1", "exports/Deck.pptx").data))
+    (picture,) = [
+        s for s in next(iter(deck.slides)).shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE
+    ]
+    # The stored reference became the stored bytes — the deck is self-contained.
+    assert picture.image.blob == PNG_1PX

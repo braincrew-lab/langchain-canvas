@@ -22,6 +22,7 @@ prefix list below is compared against it by the protocol parity tests.
 from __future__ import annotations
 
 import base64
+import json
 import re
 
 from .store import CanvasStore, CanvasStoreError
@@ -105,3 +106,59 @@ def inline_canvas_assets(html: str, store: CanvasStore, canvas_id: str) -> str:
         return f"{match.group(1)}data:{mime};base64,{encoded}{match.group(4)}"
 
     return _SRC_ATTR_PATTERN.sub(_sub, html)
+
+
+def inline_slides_assets(content: str, store: CanvasStore, canvas_id: str) -> str:
+    """Replace asset references in a ``.slides.json`` envelope with ``data:`` URIs.
+
+    The slides twin of :func:`inline_canvas_assets`: slide decks carry their
+    image references in JSON fields (each element's ``src`` and a structured
+    slide's ``image``), not in HTML attributes, so the export tool inlines
+    them here before the pptx exporter runs. The same honesty applies — a
+    reference that cannot be inlined (file missing, not an image type) is
+    left untouched and the exporter skips it. Content that does not parse as
+    an envelope is returned unchanged so the exporter can raise its own
+    honest error.
+    """
+    try:
+        envelope = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    data = envelope.get("data") if isinstance(envelope, dict) else None
+    slides = data.get("slides") if isinstance(data, dict) else None
+    if not isinstance(slides, list):
+        return content
+
+    def _inlined(src: object) -> str | None:
+        if not isinstance(src, str):
+            return None
+        path = normalize_asset_reference(src)
+        if path is None:
+            return None
+        mime = asset_mime(path)
+        if mime is None:
+            return None
+        try:
+            raw = store.read_bytes(canvas_id, path).data
+        except CanvasStoreError:
+            return None
+        return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+
+    changed = False
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        elements = slide.get("elements")
+        if isinstance(elements, list):
+            for element in elements:
+                if not isinstance(element, dict):
+                    continue
+                uri = _inlined(element.get("src"))
+                if uri is not None:
+                    element["src"] = uri
+                    changed = True
+        uri = _inlined(slide.get("image"))
+        if uri is not None:
+            slide["image"] = uri
+            changed = True
+    return json.dumps(envelope, ensure_ascii=False) if changed else content

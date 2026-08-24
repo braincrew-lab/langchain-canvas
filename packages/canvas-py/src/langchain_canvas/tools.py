@@ -37,7 +37,12 @@ from typing import Any
 
 from langchain.tools import ToolRuntime, tool
 
-from .assets import ASSET_IMAGE_MIME, ASSETS_PREFIX, inline_canvas_assets
+from .assets import (
+    ASSET_IMAGE_MIME,
+    ASSETS_PREFIX,
+    inline_canvas_assets,
+    inline_slides_assets,
+)
 from .converters import (
     MAX_IMAGES_PER_CALL,
     MissingConverterDependencyError,
@@ -421,8 +426,9 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         (``report/``), which merges every .html file under it, in name
         order, into one document with a page break between sections.
         ``target`` is the output format: ``docx`` for .html files,
-        ``xlsx`` for .table.json tables. The result is saved under
-        ``exports/`` on the canvas, where the user can download it.
+        ``xlsx`` for .table.json tables, ``pptx`` for .slides.json decks.
+        The result is saved under ``exports/`` on the canvas, where the
+        user can download it.
         """
         canvas_id = _canvas_id(runtime)
         try:
@@ -444,13 +450,18 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         except CanvasFileNotFoundError as exc:
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except BinaryContentError:
-            return f"Error: {path} is binary; export reads text canvas files (.html, .table.json)."
+            return (
+                f"Error: {path} is binary; export reads text canvas files "
+                "(.html, .table.json, .slides.json)."
+            )
 
         # Relative asset references (assets/, sources/) become data: URIs here,
         # before the exporter runs — exporters keep their one-method contract
         # and the exported file leaves self-contained, images included.
         if sample.lower().endswith((".html", ".htm")):
             content = inline_canvas_assets(content, store, canvas_id)
+        elif sample.lower().endswith(".slides.json"):
+            content = inline_slides_assets(content, store, canvas_id)
 
         exporter = exporter_for(sample, target, active_exporters)
         if exporter is None:

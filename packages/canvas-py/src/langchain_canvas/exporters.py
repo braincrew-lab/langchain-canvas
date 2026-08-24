@@ -25,10 +25,12 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
 
+from .protocol.artifacts import Slide, SlideElement, SlidesData
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,7 @@ def exporter_for(path: str, target: str, exporters: list[Exporter]) -> Exporter 
 def _stem(path: str) -> str:
     """The output filename stem for a canvas path (or directory prefix)."""
     name = path.rstrip("/").rsplit("/", 1)[-1]
-    for suffix in (".table.json", ".html", ".htm"):
+    for suffix in (".table.json", ".slides.json", ".html", ".htm"):
         if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
             break
@@ -404,6 +406,244 @@ def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
                     run.bold = True
 
 
+# --- slides -> pptx --------------------------------------------------------
+
+# The editor's slide canvas is 1280x720 px; the exported deck is 10 x 5.625
+# inches (16:9) — the same page the browser-side pptx export uses, so the two
+# doors produce the same-looking deck. Element geometry is percent-based.
+_SLIDE_WIDTH_IN = 10.0
+_SLIDE_HEIGHT_IN = 5.625
+# Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
+_PX_TO_PT = 0.75
+_DEFAULT_FONT_PX = 24.0
+_DEFAULT_SHAPE_FILL = "5B5BD6"
+
+_HEX_COLOR_PATTERN = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _hex_rgb(value: str | None) -> str | None:
+    """A 6-digit RGB hex string for a ``#rgb`` / ``#rrggbb`` color, else None."""
+    if not value:
+        return None
+    match = _HEX_COLOR_PATTERN.match(value.strip())
+    if not match:
+        return None
+    digits = match.group(1)
+    if len(digits) == 3:
+        digits = "".join(ch * 2 for ch in digits)
+    return digits.upper()
+
+
+def _derived_slide_elements(slide: Slide) -> list[SlideElement]:
+    """Movable elements derived from a slide's structured shape.
+
+    The twin of ``toElements`` in ``canvas-react/src/client/slideElements.ts``
+    — same layouts, same geometry, same font sizes — so a deck an agent wrote
+    structurally exports the way the canvas renders it. An explicit
+    ``elements`` array (the user has edited) wins over derivation; that
+    preference lives in :func:`_resolved_slide_elements`.
+    """
+    layout = slide.layout or "content"
+    elements: list[SlideElement] = []
+
+    def push(element_id: str, **kwargs: Any) -> None:
+        kwargs.setdefault("color", slide.text_color)
+        elements.append(SlideElement(id=element_id, **kwargs))
+
+    if layout in ("title", "section"):
+        if slide.title:
+            push(
+                "title", type="text", x=10, y=34, w=80, h=18, text=slide.title,
+                font_size=54 if layout == "title" else 40, bold=True, align="center",
+            )
+        if slide.subtitle:
+            push(
+                "subtitle", type="text", x=10, y=58, w=80, h=8,
+                text=slide.subtitle, font_size=24, align="center",
+            )
+    elif layout == "image":
+        if slide.title:
+            push(
+                "title", type="text", x=6, y=6, w=88, h=10, text=slide.title,
+                font_size=28, bold=True,
+            )
+        if slide.image:
+            elements.append(
+                SlideElement(id="img", type="image", x=14, y=20, w=72, h=66, src=slide.image)
+            )
+    elif layout == "two-column":
+        if slide.title:
+            push(
+                "title", type="text", x=6, y=6, w=88, h=10, text=slide.title,
+                font_size=28, bold=True,
+            )
+        for i, bullet in enumerate(slide.bullets):
+            push(f"bul_{i}", type="text", x=6, y=24 + i * 8, w=42, h=7, text=f"• {bullet}", font_size=18)
+        for i, bullet in enumerate(slide.bullets2):
+            push(f"bul2_{i}", type="text", x=52, y=24 + i * 8, w=42, h=7, text=f"• {bullet}", font_size=18)
+    else:
+        if slide.title:
+            push(
+                "title", type="text", x=6, y=8, w=88, h=10, text=slide.title,
+                font_size=32, bold=True,
+            )
+        for i, bullet in enumerate(slide.bullets):
+            push(f"bul_{i}", type="text", x=8, y=28 + i * 9, w=84, h=8, text=f"• {bullet}", font_size=20)
+    return elements
+
+
+def _resolved_slide_elements(slide: Slide) -> list[SlideElement]:
+    """What is actually on the slide: explicit edits win, else derive."""
+    return slide.elements if slide.elements else _derived_slide_elements(slide)
+
+
+class SlidesPptxExporter:
+    """``.slides.json`` decks as editable PowerPoint files.
+
+    Every element lands as a real shape — text boxes with runs, pictures,
+    drawing shapes — never a rendered bitmap, so the received file reopens
+    fully editable. What survives the trip: percent geometry mapped onto a
+    16:9 page (padding insets included), text with size / bold / color /
+    alignment, ``data:``-URI images (png / jpeg / gif) placed contained in
+    their box, rect / ellipse / line shapes, solid ``#hex`` slide
+    backgrounds, and speaker notes. Structured slides (title / bullets /
+    layout) derive the same elements the canvas renders.
+
+    Honest limits: no master or theme (elements sit on a blank layout — a
+    template-skin export can fill that seat later), no animations or
+    transitions, image/url backgrounds are skipped, non-data-URI image
+    references are skipped (inline assets before exporting), fonts fall back
+    to whatever the viewer has installed. Requires ``python-pptx`` —
+    installed by the ``office`` extra.
+    """
+
+    suffixes: tuple[str, ...] = (".slides.json",)
+    target: str = "pptx"
+
+    def export(self, content: str, *, path: str, title: str | None = None) -> ExportedFile:
+        try:
+            from pptx import Presentation  # type: ignore[import-untyped]
+            from pptx.dml.color import RGBColor  # type: ignore[import-untyped]
+            from pptx.enum.shapes import (  # type: ignore[import-untyped]
+                MSO_CONNECTOR,
+                MSO_SHAPE,
+            )
+            from pptx.enum.text import PP_ALIGN  # type: ignore[import-untyped]
+            from pptx.util import Emu, Inches, Pt  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise MissingExporterDependencyError(
+                "exporting .slides.json to pptx needs python-pptx — install "
+                "langchain-canvas[office] or register your own exporter"
+            ) from exc
+
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path} does not contain valid slides JSON") from exc
+        if not isinstance(envelope, dict):
+            raise ValueError(f"{path} does not contain a slides envelope")
+        try:
+            deck = SlidesData.model_validate(envelope.get("data") or {})
+        except Exception as exc:  # noqa: BLE001 — pydantic detail relayed honestly
+            raise ValueError(f"{path} does not contain a valid slide deck: {exc}") from exc
+        envelope_title = envelope.get("title")
+        if not isinstance(envelope_title, str):
+            envelope_title = None
+
+        alignments = {
+            "left": PP_ALIGN.LEFT,
+            "center": PP_ALIGN.CENTER,
+            "right": PP_ALIGN.RIGHT,
+        }
+        presentation = Presentation()
+        presentation.slide_width = Inches(_SLIDE_WIDTH_IN)
+        presentation.slide_height = Inches(_SLIDE_HEIGHT_IN)
+        blank_layout = presentation.slide_layouts[6]
+
+        for slide_model in deck.slides or [Slide()]:
+            slide = presentation.slides.add_slide(blank_layout)
+            background = _hex_rgb(slide_model.background)
+            if background is not None:
+                fill = slide.background.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor.from_string(background)
+
+            # A slide `padding` (percent) insets the content area, exactly as
+            # the editor and the browser-side exports apply it.
+            pad = (slide_model.padding or 0.0) / 100.0
+            span = 1.0 - 2.0 * pad
+
+            def inch_box(element: SlideElement) -> tuple[Any, Any, Any, Any]:
+                left = (pad + (element.x / 100.0) * span) * _SLIDE_WIDTH_IN
+                top = (pad + (element.y / 100.0) * span) * _SLIDE_HEIGHT_IN
+                width = (element.w / 100.0) * span * _SLIDE_WIDTH_IN
+                height = (element.h / 100.0) * span * _SLIDE_HEIGHT_IN
+                return Inches(left), Inches(top), Inches(width), Inches(height)
+
+            for element in _resolved_slide_elements(slide_model):
+                left, top, width, height = inch_box(element)
+                if element.type == "text":
+                    box = slide.shapes.add_textbox(left, top, width, height)
+                    frame = box.text_frame
+                    frame.word_wrap = True
+                    frame.margin_left = frame.margin_right = Emu(0)
+                    frame.margin_top = frame.margin_bottom = Emu(0)
+                    color = _hex_rgb(element.color) or _hex_rgb(slide_model.text_color)
+                    alignment = alignments.get(element.align or "left")
+                    for index, line in enumerate((element.text or "").split("\n")):
+                        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+                        paragraph.alignment = alignment
+                        run = paragraph.add_run()
+                        run.text = line
+                        run.font.size = Pt((element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT)
+                        run.font.bold = bool(element.bold)
+                        if color is not None:
+                            run.font.color.rgb = RGBColor.from_string(color)
+                elif element.type == "shape":
+                    fill_color = _hex_rgb(element.fill) or _DEFAULT_SHAPE_FILL
+                    if element.shape == "line":
+                        connector = slide.shapes.add_connector(
+                            MSO_CONNECTOR.STRAIGHT, left, top, Emu(int(left) + int(width)), Emu(int(top) + int(height))
+                        )
+                        connector.line.color.rgb = RGBColor.from_string(fill_color)
+                        connector.line.width = Pt(2)
+                    else:
+                        shape_type = MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
+                        shape = slide.shapes.add_shape(shape_type, left, top, width, height)
+                        shape.fill.solid()
+                        shape.fill.fore_color.rgb = RGBColor.from_string(fill_color)
+                        shape.line.fill.background()
+                elif element.src:
+                    data = _data_uri_bytes(element.src)
+                    if data is None:
+                        continue  # not inlined / not an embeddable type — skip honestly
+                    try:
+                        picture = slide.shapes.add_picture(io.BytesIO(data), left, top)
+                    except Exception:  # noqa: BLE001 — corrupt image data; keep the deck
+                        continue
+                    # Contain the picture in its box (never stretch), centered —
+                    # the same object-fit the canvas and browser exports use.
+                    native_w, native_h = picture.image.size
+                    if native_w and native_h:
+                        scale = min(int(width) / native_w, int(height) / native_h)
+                        picture.width = Emu(int(native_w * scale))
+                        picture.height = Emu(int(native_h * scale))
+                        picture.left = Emu(int(left) + (int(width) - int(picture.width)) // 2)
+                        picture.top = Emu(int(top) + (int(height) - int(picture.height)) // 2)
+
+            if slide_model.notes:
+                notes_frame = slide.notes_slide.notes_text_frame
+                if notes_frame is not None:
+                    notes_frame.text = slide_model.notes
+
+        out = io.BytesIO()
+        presentation.save(out)
+        # The deck's own title names the file when the caller has none — a
+        # slides envelope carries one, unlike the html/table sources.
+        name = _safe_name(title) or _safe_name(envelope_title) or _stem(path)
+        return ExportedFile(out.getvalue(), f"{name}.pptx", PPTX_MIME)
+
+
 def default_exporters() -> list[Exporter]:
     """The built-in exporters, in routing order."""
-    return [TableXlsxExporter(), HtmlDocxExporter()]
+    return [TableXlsxExporter(), HtmlDocxExporter(), SlidesPptxExporter()]

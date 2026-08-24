@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import zipfile
 from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_canvas import InMemoryCanvasStore, create_asset_tool, create_export_tool
-from langchain_canvas.assets import inline_canvas_assets
+from langchain_canvas.assets import inline_canvas_assets, inline_slides_assets
 
 # A valid 1x1 transparent PNG.
 PNG_B64 = (
@@ -79,6 +80,44 @@ def test_inline_folds_document_relative_forms_onto_the_root():
         assert f'src="data:image/png;base64,{PNG_B64}"' in out, form
     untouched = '<img src="../report/01-intro.html">'
     assert inline_canvas_assets(untouched, store, "t1") == untouched
+
+
+# --- inline_slides_assets ---------------------------------------------------------
+
+
+def test_inline_slides_replaces_element_src_and_slide_image():
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "assets/logo.png", PNG_BYTES, "Add logo")
+    store.write_bytes("t1", "sources/photo.png", PNG_BYTES, "Upload photo")
+    content = json.dumps({
+        "type": "slides",
+        "data": {"slides": [
+            {"elements": [
+                {"id": "i", "type": "image", "x": 0, "y": 0, "w": 50, "h": 50,
+                 "src": "assets/logo.png"},
+                {"id": "t", "type": "text", "x": 0, "y": 60, "w": 50, "h": 10,
+                 "text": "caption"},
+            ]},
+            {"layout": "image", "image": "../sources/photo.png"},
+        ]},
+    })
+    out = json.loads(inline_slides_assets(content, store, "t1"))
+    slides = out["data"]["slides"]
+    assert slides[0]["elements"][0]["src"] == f"data:image/png;base64,{PNG_B64}"
+    assert slides[0]["elements"][1]["text"] == "caption"  # non-image fields untouched
+    assert slides[1]["image"] == f"data:image/png;base64,{PNG_B64}"
+
+
+def test_inline_slides_leaves_misses_and_non_decks_untouched():
+    store = InMemoryCanvasStore()
+    deck = json.dumps({"data": {"slides": [
+        {"elements": [{"id": "i", "type": "image", "x": 0, "y": 0, "w": 10, "h": 10,
+                       "src": "assets/missing.png"}]},
+    ]}})
+    assert inline_slides_assets(deck, store, "t1") == deck
+    assert inline_slides_assets("not json", store, "t1") == "not json"
+    table = json.dumps({"data": {"rows": []}})
+    assert inline_slides_assets(table, store, "t1") == table
 
 
 # --- write_canvas_asset -----------------------------------------------------------
