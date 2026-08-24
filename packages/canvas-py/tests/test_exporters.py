@@ -328,6 +328,14 @@ def test_slides_pptx_rejects_non_deck_content():
         SlidesPptxExporter().export(json.dumps({"data": {"slides": "nope"}}), path="d.slides.json")
 
 
+def test_slides_pptx_names_the_envelope_when_data_is_missing():
+    # A deck written without the envelope must fail with the expected shape
+    # in the message — not export as one silent blank slide.
+    bare = json.dumps({"slides": [{"title": "T"}], "theme": {}})
+    with pytest.raises(ValueError, match='"data" envelope'):
+        SlidesPptxExporter().export(bare, path="d.slides.json")
+
+
 def _skin_pptx_bytes() -> bytes:
     """A 4:3 template with a branded master shape and one slide of its own."""
     from pptx import Presentation as _P
