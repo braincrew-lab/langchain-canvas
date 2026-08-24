@@ -163,10 +163,25 @@ def _refit_slides_to_page(
     treats px as an absolute size in the deck's coordinate space, so
     scaling both keeps this exactly the file the old exporter-side
     projection produced for a page-less deck.
+
+    The projection routes through the classic canvas: undo the letterbox
+    that placed the content on the OLD page, then apply the NEW page's.
+    A direct old-to-new min-scale is not invertible (4:3 to wide keeps
+    scale 1, wide back to 4:3 shrinks by 0.75), so a skin swap would
+    neither match a from-scratch deck nor survive a round trip. Composed
+    through the canvas both hold; a first attach (old == canvas) reduces
+    to the plain letterbox.
     """
-    scale = min(new_w / old_w, new_h / old_h)
-    offset_x = (new_w - old_w * scale) / 2.0
-    offset_y = (new_h - old_h * scale) / 2.0
+    canvas_w, canvas_h = DEFAULT_SLIDE_PAGE_IN
+    scale_old = min(old_w / canvas_w, old_h / canvas_h)
+    scale_new = min(new_w / canvas_w, new_h / canvas_h)
+    scale = scale_new / scale_old
+    offset_x = (new_w - canvas_w * scale_new) / 2.0 - (
+        (old_w - canvas_w * scale_old) / 2.0
+    ) * scale
+    offset_y = (new_h - canvas_h * scale_new) / 2.0 - (
+        (old_h - canvas_h * scale_old) / 2.0
+    ) * scale
     font_factor = scale
     for slide in data.get("slides") or []:
         if not isinstance(slide, dict):
@@ -203,14 +218,18 @@ def _deck_with_skin_page(
 ) -> tuple[str, str | None, str | None]:
     """The deck content with ``page`` filled from its template skin.
 
-    A deck that names a template but no page gets the skin's real page size
-    written into ``data.page``, so the editor, the preview, and the export
-    agree on one aspect ratio — the agent never types the numbers by hand.
-    When the skin's ratio differs from the classic canvas the existing
-    elements are re-fitted (see :func:`_refit_slides_to_page`) and the
-    third return value carries a note to relay — the change is safe but
-    the content now sits letterboxed, and re-placing it is the model's
-    call, never a silent one. Content that is not a template-bearing
+    A deck that names a template gets the skin's real page size written
+    into ``data.page``, so the editor, the preview, and the export agree
+    on one aspect ratio — the agent never types the numbers by hand. The
+    skin decides the page on a swap too: a deck whose page no longer
+    matches its template is re-fitted from its CURRENT page, otherwise the
+    content stays stranded in the old ratio's letterbox with no way out
+    through coordinates alone. When the size changes the existing elements
+    are re-fitted (see :func:`_refit_slides_to_page`); when the RATIO
+    changes the third return value carries a note to relay — the change is
+    safe but the content now sits letterboxed, and re-placing it is the
+    model's call, never a silent one. A deck without a template keeps
+    whatever page it has. Content that is not a template-bearing
     envelope passes through untouched (the exporter raises its own honest
     errors later). Returns ``(content, error, note)``: a skin that trips
     the archive safety limits is an error to relay, not a detail to
@@ -221,7 +240,7 @@ def _deck_with_skin_page(
     except json.JSONDecodeError:
         return content, None, None
     data = envelope.get("data") if isinstance(envelope, dict) else None
-    if not isinstance(data, dict) or data.get("page") is not None:
+    if not isinstance(data, dict):
         return content, None, None
     template = data.get("template")
     if not isinstance(template, str) or not template.lower().endswith(".pptx"):
@@ -241,11 +260,31 @@ def _deck_with_skin_page(
     if size is None:
         return content, None, None
     new_w, new_h = round(size[0], 4), round(size[1], 4)
+    # "The skin decides the page" holds on a swap too, not only on the first
+    # attach: the deck's current page is the OLD coordinate space to re-fit
+    # from. A deck whose page already matches the skin passes untouched.
+    old_w, old_h = DEFAULT_SLIDE_PAGE_IN
+    page = data.get("page")
+    if isinstance(page, dict):
+        got_w = page.get("widthIn", page.get("width_in"))
+        got_h = page.get("heightIn", page.get("height_in"))
+        if (
+            isinstance(got_w, (int, float))
+            and isinstance(got_h, (int, float))
+            and got_w > 0
+            and got_h > 0
+        ):
+            if abs(got_w - new_w) < 1e-4 and abs(got_h - new_h) < 1e-4:
+                return content, None, None
+            old_w, old_h = float(got_w), float(got_h)
     data["page"] = {"widthIn": new_w, "heightIn": new_h}
     note = None
-    old_w, old_h = DEFAULT_SLIDE_PAGE_IN
-    if abs(new_w / new_h - old_w / old_h) > 1e-6:
+    if abs(new_w - old_w) > 1e-4 or abs(new_h - old_h) > 1e-4:
+        # Any size change re-fits: with the same ratio the percents come out
+        # unchanged and only font sizes ride the physical scale, so the
+        # stored deck exports exactly like the un-swapped one did.
         _refit_slides_to_page(data, old_w, old_h, new_w, new_h)
+    if abs(new_w / new_h - old_w / old_h) > 1e-6:
         note = (
             f" Note: page changed to {new_w} x {new_h} in to match the "
             "template. Existing slides were re-fitted without distortion; "
