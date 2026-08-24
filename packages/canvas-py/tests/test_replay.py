@@ -181,6 +181,31 @@ def test_slides_file_replays_as_slides_artifact() -> None:
     assert create["artifact"]["data"]["slides"][0]["padding"] == 6
 
 
+def test_slides_patch_carries_page_and_template() -> None:
+    """A later skin attach must reach the editor: page/template ride patches."""
+    from langchain_canvas import encode_slides
+
+    store = InMemoryCanvasStore()
+    store.write("t", "deck.slides.json", encode_slides("Pitch", {"slides": [{}]}), "Build deck")
+    skinned = {
+        "slides": [{}],
+        "page": {"widthIn": 10.0, "heightIn": 7.5},
+        "template": "sources/brand.pptx",
+    }
+    store.write("t", "deck.slides.json", encode_slides("Pitch", skinned), "Attach skin")
+
+    events = hydrate_events(store, "t")
+    patch = next(e for e in events if e["type"] == "canvas.patch")
+    assert patch["patch"]["page"] == {"widthIn": 10.0, "heightIn": 7.5}
+    assert patch["patch"]["template"] == "sources/brand.pptx"
+    # A deck without them patches null so the client's mergePatch deletes stale keys.
+    store.write("t", "deck.slides.json", encode_slides("Pitch", {"slides": [{}]}), "Drop skin")
+    events = hydrate_events(store, "t")
+    last_patch = [e for e in events if e["type"] == "canvas.patch"][-1]
+    assert last_patch["patch"]["page"] is None
+    assert last_patch["patch"]["template"] is None
+
+
 def test_markdown_file_replays_as_document_with_heading_title() -> None:
     store = InMemoryCanvasStore()
     store.write("t", "report.md", "# Renewable Energy\n\nBody text.", "Write report")

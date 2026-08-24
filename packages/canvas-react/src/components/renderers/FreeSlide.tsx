@@ -2,8 +2,9 @@
  * A free-positioning slide canvas (the "blank" layout) — like PowerPoint's real
  * editing surface. Elements (text boxes, images) can be dragged to move,
  * dragged from the corner to resize, double-clicked to edit text, and deleted.
- * Geometry is stored as percentages (0–100) of the 16:9 slide, so it's
- * resolution-independent and exports cleanly to .pptx.
+ * Geometry is stored as percentages (0–100) of the deck page (`data.page`,
+ * classic 16:9 when absent), so it's resolution-independent and exports
+ * cleanly to .pptx.
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
@@ -26,6 +27,10 @@ interface FreeSlideProps {
   /** Content padding as a percent of the slide — insets the free canvas so
    *  element geometry maps into a safe margin. */
   padding?: number;
+  /** Display-only multiplier for stored font px (box width over the page
+   *  width at 96dpi) so on-screen text matches the exported file. Stored
+   *  fontSize values and the size input stay in page px. */
+  fontScale?: number;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -57,7 +62,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
   return best ? { pos: pos + best.delta, guide: best.guide } : { pos, guide: null };
 }
 
-export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
+export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSlideProps) {
   const slideRef = useRef<HTMLDivElement>(null);
   // Display-only: a canvas-asset src resolves to a URL; stored elements keep
   // the relative reference (onChange never touches src).
@@ -217,7 +222,7 @@ export function FreeSlide({ elements, onChange, padding }: FreeSlideProps) {
               contentEditable={editingId === el.id}
               suppressContentEditableWarning
               style={{
-                fontSize: el.fontSize ?? 24,
+                fontSize: (el.fontSize ?? 24) * fontScale,
                 fontWeight: el.bold ? 700 : 400,
                 color: el.color,
                 textAlign: el.align ?? "left",

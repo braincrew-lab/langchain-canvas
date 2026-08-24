@@ -9,12 +9,34 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { Slide, SlideElement, SlidesData } from "../../protocol/artifacts";
+import type { Slide, SlideElement, SlidePage, SlidesData } from "../../protocol/artifacts";
 import { resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
 import { FreeSlide, shapeStyle } from "./FreeSlide";
+import { DEFAULT_SLIDE_PAGE_IN, deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
+
+/** Track a slide box's width and derive the display font scale for `page`.
+ *  Re-measures on resize so the panel, present view, and window drags all
+ *  keep text proportional to the page. */
+function useFontScale(page: SlidePage) {
+  // Callback ref: the present-view box remounts on every slide advance
+  // (key={index}), so an object ref would go stale — state-held nodes rerun
+  // the effect on each mount.
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    if (!node) return;
+    const measure = () => setScale(fontScaleFor(node.clientWidth, page));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node, page.widthIn, page.heightIn]);
+  return { ref: setNode, scale };
+}
 
 const THEMES: { id: string; label: string; bg: string; text: string }[] = [
   { id: "light", label: "Light", bg: "#ffffff", text: "#1f2328" },
@@ -71,6 +93,15 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const [presenting, setPresenting] = useState(false);
   const imgRef = useRef<HTMLInputElement>(null);
   const bgRef = useRef<HTMLInputElement>(null);
+  // The deck's page decides the box shape and the font scale, so the editor
+  // shows what the export writes (a 4:3 skin renders as a 4:3 box).
+  const page = deckPage(artifact.data);
+  const aspect = pageAspect(page);
+  const editBox = useFontScale(page);
+  const presentBox = useFontScale(page);
+  // Thumbnails keep their tuned factor on the classic page and shrink text
+  // proportionally on wider pages (the thumb column width stays fixed).
+  const thumbFont = 0.12 * (DEFAULT_SLIDE_PAGE_IN.widthIn / page.widthIn);
 
   useEffect(() => {
     if (!presenting) return;
@@ -174,13 +205,13 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           >
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
-              <div className="cv-deck__thumb-slide" style={s.background ? { background: s.background } : undefined}>
+              <div className="cv-deck__thumb-slide" style={{ aspectRatio: aspect, ...(s.background ? { background: s.background } : {}) }}>
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s).map((el) =>
                   el.type === "text" ? (
                     <span
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * 0.12, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap" }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * thumbFont, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap" }}
                     >
                       {el.text}
                     </span>
@@ -245,8 +276,8 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           <button onClick={deleteSlide} title="Delete slide" disabled={slides.length === 1}>🗑</button>
         </div>
 
-        <div className="cv-slide cv-slide--blank" style={slideStyle}>
-          <FreeSlide elements={resolveElements(slide)} onChange={(elements) => update({ elements })} padding={slide.padding} />
+        <div className="cv-slide cv-slide--blank" ref={editBox.ref} style={{ aspectRatio: aspect, ...slideStyle }}>
+          <FreeSlide elements={resolveElements(slide)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} />
         </div>
 
         <div className="cv-deck__nav cv-chrome">
@@ -266,12 +297,12 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
       {presenting && (
         <div className="cv-present" onClick={() => setIndex(Math.min(at + 1, slides.length - 1))}>
           {/* key on the slide index so each advance re-triggers the fade-in. */}
-          <div key={at} className="cv-present__slide cv-present__fade cv-slide cv-slide--blank" style={slideStyle}>
+          <div key={at} ref={presentBox.ref} className="cv-present__slide cv-present__fade cv-slide cv-slide--blank" style={{ aspectRatio: aspect, ...slideStyle }}>
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide).map((el) =>
                 el.type === "text" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
-                    <div className="cv-free__text" style={{ fontSize: el.fontSize ?? 24, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap" }}>
+                    <div className="cv-free__text" style={{ fontSize: (el.fontSize ?? 24) * presentBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap" }}>
                       {el.text}
                     </div>
                   </div>

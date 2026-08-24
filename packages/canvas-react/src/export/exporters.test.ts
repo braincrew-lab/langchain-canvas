@@ -10,6 +10,18 @@ describe("slidesToPrintHtml (safe export)", () => {
     expect(html.match(/class="slide"/g)).toHaveLength(3);
   });
 
+  it("keeps the classic 1280x720 page when the deck has no page", () => {
+    const html = slidesToPrintHtml({ slides: [{ title: "A" }] }, "Deck");
+    expect(html).toContain("@page { size: 1280px 720px; margin: 0; }");
+  });
+
+  it("prints on the deck page when one is set (4:3 skin)", () => {
+    const deck: SlidesData = { slides: [{ title: "A" }], page: { widthIn: 10, heightIn: 7.5 } };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toContain("@page { size: 1280px 960px; margin: 0; }");
+    expect(html).toContain("width: 1280px; height: 960px;");
+  });
+
   it("escapes text so an artifact can't inject markup", () => {
     const deck: SlidesData = {
       slides: [{ elements: [{ id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "<script>alert(1)</script>" }] }],

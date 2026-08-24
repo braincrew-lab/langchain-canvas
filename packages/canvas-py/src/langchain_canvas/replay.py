@@ -200,7 +200,10 @@ def events_for_commit(
     envelope_keys = {
         TABLE_SUFFIX: ("table", ("columns", "rows", "sheet")),
         CHART_SUFFIX: ("chart", ("chart", "rows", "xKey", "series", "options", "echartsOption")),
-        SLIDES_SUFFIX: ("slides", ("slides",)),
+        # page/template ride along so the editor draws the deck's real page
+        # (the create event carries them, but only for the first revision —
+        # a later skin attach arrives as a patch).
+        SLIDES_SUFFIX: ("slides", ("slides", "page", "template")),
     }
     envelope = next((v for suffix, v in envelope_keys.items() if path.endswith(suffix)), None)
     if envelope is not None:
