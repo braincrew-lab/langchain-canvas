@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -56,6 +57,66 @@ class MissingConverterDependencyError(RuntimeError):
     The message names the missing package and the extra that installs it, so
     the standard tools can relay an honest, actionable error to the agent.
     """
+
+
+class UnsafeArchiveError(ValueError):
+    """An OOXML file's ZIP container exceeds the safety limits.
+
+    Raised *before* any parser touches the bytes, so a decompression bomb
+    (a tiny upload that inflates to gigabytes) is refused with an honest
+    message instead of taking the process down. The XML inside OOXML is
+    already safe — python-pptx and python-docx parse with
+    ``resolve_entities=False`` — so the container is the remaining door.
+    """
+
+
+# Refusal thresholds for untrusted OOXML containers. All three are checked
+# together (any one alone is routable around). Calibrated 2026-08-24 against
+# real corporate decks — a 15-slide, image-heavy pptx measures ~110 parts,
+# ~1 MB unpacked, ratio ~1 — so these sit hundreds of times above real files,
+# while a crafted 199 KB -> 200 MB bomb (ratio ~1000) trips two of them.
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+MAX_ARCHIVE_PARTS = 3000
+MAX_ARCHIVE_COMPRESSION_RATIO = 200
+# Ratio is meaningless for tiny archives (one small XML can legitimately
+# compress far better than 200:1); only enforce it once the unpacked size
+# could actually hurt.
+_RATIO_ENFORCE_FLOOR_BYTES = 1024 * 1024
+
+
+def ensure_archive_within_limits(data: bytes, *, path: str) -> None:
+    """Refuse an OOXML container whose ZIP directory promises too much.
+
+    Reads only the central directory (sizes as declared), never the payload,
+    so the check itself is O(parts) and allocation-free.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            infos = archive.infolist()
+    except zipfile.BadZipFile:
+        # Not a ZIP at all is a formatting problem, not an attack — leave it
+        # to each caller's own failure path (a parser error, a skin degrade).
+        return
+    if len(infos) > MAX_ARCHIVE_PARTS:
+        raise UnsafeArchiveError(
+            f"{path} holds {len(infos)} parts — more than the "
+            f"{MAX_ARCHIVE_PARTS}-part limit for untrusted files"
+        )
+    total_uncompressed = sum(info.file_size for info in infos)
+    if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+        raise UnsafeArchiveError(
+            f"{path} unpacks to {total_uncompressed // (1024 * 1024)} MB — over the "
+            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit for untrusted files"
+        )
+    total_compressed = sum(info.compress_size for info in infos)
+    if (
+        total_uncompressed > _RATIO_ENFORCE_FLOOR_BYTES
+        and total_uncompressed > MAX_ARCHIVE_COMPRESSION_RATIO * max(total_compressed, 1)
+    ):
+        raise UnsafeArchiveError(
+            f"{path} compresses {total_uncompressed // max(total_compressed, 1)}:1 — "
+            f"over the {MAX_ARCHIVE_COMPRESSION_RATIO}:1 limit for untrusted files"
+        )
 
 
 @runtime_checkable
@@ -140,6 +201,7 @@ class XlsxSourceConverter:
                 "or register your own converter for .xlsx"
             ) from exc
 
+        ensure_archive_within_limits(data, path=path)
         workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         sections: list[str] = []
         sheet_names: list[str] = []
@@ -444,6 +506,7 @@ class DocxSourceConverter:
                 "or register your own converter for .docx"
             ) from exc
 
+        ensure_archive_within_limits(data, path=path)
         document = Document(io.BytesIO(data))
         parts: list[str] = []
         paragraphs = 0
@@ -481,6 +544,7 @@ class PptxSourceConverter:
                 "or register your own converter for .pptx"
             ) from exc
 
+        ensure_archive_within_limits(data, path=path)
         deck = Presentation(io.BytesIO(data))
         sections: list[str] = []
         for number, slide in enumerate(deck.slides, start=1):

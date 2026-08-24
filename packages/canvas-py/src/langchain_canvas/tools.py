@@ -42,20 +42,24 @@ from .assets import (
     ASSETS_PREFIX,
     inline_canvas_assets,
     inline_slides_assets,
+    normalize_asset_reference,
 )
 from .converters import (
     MAX_IMAGES_PER_CALL,
     MissingConverterDependencyError,
     PageRenderable,
     SourceConverter,
+    UnsafeArchiveError,
     converter_for,
     default_converters,
+    ensure_archive_within_limits,
 )
 from .exporters import (
     Exporter,
     MissingExporterDependencyError,
     default_exporters,
     exporter_for,
+    pptx_page_size_inches,
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .replay import ARTIFACT_SUFFIXES, events_for_commit
@@ -140,6 +144,47 @@ def _parse_pages(spec: str) -> list[int]:
                 f'pages must be "grid", or page numbers like "3", "2-5", "1,4,7" (got {spec!r})'
             )
     return list(dict.fromkeys(pages))
+
+
+def _deck_with_skin_page(
+    store: CanvasStore, canvas_id: str, content: str
+) -> tuple[str, str | None]:
+    """The deck content with ``page`` filled from its template skin.
+
+    A deck that names a template but no page gets the skin's real page size
+    written into ``data.page``, so the editor, the preview, and the export
+    agree on one aspect ratio — the agent never types the numbers by hand.
+    Content that is not a template-bearing envelope passes through
+    untouched (the exporter raises its own honest errors later). Returns
+    ``(content, error)``: a skin that trips the archive safety limits is an
+    error to relay, not a detail to absorb.
+    """
+    try:
+        envelope = json.loads(content)
+    except json.JSONDecodeError:
+        return content, None
+    data = envelope.get("data") if isinstance(envelope, dict) else None
+    if not isinstance(data, dict) or data.get("page") is not None:
+        return content, None
+    template = data.get("template")
+    if not isinstance(template, str) or not template.lower().endswith(".pptx"):
+        return content, None
+    ref = normalize_asset_reference(template)
+    if ref is None:
+        return content, None
+    try:
+        raw = store.read_bytes(canvas_id, ref).data
+    except CanvasStoreError:
+        return content, None  # missing skin degrades at export time too
+    try:
+        ensure_archive_within_limits(raw, path=ref)
+    except UnsafeArchiveError as exc:
+        return content, f"Error: {exc}"
+    size = pptx_page_size_inches(raw)
+    if size is None:
+        return content, None
+    data["page"] = {"widthIn": round(size[0], 4), "heightIn": round(size[1], 4)}
+    return json.dumps(envelope, ensure_ascii=False), None
 
 
 def create_canvas_tools(
@@ -245,6 +290,8 @@ def create_canvas_tools(
             converted = converter.convert(got.data, path=path)
         except MissingConverterDependencyError as exc:
             return f"Error: {exc}"
+        except UnsafeArchiveError as exc:
+            return f"Error: {exc}"
         text = "\n".join(
             str(block.get("text", "")) for block in converted.blocks if block.get("type") == "text"
         )
@@ -344,6 +391,10 @@ def create_canvas_tools(
         if path.startswith(_SOURCES_PREFIX):
             return _SOURCES_READONLY
         canvas_id = _canvas_id(runtime)
+        if path.lower().endswith(".slides.json"):
+            content, page_error = _deck_with_skin_page(store, canvas_id, content)
+            if page_error is not None:
+                return page_error
         is_new = not _has_file(canvas_id, path)
         try:
             commit = store.write(
