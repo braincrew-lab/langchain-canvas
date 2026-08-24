@@ -503,6 +503,25 @@ def test_slides_pptx_refuses_a_zip_bomb_skin():
         SlidesPptxExporter().export(content, path="d.slides.json")
 
 
+def test_slides_pptx_text_after_an_image_keeps_its_font_size():
+    # The picture contain factor once rebound the projection `scale`, so any
+    # text AFTER an image inherited a factor in the millions and the export
+    # died on pptx's font-size limit. A 1x1 image maximizes the corruption.
+    content = _deck([{
+        "elements": [
+            {"id": "i", "type": "image", "x": 10, "y": 10, "w": 30, "h": 30,
+             "src": _png_uri()},
+            {"id": "t", "type": "text", "x": 10, "y": 60, "w": 60, "h": 20,
+             "text": "After the image", "fontSize": 36},
+        ],
+    }])
+    result = SlidesPptxExporter().export(content, path="d.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    (slide,) = deck.slides
+    (text,) = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text]
+    assert text.text_frame.paragraphs[0].runs[0].font.size.pt == 27  # 36px * 0.75
+
+
 def test_pptx_page_size_inches_reads_the_declared_size():
     from pptx import Presentation as _P
 

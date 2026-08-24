@@ -759,9 +759,13 @@ class SlidesPptxExporter:
                     # the same object-fit the canvas and browser exports use.
                     native_w, native_h = picture.image.size
                     if native_w and native_h:
-                        scale = min(int(width) / native_w, int(height) / native_h)
-                        picture.width = Emu(int(native_w * scale))
-                        picture.height = Emu(int(native_h * scale))
+                        # `fit`, not `scale` — this is the per-picture
+                        # contain factor; rebinding `scale` here silently
+                        # corrupted the page projection for every element
+                        # after an image (fonts exploded past pptx limits).
+                        fit = min(int(width) / native_w, int(height) / native_h)
+                        picture.width = Emu(int(native_w * fit))
+                        picture.height = Emu(int(native_h * fit))
                         picture.left = Emu(int(left) + (int(width) - int(picture.width)) // 2)
                         picture.top = Emu(int(top) + (int(height) - int(picture.height)) // 2)
 
