@@ -55,6 +55,7 @@ from .converters import (
     ensure_archive_within_limits,
 )
 from .exporters import (
+    DEFAULT_SLIDE_PAGE_IN,
     Exporter,
     MissingExporterDependencyError,
     default_exporters,
@@ -146,45 +147,112 @@ def _parse_pages(spec: str) -> list[int]:
     return list(dict.fromkeys(pages))
 
 
+def _refit_slides_to_page(
+    data: dict, old_w: float, old_h: float, new_w: float, new_h: float
+) -> None:
+    """Re-project existing free elements onto a page with another size.
+
+    Filling ``page`` changes the coordinate space the percent geometry
+    refers to; leaving the numbers behind silently stretched every shape
+    (a circle became ratio 0.750 on a 4:3 skin). This applies the same
+    uniform-scale + center letterbox the exporter uses — at save time, so
+    the stored deck already means the same picture on the new page.
+    Structured slides (title / bullets, no elements) stay untouched: their
+    derived layout is defined in page percent and redraws for any ratio.
+    Font sizes ride the same uniform scale as the geometry — the exporter
+    treats px as an absolute size in the deck's coordinate space, so
+    scaling both keeps this exactly the file the old exporter-side
+    projection produced for a page-less deck.
+    """
+    scale = min(new_w / old_w, new_h / old_h)
+    offset_x = (new_w - old_w * scale) / 2.0
+    offset_y = (new_h - old_h * scale) / 2.0
+    font_factor = scale
+    for slide in data.get("slides") or []:
+        if not isinstance(slide, dict):
+            continue
+        elements = slide.get("elements")
+        if not isinstance(elements, list) or not elements:
+            continue
+        # The exporter applies `padding` in the NEW space too, so solve the
+        # stored percents back out of the projected on-page position.
+        pad = (slide.get("padding") or 0.0) / 100.0
+        span = 1.0 - 2.0 * pad
+        for el in elements:
+            if not isinstance(el, dict):
+                continue
+            try:
+                ex = pad + (float(el["x"]) / 100.0) * span
+                ey = pad + (float(el["y"]) / 100.0) * span
+                ew = (float(el["w"]) / 100.0) * span
+                eh = (float(el["h"]) / 100.0) * span
+            except (KeyError, TypeError, ValueError):
+                continue  # malformed element — the exporter reports it later
+            el["x"] = round(((offset_x + ex * old_w * scale) / new_w - pad) / span * 100.0, 4)
+            el["y"] = round(((offset_y + ey * old_h * scale) / new_h - pad) / span * 100.0, 4)
+            el["w"] = round(ew * old_w * scale / new_w / span * 100.0, 4)
+            el["h"] = round(eh * old_h * scale / new_h / span * 100.0, 4)
+            font = el.get("fontSize", el.get("font_size"))
+            if isinstance(font, (int, float)):
+                key = "fontSize" if "fontSize" in el else "font_size"
+                el[key] = round(font * font_factor, 4)
+
+
 def _deck_with_skin_page(
     store: CanvasStore, canvas_id: str, content: str
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, str | None]:
     """The deck content with ``page`` filled from its template skin.
 
     A deck that names a template but no page gets the skin's real page size
     written into ``data.page``, so the editor, the preview, and the export
     agree on one aspect ratio — the agent never types the numbers by hand.
-    Content that is not a template-bearing envelope passes through
-    untouched (the exporter raises its own honest errors later). Returns
-    ``(content, error)``: a skin that trips the archive safety limits is an
-    error to relay, not a detail to absorb.
+    When the skin's ratio differs from the classic canvas the existing
+    elements are re-fitted (see :func:`_refit_slides_to_page`) and the
+    third return value carries a note to relay — the change is safe but
+    the content now sits letterboxed, and re-placing it is the model's
+    call, never a silent one. Content that is not a template-bearing
+    envelope passes through untouched (the exporter raises its own honest
+    errors later). Returns ``(content, error, note)``: a skin that trips
+    the archive safety limits is an error to relay, not a detail to
+    absorb.
     """
     try:
         envelope = json.loads(content)
     except json.JSONDecodeError:
-        return content, None
+        return content, None, None
     data = envelope.get("data") if isinstance(envelope, dict) else None
     if not isinstance(data, dict) or data.get("page") is not None:
-        return content, None
+        return content, None, None
     template = data.get("template")
     if not isinstance(template, str) or not template.lower().endswith(".pptx"):
-        return content, None
+        return content, None, None
     ref = normalize_asset_reference(template)
     if ref is None:
-        return content, None
+        return content, None, None
     try:
         raw = store.read_bytes(canvas_id, ref).data
     except CanvasStoreError:
-        return content, None  # missing skin degrades at export time too
+        return content, None, None  # missing skin degrades at export time too
     try:
         ensure_archive_within_limits(raw, path=ref)
     except UnsafeArchiveError as exc:
-        return content, f"Error: {exc}"
+        return content, f"Error: {exc}", None
     size = pptx_page_size_inches(raw)
     if size is None:
-        return content, None
-    data["page"] = {"widthIn": round(size[0], 4), "heightIn": round(size[1], 4)}
-    return json.dumps(envelope, ensure_ascii=False), None
+        return content, None, None
+    new_w, new_h = round(size[0], 4), round(size[1], 4)
+    data["page"] = {"widthIn": new_w, "heightIn": new_h}
+    note = None
+    old_w, old_h = DEFAULT_SLIDE_PAGE_IN
+    if abs(new_w / new_h - old_w / old_h) > 1e-6:
+        _refit_slides_to_page(data, old_w, old_h, new_w, new_h)
+        note = (
+            f" Note: page changed to {new_w} x {new_h} in to match the "
+            "template. Existing slides were re-fitted without distortion; "
+            "re-place their elements for the new ratio if you want the "
+            "full page."
+        )
+    return json.dumps(envelope, ensure_ascii=False), None, note
 
 
 def create_canvas_tools(
@@ -391,8 +459,11 @@ def create_canvas_tools(
         if path.startswith(_SOURCES_PREFIX):
             return _SOURCES_READONLY
         canvas_id = _canvas_id(runtime)
+        page_note = None
         if path.lower().endswith(".slides.json"):
-            content, page_error = _deck_with_skin_page(store, canvas_id, content)
+            content, page_error, page_note = _deck_with_skin_page(
+                store, canvas_id, content
+            )
             if page_error is not None:
                 return page_error
         is_new = not _has_file(canvas_id, path)
@@ -410,7 +481,7 @@ def create_canvas_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
-        return f"Wrote {path} (revision {commit.revision})."
+        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}"
 
     @tool
     def edit_canvas(

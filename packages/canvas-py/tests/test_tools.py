@@ -440,3 +440,96 @@ def test_write_canvas_fills_page_from_the_template_skin():
     )
     saved2 = _json.loads(store.read("t1", "deck2.slides.json").content)
     assert saved2["data"]["page"] == {"widthIn": 12.0, "heightIn": 9.0}
+
+
+def _skin_store(width_in: float, height_in: float) -> InMemoryCanvasStore:
+    import io as _io
+
+    pptx = __import__("pytest").importorskip("pptx")
+    from pptx.util import Inches
+
+    skin = pptx.Presentation()
+    skin.slide_width = Inches(width_in)
+    skin.slide_height = Inches(height_in)
+    buf = _io.BytesIO()
+    skin.save(buf)
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/brand.pptx", buf.getvalue(), "skin")
+    return store
+
+
+# A perfect circle on the classic 16:9 canvas plus one text element.
+_LEGACY_DECK_DATA: dict[str, Any] = {
+    "template": "sources/brand.pptx",
+    "slides": [{"elements": [
+        {"id": "c", "type": "shape", "shape": "ellipse", "x": 10, "y": 10,
+         "w": 10, "h": 17.7778, "fill": "#ff0000"},
+        {"id": "t", "type": "text", "x": 30, "y": 60, "w": 40, "h": 20,
+         "text": "Hi", "fontSize": 40},
+    ]}],
+}
+
+
+def test_write_canvas_refits_a_legacy_deck_for_a_new_ratio():
+    # Attaching a skin LATER is the common flow: the deck was drawn on the
+    # 16:9 canvas, then "use our corporate template" arrives. Filling `page`
+    # changes the coordinate space, so the stored percents must be
+    # re-projected — leaving them made a circle export as ratio 0.750.
+    import copy as _copy
+    import io as _io
+    import json as _json
+
+    pptx = __import__("pytest").importorskip("pytest").importorskip("pptx")
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    store = _skin_store(10, 7.5)  # 4:3 — a different ratio than the canvas
+    tools = _tools(store)
+    content = _json.dumps({"type": "slides",
+                           "data": _copy.deepcopy(_LEGACY_DECK_DATA)})
+    result = _invoke(
+        tools["write_canvas"], _runtime(thread_id="t1"), path="deck.slides.json",
+        content=content, description="deck",
+    )
+    # The ratio change is announced, never silent.
+    assert "page changed to 10.0 x 7.5 in" in result
+    assert "re-fitted" in result
+
+    saved = _json.loads(store.read("t1", "deck.slides.json").content)
+    assert saved["data"]["page"] == {"widthIn": 10.0, "heightIn": 7.5}
+
+    # The exported file keeps the circle a circle, centered in the letterbox.
+    from langchain_canvas.assets import inline_slides_assets
+    from langchain_canvas.exporters import SlidesPptxExporter
+
+    content_saved = store.read("t1", "deck.slides.json").content
+    inlined = inline_slides_assets(content_saved, store, "t1")
+    exported = SlidesPptxExporter().export(inlined, path="deck.slides.json")
+    deck = pptx.Presentation(_io.BytesIO(exported.data))
+    (slide,) = deck.slides
+    (circle,) = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE]
+    assert abs(circle.width / circle.height - 1.0) < 0.001
+    # Same on-page picture as before: 1in circle, dropped by the centering
+    # offset ((7.5 - 5.625) / 2 = 0.9375in) on the taller page.
+    assert abs(circle.width / 914400 - 1.0) < 0.001
+    assert abs(circle.top / 914400 - (0.5625 + 0.9375)) < 0.001
+    (text,) = [s for s in slide.shapes if s.has_text_frame and s.text_frame.text]
+    assert text.text_frame.paragraphs[0].runs[0].font.size.pt == 30  # unchanged
+
+
+def test_write_canvas_stays_quiet_for_a_same_ratio_skin():
+    import copy as _copy
+    import json as _json
+
+    __import__("pytest").importorskip("pptx")
+    store = _skin_store(10, 5.625)  # the classic canvas ratio
+    tools = _tools(store)
+    content = _json.dumps({"type": "slides",
+                           "data": _copy.deepcopy(_LEGACY_DECK_DATA)})
+    result = _invoke(
+        tools["write_canvas"], _runtime(thread_id="t1"), path="deck.slides.json",
+        content=content, description="deck",
+    )
+    assert "re-fitted" not in result
+    saved = _json.loads(store.read("t1", "deck.slides.json").content)
+    # Coordinates untouched — same ratio needs no re-fit.
+    assert saved["data"]["slides"][0]["elements"][0]["x"] == 10

@@ -503,6 +503,9 @@ def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
 # doors produce the same-looking deck. Element geometry is percent-based.
 _SLIDE_WIDTH_IN = 10.0
 _SLIDE_HEIGHT_IN = 5.625
+# The classic canvas page — what percent geometry means when a deck carries
+# no `page` of its own. Tools use it to re-fit decks onto another page.
+DEFAULT_SLIDE_PAGE_IN = (_SLIDE_WIDTH_IN, _SLIDE_HEIGHT_IN)
 # python-pptx page dimensions are Emu integers (914400 per inch).
 _EMU_PER_INCH = 914400
 # Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
