@@ -612,6 +612,15 @@ class SlidesPptxExporter:
             raise ValueError(f"{path} does not contain valid slides JSON") from exc
         if not isinstance(envelope, dict):
             raise ValueError(f"{path} does not contain a slides envelope")
+        if not isinstance(envelope.get("data"), dict):
+            # A deck written without the envelope used to export as one blank
+            # slide — silence that hides the real mistake. Name the shape so
+            # a tool-calling model can correct itself.
+            raise ValueError(
+                f'{path} has no "data" envelope — write slides files as '
+                '{"type": "slides", "data": {"slides": [...]}} '
+                "(element x/y/w/h are percent of the slide, 0-100)"
+            )
         try:
             deck = SlidesData.model_validate(envelope.get("data") or {})
         except Exception as exc:  # noqa: BLE001 — pydantic detail relayed honestly

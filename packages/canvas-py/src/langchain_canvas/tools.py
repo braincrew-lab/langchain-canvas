@@ -329,6 +329,17 @@ def create_canvas_tools(
         list_canvas_files shows it, even from a file inside a folder (never
         `../`). The canvas shows them live and exports inline the bytes, so
         never copy an upload to reference it.
+
+        Structured files carry an envelope: a `.slides.json` deck is
+        `{"type": "slides", "title": "...", "data": {"slides": [...]}}`.
+        Each slide is either structured (`title` / `subtitle` / `bullets` /
+        `image` / `layout`) or free elements (`elements` with `type`
+        text|image|shape and `x`/`y`/`w`/`h` as percent of the slide,
+        0-100; `fontSize` in px, colors as `#hex` strings). Optional per
+        slide: `background` (a `#hex` string), `notes`. Optional deck-level
+        `"template": "sources/brand.pptx"` makes the pptx export build on
+        that file's masters and layouts. A `.table.json` sheet is
+        `{"type": "table", "data": {"sheet": {...}}}`.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _SOURCES_READONLY
