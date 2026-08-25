@@ -18,7 +18,15 @@ export default defineConfig({
   // Keep the optional Office/formula engines OUT of the bundle — they're declared
   // in optionalDependencies and pulled via guarded dynamic import, so the core
   // stays ~100 KB and a Node builtin (exceljs → crypto) never leaks into a chunk.
-  external: ["react", "react-dom", "exceljs", "docx", "pptxgenjs", "fast-formula-parser"],
+  external: [
+    "react",
+    "react-dom",
+    "exceljs",
+    "docx",
+    "docx-preview",
+    "pptxgenjs",
+    "fast-formula-parser",
+  ],
   async onSuccess() {
     const fs = await import("node:fs");
     // The bundle ships React components/hooks, so the entry is a Client Component
