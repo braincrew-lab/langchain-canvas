@@ -1,0 +1,1003 @@
+[
+  {
+    "name": "a bare content slide",
+    "slide": {
+      "title": "Quarterly review",
+      "bullets": [
+        "Revenue up 11%",
+        "42 new customers",
+        "Churn at 3.1%"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Quarterly review",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• Revenue up 11%",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 54.25,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• 42 new customers",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 80.5,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• Churn at 3.1%",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "four bullets, one of them wrapping",
+    "slide": {
+      "title": "3분기 실적 요약",
+      "bullets": [
+        "매출 128억 원으로 전분기 대비 11% 성장",
+        "신규 고객 42개사 확보",
+        "이탈률 3.1%",
+        "영업이익률은 전분기와 동일한 수준을 유지했으며 마케팅 비용 증가가 상쇄 요인으로 작용했다"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "3분기 실적 요약",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• 매출 128억 원으로 전분기 대비 11% 성장",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 43.0,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• 신규 고객 42개사 확보",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 58.0,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• 이탈률 3.1%",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_3",
+        "type": "text",
+        "x": 8.0,
+        "y": 73.0,
+        "w": 84.0,
+        "h": 15.0,
+        "text": "• 영업이익률은 전분기와 동일한 수준을 유지했으며 마케팅 비용 증가가 상쇄 요인으로 작용했다",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "two bullets — the block centres",
+    "slide": {
+      "title": "Two points",
+      "bullets": [
+        "First",
+        "Second"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Two points",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 39.25,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• First",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 69.25,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• Second",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "ten bullets — the ramp steps down",
+    "slide": {
+      "title": "Dense",
+      "bullets": [
+        "item 1",
+        "item 2",
+        "item 3",
+        "item 4",
+        "item 5",
+        "item 6",
+        "item 7",
+        "item 8",
+        "item 9",
+        "item 10"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Dense",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 1",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 34.138889,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 2",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 40.277778,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 3",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_3",
+        "type": "text",
+        "x": 8.0,
+        "y": 46.416667,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 4",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_4",
+        "type": "text",
+        "x": 8.0,
+        "y": 52.555556,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 5",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_5",
+        "type": "text",
+        "x": 8.0,
+        "y": 58.694444,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 6",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_6",
+        "type": "text",
+        "x": 8.0,
+        "y": 64.833333,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 7",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_7",
+        "type": "text",
+        "x": 8.0,
+        "y": 70.972222,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 8",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_8",
+        "type": "text",
+        "x": 8.0,
+        "y": 77.111111,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 9",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_9",
+        "type": "text",
+        "x": 8.0,
+        "y": 83.25,
+        "w": 84.0,
+        "h": 4.75,
+        "text": "• item 10",
+        "fontSize": 19.0
+      }
+    ]
+  },
+  {
+    "name": "twenty bullets — the band tiles",
+    "slide": {
+      "title": "Overfull",
+      "bullets": [
+        "item 1",
+        "item 2",
+        "item 3",
+        "item 4",
+        "item 5",
+        "item 6",
+        "item 7",
+        "item 8",
+        "item 9",
+        "item 10",
+        "item 11",
+        "item 12",
+        "item 13",
+        "item 14",
+        "item 15",
+        "item 16",
+        "item 17",
+        "item 18",
+        "item 19",
+        "item 20"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Overfull",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 1",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 31.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 2",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 34.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 3",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_3",
+        "type": "text",
+        "x": 8.0,
+        "y": 37.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 4",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_4",
+        "type": "text",
+        "x": 8.0,
+        "y": 40.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 5",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_5",
+        "type": "text",
+        "x": 8.0,
+        "y": 43.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 6",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_6",
+        "type": "text",
+        "x": 8.0,
+        "y": 46.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 7",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_7",
+        "type": "text",
+        "x": 8.0,
+        "y": 49.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 8",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_8",
+        "type": "text",
+        "x": 8.0,
+        "y": 52.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 9",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_9",
+        "type": "text",
+        "x": 8.0,
+        "y": 55.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 10",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_10",
+        "type": "text",
+        "x": 8.0,
+        "y": 58.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 11",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_11",
+        "type": "text",
+        "x": 8.0,
+        "y": 61.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 12",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_12",
+        "type": "text",
+        "x": 8.0,
+        "y": 64.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 13",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_13",
+        "type": "text",
+        "x": 8.0,
+        "y": 67.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 14",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_14",
+        "type": "text",
+        "x": 8.0,
+        "y": 70.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 15",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_15",
+        "type": "text",
+        "x": 8.0,
+        "y": 73.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 16",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_16",
+        "type": "text",
+        "x": 8.0,
+        "y": 76.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 17",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_17",
+        "type": "text",
+        "x": 8.0,
+        "y": 79.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 18",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_18",
+        "type": "text",
+        "x": 8.0,
+        "y": 82.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 19",
+        "fontSize": 19.0
+      },
+      {
+        "id": "bul_19",
+        "type": "text",
+        "x": 8.0,
+        "y": 85.0,
+        "w": 84.0,
+        "h": 3.0,
+        "text": "• item 20",
+        "fontSize": 19.0
+      }
+    ]
+  },
+  {
+    "name": "a cover",
+    "slide": {
+      "layout": "title",
+      "title": "3분기 실적 보고",
+      "subtitle": "영업본부 · 2026년 10월"
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 36.5,
+        "w": 88.0,
+        "h": 12.0,
+        "text": "3분기 실적 보고",
+        "fontSize": 48.0,
+        "bold": true,
+        "align": "center"
+      },
+      {
+        "id": "subtitle",
+        "type": "text",
+        "x": 6.0,
+        "y": 56.0,
+        "w": 88.0,
+        "h": 7.5,
+        "text": "영업본부 · 2026년 10월",
+        "fontSize": 30.0,
+        "align": "center"
+      }
+    ]
+  },
+  {
+    "name": "a section break",
+    "slide": {
+      "layout": "section",
+      "title": "Part two"
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 44.0,
+        "w": 88.0,
+        "h": 12.0,
+        "text": "Part two",
+        "fontSize": 48.0,
+        "bold": true,
+        "align": "center"
+      }
+    ]
+  },
+  {
+    "name": "a subtitle on a content slide",
+    "slide": {
+      "title": "Heading",
+      "subtitle": "A line under it",
+      "bullets": [
+        "one",
+        "two",
+        "three"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Heading",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "subtitle",
+        "type": "text",
+        "x": 6.0,
+        "y": 28.0,
+        "w": 88.0,
+        "h": 7.5,
+        "text": "A line under it",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 42.25,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 61.375,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 80.5,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• three",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "two columns",
+    "slide": {
+      "layout": "two-column",
+      "title": "Compare",
+      "bullets": [
+        "left one",
+        "left two"
+      ],
+      "bullets2": [
+        "right one",
+        "right two",
+        "right three"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "Compare",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 6.0,
+        "y": 39.25,
+        "w": 42.0,
+        "h": 7.5,
+        "text": "• left one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 6.0,
+        "y": 69.25,
+        "w": 42.0,
+        "h": 7.5,
+        "text": "• left two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul2_0",
+        "type": "text",
+        "x": 52.0,
+        "y": 28.0,
+        "w": 42.0,
+        "h": 7.5,
+        "text": "• right one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul2_1",
+        "type": "text",
+        "x": 52.0,
+        "y": 54.25,
+        "w": 42.0,
+        "h": 7.5,
+        "text": "• right two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul2_2",
+        "type": "text",
+        "x": 52.0,
+        "y": 80.5,
+        "w": 42.0,
+        "h": 7.5,
+        "text": "• right three",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "an image slide",
+    "slide": {
+      "layout": "image",
+      "title": "The chart",
+      "image": "assets/chart.png"
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 9.5,
+        "text": "The chart",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "img",
+        "type": "image",
+        "x": 14.0,
+        "y": 28.0,
+        "w": 72.0,
+        "h": 60.0,
+        "src": "assets/chart.png"
+      }
+    ]
+  },
+  {
+    "name": "a wrapping title pushes the body down",
+    "slide": {
+      "title": "A heading long enough that it has to wrap onto a second line to fit the box",
+      "bullets": [
+        "one",
+        "two",
+        "three",
+        "four"
+      ]
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 19.0,
+        "text": "A heading long enough that it has to wrap onto a second line to fit the box",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 34.55,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 49.866667,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 65.183333,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• three",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_3",
+        "type": "text",
+        "x": 8.0,
+        "y": 80.5,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• four",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "a 4:3 page",
+    "slide": {
+      "title": "Four by three",
+      "bullets": [
+        "one",
+        "two",
+        "three",
+        "four"
+      ]
+    },
+    "page": {
+      "widthIn": 10.0,
+      "heightIn": 7.5
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 7.125,
+        "text": "Four by three",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 46.125,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 64.25,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• three",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_3",
+        "type": "text",
+        "x": 8.0,
+        "y": 82.375,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• four",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "a wide template page",
+    "slide": {
+      "title": "Wide",
+      "bullets": [
+        "one",
+        "two",
+        "three"
+      ]
+    },
+    "page": {
+      "widthIn": 13.333,
+      "heightIn": 7.5
+    },
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "x": 6.0,
+        "y": 7.0,
+        "w": 88.0,
+        "h": 7.125,
+        "text": "Wide",
+        "fontSize": 38.0,
+        "bold": true
+      },
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 32.6875,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• one",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 55.1875,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• two",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 77.6875,
+        "w": 84.0,
+        "h": 5.625,
+        "text": "• three",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "no title, just bullets",
+    "slide": {
+      "bullets": [
+        "alpha",
+        "beta",
+        "gamma"
+      ]
+    },
+    "elements": [
+      {
+        "id": "bul_0",
+        "type": "text",
+        "x": 8.0,
+        "y": 28.0,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• alpha",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_1",
+        "type": "text",
+        "x": 8.0,
+        "y": 54.25,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• beta",
+        "fontSize": 30.0
+      },
+      {
+        "id": "bul_2",
+        "type": "text",
+        "x": 8.0,
+        "y": 80.5,
+        "w": 84.0,
+        "h": 7.5,
+        "text": "• gamma",
+        "fontSize": 30.0
+      }
+    ]
+  },
+  {
+    "name": "an empty slide",
+    "slide": {},
+    "elements": []
+  }
+]
