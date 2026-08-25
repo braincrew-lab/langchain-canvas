@@ -57,6 +57,16 @@ export const dataExporters: Record<string, FileExport[]> = {
   ],
 };
 
+/**
+ * Browsers leave background colours out of a print. "Background graphics" is
+ * unchecked by default in the print dialog, and a slide draws its shapes and
+ * its page fill as CSS backgrounds — so a PDF came out with the text alone,
+ * every band and box gone. `print-color-adjust: exact` prints them anyway.
+ * Every document that can reach the print pipeline carries this rule.
+ */
+export const PRINT_COLOR_CSS =
+  "*{-webkit-print-color-adjust:exact;print-color-adjust:exact}";
+
 /** Wrap already-rendered inner HTML into a standalone, styled `.html` document. */
 export function toStandaloneHtml(title: string, renderedHtml: string): string {
   return `<!doctype html>
@@ -65,7 +75,8 @@ export function toStandaloneHtml(title: string, renderedHtml: string): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
-<style>${EXPORT_CSS}</style>
+<style>${EXPORT_CSS}
+${PRINT_COLOR_CSS}</style>
 </head>
 <body>
 <main class="export">
@@ -275,6 +286,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(title)}</title><style>
     @page { size: ${pw}px ${ph}px; margin: 0; }
     * { margin: 0; box-sizing: border-box; }
+    ${PRINT_COLOR_CSS}
     body { font-family: Inter, Arial, sans-serif; }
     .slide { position: relative; width: ${pw}px; height: ${ph}px; overflow: hidden; page-break-after: always; }
     .el { position: absolute; overflow: hidden; line-height: 1.25; }
@@ -294,6 +306,7 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
   const h = 720;
   const style =
     `<style>@page{size:${w}px ${h}px;margin:0}` +
+    `${PRINT_COLOR_CSS}` +
     `html,body{margin:0!important;padding:0!important;background:#fff}` +
     `.slide-container{width:${w}px!important;height:${h}px!important;` +
     `box-shadow:none!important;border-radius:0!important;overflow:hidden!important;` +

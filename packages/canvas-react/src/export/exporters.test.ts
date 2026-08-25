@@ -176,3 +176,28 @@ describe("htmlSlideToPrintHtml", () => {
     expect(out.indexOf("@page")).toBeLessThan(out.indexOf("</head>"));
   });
 });
+
+import { PRINT_COLOR_CSS } from "./exporters";
+
+describe("printed background colours", () => {
+  // A slide draws its shapes as div backgrounds, so a print that drops
+  // backgrounds drops the shapes and keeps only the text.
+  it("every route into the print pipeline asks for exact colours", () => {
+    const deck: SlidesData = {
+      slides: [{ elements: [{ id: "s", type: "shape", shape: "rect", fill: "#111827", x: 0, y: 0, w: 50, h: 50 }] }],
+    };
+    const slideHtml = `<!doctype html><html><head></head><body><div class="slide-container"></div></body></html>`;
+    for (const html of [
+      slidesToPrintHtml(deck, "Deck"),
+      htmlSlideToPrintHtml(slideHtml, "16:9"),
+      toStandaloneHtml("Report", "<p>hi</p>"),
+    ]) {
+      expect(html).toContain(PRINT_COLOR_CSS);
+    }
+  });
+
+  it("names both the prefixed and the standard property", () => {
+    expect(PRINT_COLOR_CSS).toContain("-webkit-print-color-adjust:exact");
+    expect(PRINT_COLOR_CSS).toContain("print-color-adjust:exact");
+  });
+});
