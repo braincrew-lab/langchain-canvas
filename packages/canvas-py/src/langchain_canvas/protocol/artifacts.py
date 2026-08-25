@@ -129,7 +129,9 @@ class Slide(_CamelModel):
     notes: str | None = None
     # Content padding as a percent of the slide width — a safe margin around the
     # free canvas, applied in the editor, present view, thumbnails, and export.
-    padding: float | None = None
+    # Bounded below 50: at 50 the content span (1 - 2*pad) hits zero, past it
+    # coordinates flip — there is no valid deck in that range.
+    padding: float | None = Field(default=None, ge=0, lt=50)
 
 
 class SlidePage(_CamelModel):
