@@ -208,7 +208,7 @@ async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart>
     // into that safe area so the PPTX matches the editor/PDF.
     const pad = (slide.padding ?? 0) / 100;
     const inset = (v: number) => pad + (v / 100) * (1 - 2 * pad);
-    for (const el of resolveElements(slide)) {
+    for (const el of resolveElements(slide, { widthIn: W, heightIn: H })) {
       const box = { x: inset(el.x) * W, y: inset(el.y) * H, w: (el.w / 100) * (1 - 2 * pad) * W, h: (el.h / 100) * (1 - 2 * pad) * H };
       if (el.type === "text") {
         const color = el.color ? el.color.replace("#", "") : tc;
@@ -248,7 +248,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
       const fg = slide.textColor ?? "#1f2328";
-      const els = resolveElements(slide)
+      const els = resolveElements(slide, page)
         .map((el) => {
           const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
           if (el.type === "text") {
