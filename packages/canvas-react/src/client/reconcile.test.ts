@@ -110,6 +110,37 @@ describe("reduceCanvas", () => {
     expect(s.history.a1.map((v) => v.meta?.revision)).toEqual(["v1", "v2"]);
   });
 
+  it("an amending commit replaces the version it continues, not adds one", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Agent draft", revision: "v1" });
+    // A burst of hand saves: each edit opens a working entry, each commit folds
+    // it back into the version it continues.
+    for (const [n, revision] of [["one", "v2"], ["two", "v3"], ["three", "v4"]] as const) {
+      s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: n } });
+      s = reduceCanvas(s, {
+        type: "canvas.commit",
+        id: "a1",
+        description: "Manual edit",
+        revision,
+        ...(revision === "v2" ? {} : { amends: "v2" }),
+      });
+    }
+
+    expect(s.history.a1).toHaveLength(2); // the agent's draft, then mine
+    expect(s.history.a1.map((v) => v.meta?.revision)).toEqual(["v1", "v4"]);
+    expect((s.history.a1[1].data as { content: string }).content).toBe("three");
+    expect((s.history.a1[0].data as { content: string }).content).toBe(""); // untouched
+  });
+
+  it("an amending commit never drops the only version on the rail", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "edited" } });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Manual edit", revision: "v2", amends: "v1" });
+
+    expect(s.history.a1).toHaveLength(1);
+    expect(s.history.a1[0].meta?.revision).toBe("v2");
+  });
+
   it("canvas.commit on an unknown id is a no-op", () => {
     const s0 = emptyCanvasState();
     expect(reduceCanvas(s0, { type: "canvas.commit", id: "ghost", description: "x" })).toBe(s0);

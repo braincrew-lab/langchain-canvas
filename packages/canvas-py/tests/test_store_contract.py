@@ -221,6 +221,29 @@ def test_commit_records_when_and_who(store: CanvasStore) -> None:
     assert unattributed.actor is None
 
 
+def test_commit_records_the_version_it_continues(store: CanvasStore) -> None:
+    first = store.write("c1", "page.html", "<p>1</p>", "edit", actor="human")
+    assert first.amends is None
+    second = store.write(
+        "c1", "page.html", "<p>2</p>", "edit", actor="human", amends=first.revision
+    )
+    assert second.amends == first.revision
+    assert [c.amends for c in store.history("c1")] == [first.revision, None]
+
+
+def test_amending_a_commit_leaves_every_revision_usable(store: CanvasStore) -> None:
+    # Folding is a reading convention: the middle commits stay readable and
+    # stay valid bases, so nothing about concurrency changes.
+    first = store.write("c1", "page.html", "<p>1</p>", "edit", actor="human")
+    second = store.write(
+        "c1", "page.html", "<p>2</p>", "edit", actor="human", amends=first.revision
+    )
+    assert store.read("c1", "page.html", revision=first.revision).content == "<p>1</p>"
+    with pytest.raises(RevisionMismatchError):
+        store.write("c1", "page.html", "<p>3</p>", "stale", base_revision=first.revision)
+    store.write("c1", "page.html", "<p>3</p>", "fresh", base_revision=second.revision)
+
+
 def test_history_limit(store: CanvasStore) -> None:
     for i in range(5):
         store.write("c1", "page.html", f"<p>{i}</p>", f"change {i}")

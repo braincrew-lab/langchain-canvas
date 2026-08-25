@@ -87,6 +87,10 @@ export interface CanvasCommit {
   id: string;
   description: string;
   revision?: string;
+  /** Set when this commit continues the version already on the rail: the
+   *  entry is replaced rather than joined, so a burst of small saves reads
+   *  as one work unit. */
+  amends?: string;
 }
 
 // --- control family ------------------------------------------------------------

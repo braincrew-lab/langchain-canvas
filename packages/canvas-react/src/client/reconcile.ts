@@ -77,10 +77,15 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       };
       // A commit freezes what is already on screen as a described version — it
       // stamps the live tail in place rather than pushing a duplicate snapshot.
+      // `amends` says it continues the version before it, so that entry gives
+      // way to this one: the burst of saves reads as the one work unit it was.
+      // The entry is only dropped once the commit confirms the grouping —
+      // until then it stays, so an ungrouped save never loses its snapshot.
+      const keep = event.amends && versions.length > 1 ? -2 : -1;
       return {
         ...state,
         artifacts: { ...state.artifacts, [event.id]: committed },
-        history: { ...state.history, [event.id]: [...versions.slice(0, -1), committed] },
+        history: { ...state.history, [event.id]: [...versions.slice(0, keep), committed] },
       };
     }
 
