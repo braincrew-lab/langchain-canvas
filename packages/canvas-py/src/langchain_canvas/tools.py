@@ -526,7 +526,12 @@ def create_canvas_tools(
         - Free `elements`, for a slide you are composing yourself. Every
           element needs an `id` (a short unique string), a `type` of
           text|image|shape, and `x`/`y`/`w`/`h` as percent of the slide,
-          0-100. `fontSize` is px on a 960x540 page, colors are `#hex`.
+          0-100. Colors are `#hex`. `fontSize` is px on a 960x540 page —
+          the layout's own scale is 48 (a cover line), 38 (a heading),
+          and 30 / 24 / 19 (body). Picking from it keeps a slide you
+          placed by hand next to the ones you did not, and keeps a deck
+          from carrying eight sizes nobody chose. Nothing under 14px is
+          readable on the canvas or a projector.
 
         Optional per slide: `background` (a `#hex` string), `notes`.
         Optional deck-level `"template": "sources/brand.pptx"` makes the
