@@ -487,7 +487,7 @@ def create_canvas_tools(
         output says how to read the rest. Binary uploads under `sources/` are
         rendered through a format converter instead of raw bytes.
 
-        Page-renderable sources (.pdf) can also be *seen*: observe cheaply
+        Page-renderable sources ({page_formats}) can also be *seen*: observe cheaply
         first — the default text view names the page count and which pages
         have no text layer — then `pages="grid"` for a one-shot thumbnail
         overview of every page, then `pages="3"` / `"2-5"` / `"1,4,7"` to
@@ -654,6 +654,21 @@ def create_canvas_tools(
             return "The canvas is empty."
         return "\n".join(f"{info.path} ({info.size} bytes)" for info in infos)
 
+    # The eye reaches whatever page-renderable converters are installed, and
+    # a format the description does not name is a format the model will say
+    # it cannot see. An agent asked to look at page 2 of an imported deck
+    # answered "I have no tool for that" while the tool sat in its own list.
+    renderable = sorted(
+        {
+            suffix
+            for converter in active_converters
+            if isinstance(converter, PageRenderable)
+            for suffix in converter.suffixes
+        }
+    )
+    read_canvas.description = read_canvas.description.replace(
+        "{page_formats}", ", ".join(renderable) if renderable else "none installed"
+    )
     return [read_canvas, write_canvas, edit_canvas, list_canvas_files]
 
 
