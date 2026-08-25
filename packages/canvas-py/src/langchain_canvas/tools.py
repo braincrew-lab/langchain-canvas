@@ -97,6 +97,10 @@ _SOURCES_READONLY = (
     "read-only for the agent. Create a new canvas file instead (for example "
     "an .html page or a .table.json table)."
 )
+_SOURCES_READONLY_DOCUMENT = (
+    "Error: {path} is the user's original upload and is read-only. Call "
+    "open_document_for_editing on it first, then edit the copy it makes."
+)
 _DEFAULT_READ_LIMIT = 400
 _DOCUMENT_FORMATS = ", ".join(DOCUMENT_OP_SUFFIXES)
 
@@ -104,6 +108,17 @@ _DOCUMENT_FORMATS = ", ".join(DOCUMENT_OP_SUFFIXES)
 def _is_document_file(path: str) -> bool:
     """Whether these are the binary documents the document operations edit."""
     return path.lower().endswith(DOCUMENT_OP_SUFFIXES)
+
+
+def _sources_readonly(path: str) -> str:
+    """The refusal for an upload, naming the way forward for this file type.
+
+    A Word file has one — copy it and edit the copy — and pointing at .html
+    pages instead would be telling the agent it cannot do something it can.
+    """
+    if _is_document_file(path):
+        return _SOURCES_READONLY_DOCUMENT.format(path=path)
+    return _SOURCES_READONLY
 
 
 def _renderer_for(path: str, converters: list[SourceConverter]) -> PageRenderable | None:
@@ -722,7 +737,7 @@ def create_canvas_tools(
         `.table.json` sheet is `{"type": "table", "data": {"sheet": {...}}}`.
         """
         if path.startswith(_SOURCES_PREFIX):
-            return _SOURCES_READONLY
+            return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
         page_note = None
         if path.lower().endswith(".slides.json"):
@@ -773,7 +788,7 @@ def create_canvas_tools(
         headers and footers included.
         """
         if path.startswith(_SOURCES_PREFIX):
-            return _SOURCES_READONLY
+            return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
         if _is_document_file(path):
             return _edit_document(runtime, canvas_id, path, old, new, description, revision)
@@ -867,10 +882,7 @@ def create_document_tools(
                 "For a canvas document (.md) or a page (.html) use edit_canvas."
             )
         if path.startswith(_SOURCES_PREFIX):
-            return None, (
-                f"Error: {path} is the user's original upload and is read-only. Call "
-                "open_document_for_editing on it first, then edit the copy it makes."
-            )
+            return None, _sources_readonly(path)
         try:
             return store.read_bytes(canvas_id, path).data, ""
         except CanvasFileNotFoundError as exc:

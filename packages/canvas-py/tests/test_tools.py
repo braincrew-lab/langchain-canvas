@@ -733,6 +733,10 @@ def test_uploads_stay_read_only_for_every_document_operation() -> None:
         revision="1",
     )
     assert "read-only" in edited
+    # Not the generic "make an .html page instead": a Word upload has a way
+    # forward, and naming the wrong one tells the agent it cannot do this.
+    assert "open_document_for_editing" in edited
+    assert ".html" not in edited
     for name, extra in (
         ("insert_document_paragraph", {"anchor": "사진 1. 점검 당일 현장", "text": "x"}),
         ("remove_document_paragraph", {"anchor": "사진 1. 점검 당일 현장"}),
@@ -1123,3 +1127,18 @@ def test_document_tools_only_claim_formats_the_operations_accept() -> None:
     for tool_obj in create_document_tools(InMemoryCanvasStore()):
         for suffix in re.findall(r"\.[a-z]{2,5}\b", tool_obj.description):
             assert suffix in allowed, f"{tool_obj.name} names {suffix}"
+
+
+def test_a_non_document_upload_still_gets_the_general_refusal() -> None:
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/photo.png", b"\x89PNG\r\n\x1a\n", "Upload", actor="human")
+    tools = _tools(store)
+    reply = _invoke(
+        tools["write_canvas"],
+        _runtime(thread_id="t1"),
+        path="sources/photo.png",
+        content="x",
+        description="d",
+    )
+    assert "read-only" in reply
+    assert "open_document_for_editing" not in reply
