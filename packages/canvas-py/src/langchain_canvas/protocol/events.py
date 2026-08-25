@@ -130,6 +130,11 @@ class CanvasCommit(_Event):
     id: str
     description: str
     revision: str | None = None
+    amends: str | None = None
+    """Set when this commit continues the version already on the rail (the
+    store's ``Commit.amends``). The client replaces that entry instead of
+    adding one, so a burst of small saves reads as the single work unit it
+    was — the grouping decision stays with the host that writes."""
 
 
 # --- control family -------------------------------------------------------------

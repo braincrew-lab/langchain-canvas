@@ -105,6 +105,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         validate_canvas_id(canvas_id)
         validate_relpath(path)
@@ -112,7 +113,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             record = self._canvases.setdefault(canvas_id, _CanvasRecord())
             self._check_base(record, base_revision, path)
             record.files[path] = content
-            return self._commit(record, description, [path], actor)
+            return self._commit(record, description, [path], actor, amends)
 
     def write_bytes(
         self,
@@ -122,6 +123,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         validate_canvas_id(canvas_id)
         validate_relpath(path)
@@ -129,7 +131,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             record = self._canvases.setdefault(canvas_id, _CanvasRecord())
             self._check_base(record, base_revision, path)
             record.files[path] = data
-            return self._commit(record, description, [path], actor)
+            return self._commit(record, description, [path], actor, amends)
 
     def edit(
         self,
@@ -140,6 +142,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         validate_canvas_id(canvas_id)
         validate_relpath(path)
@@ -157,7 +160,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
                     f"old string matches {occurrences} times in {path!r} — must be unique"
                 )
             record.files[path] = current.replace(old, new, 1)
-            return self._commit(record, description, [path], actor)
+            return self._commit(record, description, [path], actor, amends)
 
     # --- internals ---------------------------------------------------------------
 
@@ -191,7 +194,11 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
 
     @staticmethod
     def _commit(
-        record: _CanvasRecord, description: str, paths: list[str], actor: str | None
+        record: _CanvasRecord,
+        description: str,
+        paths: list[str],
+        actor: str | None,
+        amends: str | None = None,
     ) -> Commit:
         record.counter += 1
         commit = Commit(
@@ -200,6 +207,7 @@ class InMemoryCanvasStore(AsyncFromSyncMixin):
             paths=paths,
             created_at=utcnow(),
             actor=actor,
+            amends=amends,
         )
         record.commits.append(commit)
         record.snapshots[commit.revision] = dict(record.files)

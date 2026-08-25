@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from functools import partial
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -78,6 +79,44 @@ class Commit(BaseModel):
     actor: str | None = None
     """Who made the commit — free-form (``"agent"``, ``"human"``, a user id).
     ``None`` when the caller did not say."""
+
+    amends: str | None = None
+    """The revision this commit continues, or ``None`` to start a version.
+
+    An editor saves often — every short pause is a commit — so a person's
+    one work unit arrives as a burst of them. A caller that knows two
+    commits belong together sets this to the revision the version started
+    at, and readers fold the chain into a single entry (see
+    :func:`fold_history`). Nothing is dropped: every commit stays in the
+    log and every revision stays a valid ``base_revision``, so folding
+    changes what history *reads* like, never what it holds.
+    """
+
+
+def fold_history(commits: list[Commit]) -> list[Commit]:
+    """Fold ``amends`` chains so each version appears once, newest first.
+
+    Takes and returns history order (newest first, as
+    :meth:`CanvasStore.history` returns). A chain is represented by its
+    latest commit — the state to return to — at the position where the
+    chain began, so versions stay in the order a person started them.
+
+    Commits whose touched files differ never fold together, whatever
+    ``amends`` says: folding one away would drop the only record of that
+    file, so the guard holds regardless of the caller's grouping policy.
+    """
+    versions: list[Commit] = []
+    at_root: dict[str, int] = {}
+    for commit in reversed(commits):  # oldest first
+        root = commit.amends or commit.revision
+        index = at_root.get(root)
+        if index is not None and versions[index].paths == commit.paths:
+            versions[index] = commit
+            continue
+        at_root[root] = len(versions)
+        versions.append(commit)
+    versions.reverse()
+    return versions
 
 
 # --- shared validation -----------------------------------------------------------
@@ -195,6 +234,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Create or fully replace one file, as a new commit.
 
@@ -202,7 +242,8 @@ class CanvasStore(Protocol):
         concurrency: if given and ``path`` itself changed after that
         revision, :class:`RevisionMismatchError` is raised instead of
         overwriting. Commits that touched other files don't invalidate it.
-        ``actor`` is recorded on the commit (see :attr:`Commit.actor`).
+        ``actor`` is recorded on the commit (see :attr:`Commit.actor`), and
+        ``amends`` groups it with an earlier one (see :attr:`Commit.amends`).
         """
         ...
 
@@ -215,6 +256,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Replace exactly one occurrence of ``old`` with ``new`` in one file.
 
@@ -239,6 +281,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Create or fully replace one file with raw bytes, as a new commit.
 
@@ -273,6 +316,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Async :meth:`write`."""
         ...
@@ -286,6 +330,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Async :meth:`edit`."""
         ...
@@ -304,6 +349,7 @@ class CanvasStore(Protocol):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         """Async :meth:`write_bytes`."""
         ...
@@ -337,15 +383,19 @@ class AsyncFromSyncMixin:
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         return await asyncio.to_thread(
-            self.write,  # type: ignore[attr-defined]
+            partial(
+                self.write,  # type: ignore[attr-defined]
+                base_revision=base_revision,
+                actor=actor,
+                amends=amends,
+            ),
             canvas_id,
             path,
             content,
             description,
-            base_revision,
-            actor,
         )
 
     async def aedit(
@@ -357,16 +407,20 @@ class AsyncFromSyncMixin:
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         return await asyncio.to_thread(
-            self.edit,  # type: ignore[attr-defined]
+            partial(
+                self.edit,  # type: ignore[attr-defined]
+                base_revision=base_revision,
+                actor=actor,
+                amends=amends,
+            ),
             canvas_id,
             path,
             old,
             new,
             description,
-            base_revision,
-            actor,
         )
 
     async def aread_bytes(
@@ -382,15 +436,19 @@ class AsyncFromSyncMixin:
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         return await asyncio.to_thread(
-            self.write_bytes,  # type: ignore[attr-defined]
+            partial(
+                self.write_bytes,  # type: ignore[attr-defined]
+                base_revision=base_revision,
+                actor=actor,
+                amends=amends,
+            ),
             canvas_id,
             path,
             data,
             description,
-            base_revision,
-            actor,
         )
 
     async def alist_files(self, canvas_id: str) -> list[FileInfo]:

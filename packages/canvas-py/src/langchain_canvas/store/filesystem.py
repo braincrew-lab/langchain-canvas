@@ -146,6 +146,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
@@ -154,7 +155,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
             target = canvas_dir / _HEAD / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, "utf-8")
-            return self._commit(canvas_dir, description, [path], actor)
+            return self._commit(canvas_dir, description, [path], actor, amends)
 
     def write_bytes(
         self,
@@ -164,6 +165,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         rel = _safe_relpath(path)
@@ -172,7 +174,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
             target = canvas_dir / _HEAD / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-            return self._commit(canvas_dir, description, [path], actor)
+            return self._commit(canvas_dir, description, [path], actor, amends)
 
     def edit(
         self,
@@ -183,6 +185,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
         description: str,
         base_revision: str | None = None,
         actor: str | None = None,
+        amends: str | None = None,
     ) -> Commit:
         canvas_dir = self._canvas_dir(canvas_id)
         target = canvas_dir / _HEAD / _safe_relpath(path)
@@ -204,7 +207,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
                     f"old string matches {occurrences} times in {path!r} — must be unique"
                 )
             target.write_text(current.replace(old, new, 1), "utf-8")
-            return self._commit(canvas_dir, description, [path], actor)
+            return self._commit(canvas_dir, description, [path], actor, amends)
 
     # --- internals ---------------------------------------------------------------
 
@@ -260,7 +263,12 @@ class FileCanvasStore(AsyncFromSyncMixin):
                 )
 
     def _commit(
-        self, canvas_dir: Path, description: str, paths: list[str], actor: str | None
+        self,
+        canvas_dir: Path,
+        description: str,
+        paths: list[str],
+        actor: str | None,
+        amends: str | None = None,
     ) -> Commit:
         commits = self._commits(canvas_dir)
         commit = Commit(
@@ -269,6 +277,7 @@ class FileCanvasStore(AsyncFromSyncMixin):
             paths=paths,
             created_at=utcnow(),
             actor=actor,
+            amends=amends,
         )
         snapshot_dir = canvas_dir / _HISTORY / _SNAPSHOTS / commit.revision
         if snapshot_dir.exists():

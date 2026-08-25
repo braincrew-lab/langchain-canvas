@@ -41,7 +41,7 @@ from .converters import (
     default_converters,
 )
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
-from .store import BinaryContentError, CanvasStore, CanvasStoreError
+from .store import BinaryContentError, CanvasStore, CanvasStoreError, fold_history
 from .table_merge import project_sheet_into_rows
 
 TABLE_SUFFIX = ".table.json"
@@ -505,6 +505,11 @@ def hydrate_events(
     status) or a ``canvas.patch`` (later appearances), and each commit emits
     its ``canvas.commit`` so the client rebuilds the version history too.
 
+    History is folded first (see :func:`~langchain_canvas.store.fold_history`),
+    so a burst of small saves the writer grouped replays as the one version
+    it reads as — the group's latest commit carries the whole file, so the
+    canvas drawn is the same either way.
+
     ``title_for`` maps a file path to a display title (default: the path, or
     a table file's own title); ``meta_for`` maps a file path to renderer
     hints for its artifact (default: none). Both let the host app apply its
@@ -512,7 +517,7 @@ def hydrate_events(
     """
     events: list[dict] = []
     seen: set[str] = set()
-    for commit in reversed(store.history(canvas_id)):  # oldest first
+    for commit in reversed(fold_history(store.history(canvas_id))):  # oldest first
         for path in commit.paths:
             if not _replayable(path):
                 continue
