@@ -54,6 +54,11 @@ from .converters import (
     default_converters,
     ensure_archive_within_limits,
 )
+from .document_lint import (
+    format_document_warnings,
+    is_document_path,
+    lint_document_content,
+)
 from .exporters import (
     DEFAULT_SLIDE_PAGE_IN,
     Exporter,
@@ -336,16 +341,42 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
-    def _layout_note(canvas_id: str, path: str, content: str) -> str:
-        """Certain-only layout warnings for a saved deck ('' when clean).
+    def _canvas_paths(canvas_id: str) -> set[str] | None:
+        try:
+            return {info.path for info in store.list_files(canvas_id)}
+        except CanvasStoreError:
+            return None
 
-        Free to compute (coordinates and fields, no render), so it rides
-        every deck save — the model sees a defect the moment it writes one.
-        See :mod:`langchain_canvas.layout_lint` for the no-false-positives
-        contract.
+    def _is_checked(path: str) -> bool:
+        """Whether a save-time check has anything to say about this path."""
+        return path.lower().endswith(".slides.json") or is_document_path(path)
+
+    def _save_note(canvas_id: str, path: str, content: str) -> str:
+        """Certain-only warnings for a file just saved ('' when clean).
+
+        Free to compute (fields, coordinates and a file list — no render), so
+        it rides every save and the model sees a defect the moment it writes
+        one. A deck gets the deck check; a document or page gets the
+        reference check, which is the defect that reached readers as a broken
+        image. See :mod:`langchain_canvas.layout_lint` and
+        :mod:`langchain_canvas.document_lint` for the no-false-positives
+        contract both keep.
         """
-        if not path.lower().endswith(".slides.json"):
-            return ""
+        if path.lower().endswith(".slides.json"):
+            return _deck_note(canvas_id, path, content)
+        if is_document_path(path):
+            on_canvas = _canvas_paths(canvas_id)
+            if on_canvas is None:
+                return ""
+            return format_document_warnings(
+                lint_document_content(
+                    content, path=path, ref_exists=on_canvas.__contains__
+                )
+            )
+        return ""
+
+    def _deck_note(canvas_id: str, path: str, content: str) -> str:
+        """The deck check, over the envelope's ``data`` ('' when unreadable)."""
         try:
             envelope = json.loads(content)
         except json.JSONDecodeError:
@@ -353,10 +384,7 @@ def create_canvas_tools(
         data = envelope.get("data") if isinstance(envelope, dict) else None
         if not isinstance(data, dict):
             return ""
-        try:
-            on_canvas = {info.path for info in store.list_files(canvas_id)}
-        except CanvasStoreError:
-            on_canvas = None
+        on_canvas = _canvas_paths(canvas_id)
         warnings = lint_slides_data(
             data,
             ref_exists=None if on_canvas is None else on_canvas.__contains__,
@@ -563,8 +591,8 @@ def create_canvas_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
-        layout_note = _layout_note(canvas_id, path, content)
-        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}{layout_note}"
+        save_note = _save_note(canvas_id, path, content)
+        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}{save_note}"
 
     @tool
     def edit_canvas(
@@ -606,13 +634,14 @@ def create_canvas_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new=False, commit=commit)
-        layout_note = ""
-        if path.lower().endswith(".slides.json"):
-            # Small edits introduce defects as easily as full writes; lint
-            # the file as the edit left it.
+        save_note = ""
+        if _is_checked(path):
+            # Small edits introduce defects as easily as full writes — an
+            # edit is how a document picks up a reference to a file that is
+            # not there. Check the file as the edit left it.
             edited = store.read(canvas_id, path, revision=commit.revision).content
-            layout_note = _layout_note(canvas_id, path, edited)
-        return f"Edited {path} (revision {commit.revision}).{layout_note}"
+            save_note = _save_note(canvas_id, path, edited)
+        return f"Edited {path} (revision {commit.revision}).{save_note}"
 
     @tool
     def list_canvas_files(runtime: ToolRuntime) -> str:
