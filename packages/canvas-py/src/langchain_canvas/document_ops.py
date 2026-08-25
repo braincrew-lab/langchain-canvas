@@ -1,0 +1,523 @@
+"""Word documents read with addresses and edited in place.
+
+An uploaded ``.docx`` is the truth, not a markdown approximation of it: the
+agent reads the real paragraphs, tables and pictures, changes the few it was
+asked to change, and every byte it did not touch travels through untouched.
+Two halves make that work.
+
+**Addresses.** :func:`outline` renders the document as numbered lines —
+``[p0]`` for the first body paragraph, ``[t0]`` for the first table, ``[img0]``
+for the first picture — with each paragraph's style name, so the model can see
+the heading hierarchy a plain text dump throws away. Indices are for *reading*
+and for pointing at something on screen; they shift the moment a paragraph is
+inserted, so every write instead takes a **text anchor** copied from that
+output. An anchor that matches zero or several paragraphs is refused loudly
+(:class:`AnchorError` names the closest paragraph and the first character that
+differs) — a silent no-op is how a document comes back unchanged while the
+agent reports success.
+
+**Narrow edits.** :func:`replace_text`, :func:`insert_paragraph`,
+:func:`remove_paragraph` and :func:`replace_image` are the whole surface. Each
+returns new file bytes built by :func:`repack`: the original ZIP with only the
+parts the operation actually changed swapped in. Re-serializing a whole Word
+package rewrites parts nobody edited — that is how direct formatting multiplies
+and fonts get substituted on a round trip — so parts outside the edit are
+copied verbatim, entry metadata included.
+
+Text edits reach across ``w:r`` boundaries. Word splits one visible sentence
+into arbitrary runs (a spell-check pass alone will do it), so an anchor the
+reader can see almost never lines up with a single run; the replacement lands
+in the first run it touches and keeps that run's formatting.
+
+Requires ``python-docx`` — installed by the ``office`` extra.
+"""
+
+from __future__ import annotations
+
+import io
+import zipfile
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
+from typing import Any
+
+DOCUMENT_OP_SUFFIXES: tuple[str, ...] = (".docx",)
+"""File suffixes these operations handle (lowercase, with the dot)."""
+
+_MAX_AMBIGUOUS_SHOWN = 5
+_MAX_STYLES_SHOWN = 24
+# Word's own "picture" default; used when a replacement image carries no
+# usable pixel dimensions, so a swap can never collapse a shape to zero.
+_MIN_EMU = 1
+
+
+class MissingDocumentDependencyError(RuntimeError):
+    """``python-docx`` is not installed, so documents cannot be opened."""
+
+
+class DocumentOpError(ValueError):
+    """An operation was refused. The message is written for the agent."""
+
+
+class AnchorError(DocumentOpError):
+    """An anchor matched zero paragraphs, or more than one."""
+
+
+class DocumentPartError(DocumentOpError):
+    """The document is not a readable Word package."""
+
+
+# --- addressing ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Outline:
+    """A document rendered as addressed lines, plus the counts above them."""
+
+    lines: list[str]
+    counts: dict[str, int]
+
+    def render(self) -> str:
+        """The counts header followed by every addressed line."""
+        header = " · ".join(f"{key}: {value}" for key, value in self.counts.items())
+        return "\n".join([header, *self.lines])
+
+
+@dataclass
+class _Spot:
+    """One editable paragraph: where it lives and the runs holding its text.
+
+    ``part`` is the ZIP entry the paragraph is stored in, carried here so an
+    edit knows exactly which part to swap without searching for it again.
+    """
+
+    label: str
+    part: str
+    paragraph: Any
+    runs: list[Any] = field(default_factory=list)
+
+    @property
+    def text(self) -> str:
+        return "".join(run.text for run in self.runs)
+
+
+def _require_docx() -> Any:
+    try:
+        import docx  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover - exercised by the message test
+        raise MissingDocumentDependencyError(
+            "editing .docx needs python-docx — install langchain-canvas[office]"
+        ) from exc
+    return docx
+
+
+def _open(data: bytes, *, path: str = "document.docx") -> Any:
+    """Parse ``data`` into a python-docx ``Document`` (archive limits first)."""
+    docx = _require_docx()
+    # Imported here, not at module scope: converters renders documents through
+    # this module, and a top-level import back into it would be a cycle.
+    from .converters import UnsafeArchiveError, ensure_archive_within_limits
+
+    try:
+        ensure_archive_within_limits(data, path=path)
+    except UnsafeArchiveError as exc:
+        raise DocumentPartError(str(exc)) from exc
+    try:
+        return docx.Document(io.BytesIO(data))
+    except Exception as exc:  # python-docx raises several unrelated types
+        raise DocumentPartError(f"{path} is not a readable Word document ({exc})") from exc
+
+
+def _runs(paragraph: Any) -> list[Any]:
+    """Every ``w:r`` under this paragraph, in reading order.
+
+    ``Paragraph.runs`` returns only direct children, which drops the runs
+    inside a hyperlink — text the reader plainly sees. Addressing text the
+    edit cannot reach is the silent-wrong failure this module exists to
+    avoid, so both halves read the same list.
+    """
+    from docx.text.run import Run  # type: ignore[import-untyped]
+
+    return [Run(element, paragraph) for element in paragraph._p.xpath(".//w:r")]
+
+
+def _cell_paragraphs(cell: Any, label: str, part: str) -> list[_Spot]:
+    spots: list[_Spot] = []
+    for index, paragraph in enumerate(cell.paragraphs):
+        spots.append(_Spot(f"{label}/p{index}", part, paragraph, _runs(paragraph)))
+    for table_index, table in enumerate(cell.tables):
+        spots.extend(_table_paragraphs(table, f"{label}/t{table_index}", part))
+    return spots
+
+
+def _table_paragraphs(table: Any, label: str, part: str) -> list[_Spot]:
+    spots: list[_Spot] = []
+    for row_index, row in enumerate(table.rows):
+        for cell_index, cell in enumerate(row.cells):
+            spots.extend(_cell_paragraphs(cell, f"{label}/r{row_index}c{cell_index}", part))
+    return spots
+
+
+def _part_name(part: Any) -> str:
+    return str(part.partname).lstrip("/")
+
+
+def _spots(document: Any) -> list[_Spot]:
+    """Every paragraph an anchor can reach — body, tables, headers, footers.
+
+    A merged table cell is reported once per grid position by python-docx, so
+    the same paragraph would otherwise look like several matches and every
+    anchor inside a merged heading would be refused as ambiguous. Paragraphs
+    are kept by element identity, first position wins.
+    """
+    body = _part_name(document.part)
+    spots: list[_Spot] = []
+    for index, paragraph in enumerate(document.paragraphs):
+        spots.append(_Spot(f"p{index}", body, paragraph, _runs(paragraph)))
+    for index, table in enumerate(document.tables):
+        spots.extend(_table_paragraphs(table, f"t{index}", body))
+    many = len(document.sections) > 1
+    for number, section in enumerate(document.sections, start=1):
+        for name, story in (("header", section.header), ("footer", section.footer)):
+            if story.is_linked_to_previous:
+                continue
+            part = _part_name(story.part)
+            label = f"{name}{number}" if many else name
+            for index, paragraph in enumerate(story.paragraphs):
+                spots.append(_Spot(f"{label}/p{index}", part, paragraph, _runs(paragraph)))
+            for index, table in enumerate(story.tables):
+                spots.extend(_table_paragraphs(table, f"{label}/t{index}", part))
+    seen: set[int] = set()
+    unique: list[_Spot] = []
+    for spot in spots:
+        key = id(spot.paragraph._p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(spot)
+    return unique
+
+
+def _shape_size_in(shape: Any) -> tuple[float, float]:
+    return round(shape.width.inches, 2), round(shape.height.inches, 2)
+
+
+def _table_rows(table: Any) -> list[list[str]]:
+    return [[cell.text.strip() for cell in row.cells] for row in table.rows]
+
+
+def outline(data: bytes, *, path: str = "document.docx") -> Outline:
+    """The document as addressed lines: paragraphs, tables and pictures.
+
+    Body paragraphs are numbered by their position in the document, blanks
+    included, so ``[p7]`` is ``document.paragraphs[7]`` for any reader —
+    the on-screen preview included. Empty paragraphs are numbered but not
+    printed; the gap in the numbering is the honest record of them.
+    """
+    document = _open(data, path=path)
+    from docx.table import Table  # type: ignore[import-untyped]
+
+    shape_size: dict[int, tuple[float, float]] = {}
+    for index, shape in enumerate(document.inline_shapes):
+        shape_size[index] = _shape_size_in(shape)
+
+    lines: list[str] = []
+    paragraph_index = 0
+    table_index = 0
+    image_index = 0
+    for item in document.iter_inner_content():
+        if isinstance(item, Table):
+            rows = _table_rows(item)
+            lines.append(f"[t{table_index}] {len(item.rows)}x{len(item.columns)} table")
+            lines.extend("      " + ",".join(cell for cell in row) for row in rows)
+            table_index += 1
+            continue
+        text = item.text.strip()
+        style = item.style.name if item.style is not None else ""
+        prefix = f"[p{paragraph_index}]"
+        if text:
+            named = style and style != "Normal"
+            lines.append(f"{prefix} ({style}) {text}" if named else f"{prefix} {text}")
+        for _ in item._p.xpath(".//w:drawing//a:blip"):
+            width, height = shape_size.get(image_index, (0.0, 0.0))
+            lines.append(f"[img{image_index}] {width} x {height} in, in p{paragraph_index}")
+            image_index += 1
+        paragraph_index += 1
+
+    for spot in _spots(document):
+        if not spot.label.startswith(("header", "footer")):
+            continue
+        text = spot.text.strip()
+        if text:
+            lines.append(f"[{spot.label}] {text}")
+
+    counts = {
+        "paragraphs": len(document.paragraphs),
+        "tables": len(document.tables),
+        "images": len(document.inline_shapes),
+        "sections": len(document.sections),
+    }
+    return Outline(lines=lines, counts=counts)
+
+
+# --- anchors ---------------------------------------------------------------------
+
+
+def _find(spots: list[_Spot], anchor: str) -> list[tuple[_Spot, int]]:
+    """Every ``(spot, offset)`` where ``anchor`` occurs, non-overlapping."""
+    hits: list[tuple[_Spot, int]] = []
+    for spot in spots:
+        text = spot.text
+        start = text.find(anchor)
+        while start != -1:
+            hits.append((spot, start))
+            start = text.find(anchor, start + len(anchor))
+    return hits
+
+
+def _first_difference(anchor: str, candidate: str) -> str:
+    """Where the anchor and the closest paragraph part ways, in words."""
+    limit = min(len(anchor), len(candidate))
+    for index in range(limit):
+        if anchor[index] != candidate[index]:
+            return (
+                f"First difference at character {index + 1}: you wrote "
+                f"{anchor[index]!r}, the document has {candidate[index]!r}."
+            )
+    # The other way round cannot reach here: an anchor that is a prefix of a
+    # paragraph is found, so it never becomes a near miss.
+    return (
+        f"The document's paragraph ends after {len(candidate)} characters; "
+        f"your anchor runs {len(anchor) - len(candidate)} character(s) longer."
+    )
+
+
+def _not_found(spots: list[_Spot], anchor: str) -> AnchorError:
+    """A refusal that says which paragraph was nearly it, and how it differed."""
+    best: _Spot | None = None
+    best_ratio = 0.0
+    for spot in spots:
+        text = spot.text
+        if not text.strip():
+            continue
+        ratio = SequenceMatcher(None, anchor, text).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = spot, ratio
+    parts = [f"anchor not found (0 matches): {anchor!r}."]
+    if "\n" in anchor:
+        parts.append("An anchor has to sit inside one paragraph — this one spans lines.")
+    if best is not None:
+        parts.append(f"Closest paragraph [{best.label}]: {best.text!r}")
+        parts.append("  " + _first_difference(anchor, best.text))
+    parts.append(
+        "  Copy the anchor from the read_canvas output rather than retyping it; "
+        "one character apart matches nothing."
+    )
+    return AnchorError("\n".join(parts))
+
+
+def _resolve(spots: list[_Spot], anchor: str) -> tuple[_Spot, int]:
+    """The single paragraph an anchor points at, or a loud refusal."""
+    if not anchor:
+        raise AnchorError("anchor is empty — pass the text you want to point at.")
+    hits = _find(spots, anchor)
+    if not hits:
+        raise _not_found(spots, anchor)
+    if len(hits) > 1:
+        where = ", ".join(f"[{spot.label}]" for spot, _ in hits[:_MAX_AMBIGUOUS_SHOWN])
+        extra = len(hits) - _MAX_AMBIGUOUS_SHOWN
+        more = f" and {extra} more" if extra > 0 else ""
+        raise AnchorError(
+            f"anchor matches {len(hits)} places ({where}{more}) — extend it with "
+            "surrounding words until exactly one place matches."
+        )
+    return hits[0]
+
+
+# --- repacking -------------------------------------------------------------------
+
+
+def repack(original: bytes, saved: bytes, changed: set[str]) -> bytes:
+    """``original`` with only ``changed`` (and brand-new) entries from ``saved``.
+
+    Every other entry — styles, theme, fonts, numbering, media the edit never
+    looked at — is copied with its bytes and its ZIP metadata intact, so a
+    checksum of any untouched part matches the file the user uploaded.
+    """
+    with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(
+        io.BytesIO(saved)
+    ) as edited:
+        source_names = source.namelist()
+        known = set(source_names)
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as result:
+            for info in source.infolist():
+                take_edited = info.filename in changed and info.filename in edited.namelist()
+                payload = edited.read(info.filename) if take_edited else source.read(info.filename)
+                result.writestr(
+                    zipfile.ZipInfo(info.filename, date_time=info.date_time),
+                    payload,
+                    compress_type=info.compress_type,
+                )
+            for info in edited.infolist():
+                if info.filename in known:
+                    continue
+                result.writestr(info, edited.read(info.filename))
+        return out.getvalue()
+
+
+def _saved(document: Any) -> bytes:
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+
+
+# --- operations ------------------------------------------------------------------
+
+
+def replace_text(data: bytes, old: str, new: str, *, path: str = "document.docx") -> bytes:
+    """Replace the one occurrence of ``old`` with ``new``, runs crossed.
+
+    Searches body paragraphs, table cells (nested tables included), headers
+    and footers. Raises :class:`AnchorError` unless exactly one place matches.
+    """
+    document = _open(data, path=path)
+    spots = _spots(document)
+    spot, start = _resolve(spots, old)
+    _splice(spot.runs, start, start + len(old), new)
+    return repack(data, _saved(document), {spot.part})
+
+
+def _splice(runs: list[Any], start: int, end: int, new: str) -> None:
+    """Put ``new`` in place of ``[start, end)`` across the runs it spans.
+
+    The text lands in the first run it touches, so it inherits that run's
+    formatting — the same thing typing over a selection does in Word.
+    """
+    position = 0
+    injected = False
+    for run in runs:
+        low, high = position, position + len(run.text)
+        position = high
+        if high <= start or low >= end:
+            continue
+        head = run.text[: max(0, min(start - low, high - low))]
+        tail = run.text[max(0, min(end - low, high - low)) :]
+        run.text = head + ("" if injected else new) + tail
+        injected = True
+
+
+def insert_paragraph(
+    data: bytes,
+    *,
+    anchor: str,
+    text: str,
+    style: str | None = None,
+    position: str = "after",
+    path: str = "document.docx",
+) -> bytes:
+    """Add a paragraph next to the paragraph ``anchor`` points at."""
+    if position not in {"after", "before"}:
+        raise DocumentOpError(f'position is "after" or "before" (got {position!r}).')
+    document = _open(data, path=path)
+    spots = _spots(document)
+    spot, _ = _resolve(spots, anchor)
+    try:
+        added = spot.paragraph.insert_paragraph_before(text, style)
+    except KeyError as exc:
+        raise DocumentOpError(_unknown_style(document, style)) from exc
+    if position == "after":
+        spot.paragraph._p.addnext(added._p)
+    return repack(data, _saved(document), {spot.part})
+
+
+def _unknown_style(document: Any, style: str | None) -> str:
+    from docx.enum.style import WD_STYLE_TYPE  # type: ignore[import-untyped]
+
+    names = sorted(
+        item.name
+        for item in document.styles
+        if item.type == WD_STYLE_TYPE.PARAGRAPH and item.name
+    )
+    shown = ", ".join(names[:_MAX_STYLES_SHOWN])
+    more = "" if len(names) <= _MAX_STYLES_SHOWN else f", and {len(names) - _MAX_STYLES_SHOWN} more"
+    return (
+        f"this document has no paragraph style named {style!r}. Styles it does "
+        f"have: {shown}{more}. Omit `style` to use the default one."
+    )
+
+
+def remove_paragraph(data: bytes, *, anchor: str, path: str = "document.docx") -> bytes:
+    """Delete the paragraph ``anchor`` points at."""
+    document = _open(data, path=path)
+    spots = _spots(document)
+    spot, _ = _resolve(spots, anchor)
+    element = spot.paragraph._p
+    parent = element.getparent()
+    siblings = parent.findall(element.tag)
+    if len(siblings) <= 1:
+        raise DocumentOpError(
+            f"[{spot.label}] is the only paragraph in its container; Word needs one "
+            "there. Replace its text instead of removing it."
+        )
+    parent.remove(element)
+    return repack(data, _saved(document), {spot.part})
+
+
+def replace_image(
+    data: bytes, *, index: int, image: bytes, path: str = "document.docx"
+) -> tuple[bytes, str]:
+    """Swap the bytes behind ``[img<index>]``, keeping its width on the page.
+
+    The height is refitted to the replacement's own proportions, so the
+    picture keeps the column width the document was laid out around instead
+    of stretching. Returns the new file bytes and a one-line note about the
+    size, for the caller to relay.
+    """
+    from docx.image.image import Image  # type: ignore[import-untyped]
+    from docx.shared import Emu  # type: ignore[import-untyped]
+
+    document = _open(data, path=path)
+    shapes = document.inline_shapes
+    if not shapes:
+        raise DocumentOpError("this document has no pictures to replace.")
+    if index < 0 or index >= len(shapes):
+        raise DocumentOpError(
+            f"[img{index}] is not in this document — it has {len(shapes)} picture(s), "
+            f"addressed [img0]..[img{len(shapes) - 1}]."
+        )
+    try:
+        replacement = Image.from_blob(image)
+    except Exception as exc:
+        raise DocumentOpError(f"the replacement is not a readable image ({exc}).") from exc
+    shape = shapes[index]
+    old_width, old_height = _shape_size_in(shape)
+    relationship_id, _ = document.part.get_or_add_image(io.BytesIO(image))
+    shape._inline.graphic.graphicData.pic.blipFill.blip.embed = relationship_id
+    width = shape.width.emu
+    ratio = replacement.px_height / replacement.px_width if replacement.px_width else 1.0
+    shape.height = Emu(max(_MIN_EMU, int(round(width * ratio))))
+    new_width, new_height = _shape_size_in(shape)
+    changed = {
+        _part_name(document.part),
+        "word/_rels/document.xml.rels",
+        "[Content_Types].xml",
+    }
+    note = (
+        f"[img{index}] was {old_width} x {old_height} in and is now "
+        f"{new_width} x {new_height} in (width kept, height refitted)."
+    )
+    return repack(data, _saved(document), changed), note
+
+
+# --- verification ----------------------------------------------------------------
+
+
+def reopens(data: bytes) -> str | None:
+    """``None`` when the bytes parse as a Word document, else why they do not."""
+    try:
+        _open(data)
+    except (DocumentPartError, MissingDocumentDependencyError) as exc:
+        return str(exc)
+    return None
