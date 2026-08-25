@@ -1,7 +1,7 @@
 {
   "name": "@braincrew-lab/langchain-canvas",
-  "version": "0.7.2",
-  "description": "A live canvas for LangChain agents \u2014 stream documents, charts, and rich artifacts into a React panel.",
+  "version": "0.7.4",
+  "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
   "license": "MIT",
   "author": "Brain Crew (https://github.com/braincrew-lab)",
   "homepage": "https://github.com/braincrew-lab/langchain-canvas#readme",
