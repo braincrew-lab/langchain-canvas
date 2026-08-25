@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from .converters import UnsafeArchiveError, ensure_archive_within_limits
+
 DOCUMENT_OP_SUFFIXES: tuple[str, ...] = (".docx",)
 """File suffixes these operations handle (lowercase, with the dot)."""
 
@@ -113,10 +115,6 @@ def _require_docx() -> Any:
 def _open(data: bytes, *, path: str = "document.docx") -> Any:
     """Parse ``data`` into a python-docx ``Document`` (archive limits first)."""
     docx = _require_docx()
-    # Imported here, not at module scope: converters renders documents through
-    # this module, and a top-level import back into it would be a cycle.
-    from .converters import UnsafeArchiveError, ensure_archive_within_limits
-
     try:
         ensure_archive_within_limits(data, path=path)
     except UnsafeArchiveError as exc:

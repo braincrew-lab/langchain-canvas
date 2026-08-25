@@ -19,7 +19,7 @@ import io
 import zipfile
 
 import pytest
-from documents import png_bytes, sample_document
+from documents import FIXTURES, png_bytes, sample_document
 
 from langchain_canvas import document_ops as ops
 
@@ -322,3 +322,23 @@ def test_replacement_that_is_not_an_image_is_refused(document: bytes) -> None:
 def test_unreadable_bytes_are_refused_before_anything_else() -> None:
     with pytest.raises(ops.DocumentPartError):
         ops.outline(b"PK\x03\x04 not really")
+
+
+# --- I6: what the surface advertises is what the surface does -------------------
+
+
+def test_every_advertised_format_has_a_document_that_proves_it() -> None:
+    """A suffix in the tuple is a promise to the model; each one is exercised.
+
+    Adding a format is cheap and silent — a tuple grows, every description
+    picks the new suffix up, and nothing proves the parser behind it exists.
+    This is the proof, one file per format.
+    """
+    for suffix in ops.DOCUMENT_OP_SUFFIXES:
+        assert suffix in FIXTURES, f"{suffix} is advertised with nothing proving it works"
+        build, anchor, replacement = FIXTURES[suffix]
+        data = build()
+        assert ops.outline(data).counts["paragraphs"] > 0, suffix
+        edited = ops.replace_text(data, anchor, replacement, path=f"upload{suffix}")
+        assert ops.reopens(edited) is None, suffix
+        assert replacement in ops.outline(edited).render(), suffix

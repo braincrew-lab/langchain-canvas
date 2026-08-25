@@ -489,7 +489,14 @@ def _table_lines(rows: list[list[str]]) -> str:
 
 
 class DocxSourceConverter:
-    """Word documents as text — paragraphs and tables, in document order.
+    """Word documents as addressed text — paragraphs, tables and pictures.
+
+    Every body paragraph carries its number and its style name, every table
+    and picture its address, so a model reading the document can point at a
+    part of it afterwards. A plain text dump gives none of that back: the
+    heading hierarchy is gone and there is no way to say *which* paragraph.
+    See :mod:`langchain_canvas.document_ops` for what the addresses mean and
+    which edits accept them.
 
     Requires ``python-docx`` — installed by the ``office`` extra.
     """
@@ -498,32 +505,23 @@ class DocxSourceConverter:
 
     def convert(self, data: bytes, *, path: str) -> ConvertedSource:
         try:
-            from docx import Document  # type: ignore[import-untyped]
-            from docx.table import Table  # type: ignore[import-untyped]
+            import docx  # type: ignore[import-untyped]  # noqa: F401
         except ImportError as exc:
             raise MissingConverterDependencyError(
                 "reading .docx needs python-docx — install langchain-canvas[office] "
                 "or register your own converter for .docx"
             ) from exc
+        # Imported here, not at module scope: document_ops reads the archive
+        # limits from this module, and a top-level pair would be a cycle.
+        from .document_ops import outline
 
         ensure_archive_within_limits(data, path=path)
-        document = Document(io.BytesIO(data))
-        parts: list[str] = []
-        paragraphs = 0
-        tables = 0
-        for item in document.iter_inner_content():
-            if isinstance(item, Table):
-                tables += 1
-                rows = [[cell.text.strip() for cell in row.cells] for row in item.rows]
-                parts.append(_table_lines(rows))
-            else:
-                text = item.text.strip()
-                if text:
-                    paragraphs += 1
-                    parts.append(text)
+        rendered = outline(data, path=path)
         return ConvertedSource(
-            blocks=[{"type": "text", "text": "\n\n".join(parts)}],
-            metadata={"paragraphs": paragraphs, "tables": tables},
+            blocks=[{"type": "text", "text": rendered.render()}],
+            # The counts header inside the text carries the full set; the
+            # metadata stays the two facts a preview card has room for.
+            metadata={key: rendered.counts[key] for key in ("paragraphs", "tables")},
         )
 
 

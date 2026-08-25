@@ -133,3 +133,13 @@ def sample_document() -> bytes:
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+FIXTURES: dict[str, tuple] = {
+    ".docx": (sample_document, "즉시 조치", "즉각 조치"),
+}
+"""One (builder, anchor, replacement) per format the operations advertise.
+
+A format listed in ``DOCUMENT_OP_SUFFIXES`` with no entry here is a promise
+with nothing behind it — the suffix test refuses that.
+"""

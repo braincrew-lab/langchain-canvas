@@ -188,6 +188,27 @@ def test_docx_converter_keeps_paragraphs_and_tables_in_order() -> None:
     assert got.metadata == {"paragraphs": 2, "tables": 1}
 
 
+def test_docx_converter_addresses_what_it_shows() -> None:
+    """The reader can point at a paragraph afterwards, and sees its style."""
+    from docx import Document
+
+    from langchain_canvas.converters import DocxSourceConverter
+
+    doc = Document()
+    doc.add_heading("개요 Overview", level=1)
+    doc.add_paragraph("")
+    doc.add_paragraph("본문 첫 문단")
+    doc.add_table(rows=1, cols=1).rows[0].cells[0].text = "칸"
+    out = io.BytesIO()
+    doc.save(out)
+
+    text = DocxSourceConverter().convert(out.getvalue(), path="sources/doc.docx").blocks[0]["text"]
+    assert text.startswith("paragraphs: 3 · tables: 1 · images: 0 · sections: 1")
+    assert "[p0] (Heading 1) 개요 Overview" in text
+    assert "[p2] 본문 첫 문단" in text  # the blank p1 is numbered, not printed
+    assert "[t0] 1x1 table" in text
+
+
 def test_pptx_converter_renders_each_slide() -> None:
     from pptx import Presentation
     from pptx.util import Inches

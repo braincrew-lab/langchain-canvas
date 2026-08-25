@@ -10,6 +10,8 @@ Public surface:
   (``read/write/edit_canvas`` + ``list_canvas_files``) bound to a ``CanvasStore``.
 * ``create_export_tool``   — the ``export_canvas`` tool (canvas files → office
   formats under ``exports/``), pluggable through ``Exporter``.
+* ``create_document_tools``— editing an uploaded Word file in place (copy it out
+  of ``sources/``, add / remove a paragraph, swap a picture).
 * ``sse_from_agent``       — turn an agent run into a Canvas Wire Protocol SSE stream.
 * ``hydrate_events``       — replay a stored canvas as wire events for reloads.
 * ``encode_table``         — the ``.table.json`` file content for a table artifact.
@@ -39,6 +41,7 @@ from .tools import (
     create_asset_tool,
     create_canvas_tools,
     create_check_table_tool,
+    create_document_tools,
     create_export_tool,
 )
 
@@ -62,6 +65,7 @@ __all__ = [
     "create_canvas_agent",
     "create_canvas_tools",
     "create_check_table_tool",
+    "create_document_tools",
     "create_export_tool",
     "default_converters",
     "default_exporters",
