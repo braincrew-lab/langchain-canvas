@@ -137,7 +137,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   };
   const duplicateSlide = () => {
     const next = [...slides];
-    next.splice(at + 1, 0, { ...slide, elements: resolveElements(slide).map((e) => ({ ...e })) });
+    next.splice(at + 1, 0, { ...slide, elements: resolveElements(slide, page).map((e) => ({ ...e })) });
     setSlides(next);
     setIndex(at + 1);
   };
@@ -164,7 +164,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   };
 
   const addElement = (el: Omit<SlideElement, "id">) =>
-    update({ elements: [...resolveElements(slide), { ...el, id: newElementId() }] });
+    update({ elements: [...resolveElements(slide, page), { ...el, id: newElementId() }] });
   const addTextEl = () => addElement({ type: "text", x: 12, y: 16, w: 45, h: 16, text: "Text", fontSize: 24 });
   const addImageEl = (file: File | undefined) => {
     if (!file) return;
@@ -207,7 +207,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
               <span className="cv-deck__thumb-n">{i + 1}</span>
               <div className="cv-deck__thumb-slide" style={{ aspectRatio: aspect, ...(s.background ? { background: s.background } : {}) }}>
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
-                {resolveElements(s).map((el) =>
+                {resolveElements(s, page).map((el) =>
                   el.type === "text" ? (
                     <span
                       key={el.id}
@@ -277,7 +277,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         </div>
 
         <div className="cv-slide cv-slide--blank" ref={editBox.ref} style={{ aspectRatio: aspect, ...slideStyle }}>
-          <FreeSlide elements={resolveElements(slide)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} />
+          <FreeSlide elements={resolveElements(slide, page)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} />
         </div>
 
         <div className="cv-deck__nav cv-chrome">
@@ -299,7 +299,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           {/* key on the slide index so each advance re-triggers the fade-in. */}
           <div key={at} ref={presentBox.ref} className="cv-present__slide cv-present__fade cv-slide cv-slide--blank" style={{ aspectRatio: aspect, ...slideStyle }}>
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
-              {resolveElements(slide).map((el) =>
+              {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
                     <div className="cv-free__text" style={{ fontSize: (el.fontSize ?? 24) * presentBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap" }}>

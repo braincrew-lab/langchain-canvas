@@ -26,7 +26,8 @@ from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
 
 from .converters import ensure_archive_within_limits
-from .protocol.artifacts import Slide, SlideElement, SlidesData
+from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
+from .slide_layout import BULLET_PREFIX, resolve_elements
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -510,6 +511,9 @@ DEFAULT_SLIDE_PAGE_IN = (_SLIDE_WIDTH_IN, _SLIDE_HEIGHT_IN)
 _EMU_PER_INCH = 914400
 # Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
 _PX_TO_PT = 0.75
+_EMU_PER_POINT = 12700
+# The hanging indent a bulleted line gets, as a multiple of its own type size.
+_BULLET_HANG = 1.2
 _DEFAULT_FONT_PX = 24.0
 _DEFAULT_SHAPE_FILL = "5B5BD6"
 
@@ -529,67 +533,9 @@ def _hex_rgb(value: str | None) -> str | None:
     return digits.upper()
 
 
-def _derived_slide_elements(slide: Slide) -> list[SlideElement]:
-    """Movable elements derived from a slide's structured shape.
-
-    The twin of ``toElements`` in ``canvas-react/src/client/slideElements.ts``
-    — same layouts, same geometry, same font sizes — so a deck an agent wrote
-    structurally exports the way the canvas renders it. An explicit
-    ``elements`` array (the user has edited) wins over derivation; that
-    preference lives in :func:`_resolved_slide_elements`.
-    """
-    layout = slide.layout or "content"
-    elements: list[SlideElement] = []
-
-    def push(element_id: str, **kwargs: Any) -> None:
-        kwargs.setdefault("color", slide.text_color)
-        elements.append(SlideElement(id=element_id, **kwargs))
-
-    if layout in ("title", "section"):
-        if slide.title:
-            push(
-                "title", type="text", x=10, y=34, w=80, h=18, text=slide.title,
-                font_size=54 if layout == "title" else 40, bold=True, align="center",
-            )
-        if slide.subtitle:
-            push(
-                "subtitle", type="text", x=10, y=58, w=80, h=8,
-                text=slide.subtitle, font_size=24, align="center",
-            )
-    elif layout == "image":
-        if slide.title:
-            push(
-                "title", type="text", x=6, y=6, w=88, h=10, text=slide.title,
-                font_size=28, bold=True,
-            )
-        if slide.image:
-            elements.append(
-                SlideElement(id="img", type="image", x=14, y=20, w=72, h=66, src=slide.image)
-            )
-    elif layout == "two-column":
-        if slide.title:
-            push(
-                "title", type="text", x=6, y=6, w=88, h=10, text=slide.title,
-                font_size=28, bold=True,
-            )
-        for i, bullet in enumerate(slide.bullets):
-            push(f"bul_{i}", type="text", x=6, y=24 + i * 8, w=42, h=7, text=f"• {bullet}", font_size=18)
-        for i, bullet in enumerate(slide.bullets2):
-            push(f"bul2_{i}", type="text", x=52, y=24 + i * 8, w=42, h=7, text=f"• {bullet}", font_size=18)
-    else:
-        if slide.title:
-            push(
-                "title", type="text", x=6, y=8, w=88, h=10, text=slide.title,
-                font_size=32, bold=True,
-            )
-        for i, bullet in enumerate(slide.bullets):
-            push(f"bul_{i}", type="text", x=8, y=28 + i * 9, w=84, h=8, text=f"• {bullet}", font_size=20)
-    return elements
-
-
-def _resolved_slide_elements(slide: Slide) -> list[SlideElement]:
+def _resolved_slide_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideElement]:
     """What is actually on the slide: explicit edits win, else derive."""
-    return slide.elements if slide.elements else _derived_slide_elements(slide)
+    return resolve_elements(slide, page)
 
 
 class SlidesPptxExporter:
@@ -632,7 +578,8 @@ class SlidesPptxExporter:
                 MSO_CONNECTOR,
                 MSO_SHAPE,
             )
-            from pptx.enum.text import PP_ALIGN  # type: ignore[import-untyped]
+            from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN  # type: ignore[import-untyped]
+            from pptx.oxml.ns import qn  # type: ignore[import-untyped]
             from pptx.util import Emu, Inches, Pt  # type: ignore[import-untyped]
         except ImportError as exc:
             raise MissingExporterDependencyError(
@@ -712,27 +659,47 @@ class SlidesPptxExporter:
                 height = (element.h / 100.0) * span * canvas_h * scale
                 return Inches(left), Inches(top), Inches(width), Inches(height)
 
-            for element in _resolved_slide_elements(slide_model):
+            for element in _resolved_slide_elements(slide_model, deck.page):
                 left, top, width, height = inch_box(element)
                 if element.type == "text":
                     box = slide.shapes.add_textbox(left, top, width, height)
                     frame = box.text_frame
                     frame.word_wrap = True
+                    # Boxes are measured to hold their own text, so nothing
+                    # needs shrinking — and shrink-to-fit is what made two
+                    # bullets of the same size render at different sizes.
+                    frame.auto_size = MSO_AUTO_SIZE.NONE
                     frame.margin_left = frame.margin_right = Emu(0)
                     frame.margin_top = frame.margin_bottom = Emu(0)
                     color = _hex_rgb(element.color) or _hex_rgb(slide_model.text_color)
                     alignment = alignments.get(element.align or "left")
+                    # Text rides the same scale as the geometry, so type and
+                    # shapes keep their relative proportions on any page size.
+                    size_pt = (element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT * scale
                     for index, line in enumerate((element.text or "").split("\n")):
                         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
                         paragraph.alignment = alignment
+                        if line.startswith(BULLET_PREFIX):
+                            line = line[len(BULLET_PREFIX):]
+                            # A literal bullet inside the run is drawn by
+                            # whichever font covers the text after it, so a
+                            # deck of mixed scripts gets mixed bullet glyphs
+                            # and ragged left edges. A paragraph bullet is
+                            # drawn once by the list, and its hanging indent
+                            # puts wrapped lines under the text. python-pptx
+                            # has no public API for either.
+                            hang = str(int(size_pt * _BULLET_HANG * _EMU_PER_POINT))
+                            properties = paragraph._p.get_or_add_pPr()
+                            properties.set("marL", hang)
+                            properties.set("indent", "-" + hang)
+                            properties.append(
+                                properties.makeelement(
+                                    qn("a:buChar"), {"char": BULLET_PREFIX.strip()}
+                                )
+                            )
                         run = paragraph.add_run()
                         run.text = line
-                        # Text rides the same scale as the geometry, so type
-                        # and shapes keep their relative proportions on any
-                        # page size.
-                        run.font.size = Pt(
-                            (element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT * scale
-                        )
+                        run.font.size = Pt(size_pt)
                         run.font.bold = bool(element.bold)
                         if color is not None:
                             run.font.color.rgb = RGBColor.from_string(color)

@@ -513,14 +513,25 @@ def create_canvas_tools(
 
         Structured files carry an envelope: a `.slides.json` deck is
         `{"type": "slides", "title": "...", "data": {"slides": [...]}}`.
-        Each slide is either structured (`title` / `subtitle` / `bullets` /
-        `image` / `layout`) or free elements (`elements` with `type`
-        text|image|shape and `x`/`y`/`w`/`h` as percent of the slide,
-        0-100; `fontSize` in px, colors as `#hex` strings). Optional per
-        slide: `background` (a `#hex` string), `notes`. Optional deck-level
-        `"template": "sources/brand.pptx"` makes the pptx export build on
-        that file's masters and layouts. A `.table.json` sheet is
-        `{"type": "table", "data": {"sheet": {...}}}`.
+        Write each slide one of two ways, never both — `elements` is drawn
+        instead of the structured fields, not on top of them:
+
+        - Structured, and it is laid out for you: `title`, `subtitle`,
+          `bullets` (a list of strings), `bullets2` for the right-hand
+          column, `image`, and `layout`. `layout` is exactly one of
+          `content` (the default — heading over bullets), `title`,
+          `section`, `image`, `two-column`, `blank`. Any other value is
+          rejected; omit it rather than invent one. Sizes and positions are
+          chosen from the content, so do not add coordinates here.
+        - Free `elements`, for a slide you are composing yourself. Every
+          element needs an `id` (a short unique string), a `type` of
+          text|image|shape, and `x`/`y`/`w`/`h` as percent of the slide,
+          0-100. `fontSize` is px on a 960x540 page, colors are `#hex`.
+
+        Optional per slide: `background` (a `#hex` string), `notes`.
+        Optional deck-level `"template": "sources/brand.pptx"` makes the
+        pptx export build on that file's masters and layouts. A
+        `.table.json` sheet is `{"type": "table", "data": {"sheet": {...}}}`.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _SOURCES_READONLY

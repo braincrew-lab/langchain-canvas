@@ -19,6 +19,7 @@ from openpyxl import load_workbook
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN
+from pptx.oxml.ns import qn
 from pptx.util import Inches
 
 from langchain_canvas import InMemoryCanvasStore, create_export_tool
@@ -280,10 +281,59 @@ def test_slides_pptx_derives_structured_slides_like_the_canvas():
     first_texts = [s.text_frame.text for s in first.shapes if s.has_text_frame]
     assert "Big Title" in first_texts and "The subtitle" in first_texts
     title_shape = next(s for s in first.shapes if s.text_frame.text == "Big Title")
-    assert title_shape.text_frame.paragraphs[0].runs[0].font.size.pt == 40.5  # 54 px
+    assert title_shape.text_frame.paragraphs[0].runs[0].font.size.pt == 36.0  # 48 px
 
+    # The bullet glyph is a paragraph property, not part of the run — see
+    # test_slides_pptx_draws_bullets_as_a_real_list.
     second_texts = [s.text_frame.text for s in second.shapes if s.has_text_frame]
-    assert second_texts == ["Agenda", "• One", "• Two"]
+    assert second_texts == ["Agenda", "One", "Two"]
+
+
+def test_slides_pptx_boxes_hold_their_own_text():
+    """A wrapping bullet gets a taller box, and nothing shrinks to fit.
+
+    Shrink-to-fit is what rendered two bullets of the same size at two
+    different sizes on the same slide.
+    """
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    long_line = "a bullet long enough that it has to wrap onto a second line inside its box"
+    content = _deck([{"title": "T", "bullets": ["short", long_line]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    boxes = {s.text_frame.text: s for s in next(iter(deck.slides)).shapes if s.has_text_frame}
+    assert boxes[long_line].height == pytest.approx(2 * boxes["short"].height, abs=2)
+    assert all(b.text_frame.auto_size == MSO_AUTO_SIZE.NONE for b in boxes.values())
+    sizes = {
+        box.text_frame.paragraphs[0].runs[0].font.size
+        for box in (boxes[long_line], boxes["short"])
+    }
+    assert len(sizes) == 1
+
+
+def test_slides_pptx_draws_bullets_as_a_real_list():
+    """A literal '•' in the run picks up the font of whatever follows it.
+
+    Mixed scripts on one slide then get mixed bullet glyphs and ragged left
+    edges, and a wrapped line starts under the bullet instead of under the
+    text. A paragraph bullet is drawn once, by the list.
+    """
+    content = _deck([{"title": "T", "bullets": ["매출 성장", "Revenue growth"]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    shapes = [s for s in next(iter(deck.slides)).shapes if s.has_text_frame]
+    bullets = [s for s in shapes if s.text_frame.text != "T"]
+    assert [s.text_frame.text for s in bullets] == ["매출 성장", "Revenue growth"]
+    for shape in bullets:
+        properties = shape.text_frame.paragraphs[0]._p.find(qn("a:pPr"))
+        assert properties is not None
+        assert properties.find(qn("a:buChar")).get("char") == "•"
+        # A hanging indent: the marker sits left of the text it belongs to.
+        assert int(properties.get("indent")) == -int(properties.get("marL"))
+        assert int(properties.get("marL")) > 0
+
+    # The heading is not a list item.
+    heading = next(s for s in shapes if s.text_frame.text == "T")
+    heading_properties = heading.text_frame.paragraphs[0]._p.find(qn("a:pPr"))
+    assert heading_properties is None or heading_properties.find(qn("a:buChar")) is None
 
 
 def test_slides_pptx_padding_insets_geometry():
