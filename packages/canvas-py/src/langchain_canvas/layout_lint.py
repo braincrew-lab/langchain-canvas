@@ -40,7 +40,7 @@ checks: their layout is derived and always in bounds.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import ValidationError
@@ -211,20 +211,20 @@ def _check_schema(data: dict[str, Any], warnings: list[str]) -> None:
     )
 
 
-def _reported_elsewhere(error: dict[str, Any]) -> bool:
+def _reported_elsewhere(error: Mapping[str, Any]) -> bool:
     location = error.get("loc") or ()
     field = location[-1] if location and isinstance(location[-1], str) else None
     return (field, error.get("type")) in _REPORTED_ELSEWHERE
 
 
-def _schema_detail(error: dict[str, Any]) -> str:
+def _schema_detail(error: Mapping[str, Any]) -> str:
     """One validation error as 'where: what — how to fix it'."""
     location = error.get("loc") or ()
     field = location[-1] if location and isinstance(location[-1], str) else None
     where = _schema_where(location)
     name = f'"{field}"' if field else "the deck"
     if error.get("type") == "missing":
-        hint = _FIX_HINTS.get(field, "add it")
+        hint = _FIX_HINTS.get(field or "", "add it")
         return f"{where}: {name} is required — {hint}"
     got = _schema_input(error.get("input"))
     return f"{where}: {name}{got} — {error.get('msg', 'is not valid')}"
