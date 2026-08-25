@@ -59,6 +59,16 @@ from .document_lint import (
     is_document_path,
     lint_document_content,
 )
+from .document_ops import (
+    DOCUMENT_OP_SUFFIXES,
+    DocumentOpError,
+    MissingDocumentDependencyError,
+    insert_paragraph,
+    remove_paragraph,
+    reopens,
+    replace_image,
+    replace_text,
+)
 from .exporters import (
     DEFAULT_SLIDE_PAGE_IN,
     Exporter,
@@ -69,7 +79,7 @@ from .exporters import (
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .layout_lint import format_layout_warnings, lint_slides_data
-from .replay import ARTIFACT_SUFFIXES, events_for_commit
+from .replay import ARTIFACT_SUFFIXES, events_for_commit, source_preview_events
 from .store import (
     BinaryContentError,
     CanvasFileNotFoundError,
@@ -87,7 +97,129 @@ _SOURCES_READONLY = (
     "read-only for the agent. Create a new canvas file instead (for example "
     "an .html page or a .table.json table)."
 )
+_SOURCES_READONLY_DOCUMENT = (
+    "Error: {path} is the user's original upload and is read-only. Call "
+    "open_document_for_editing on it first, then edit the copy it makes."
+)
 _DEFAULT_READ_LIMIT = 400
+_DOCUMENT_FORMATS = ", ".join(DOCUMENT_OP_SUFFIXES)
+
+
+def _is_document_file(path: str) -> bool:
+    """Whether these are the binary documents the document operations edit."""
+    return path.lower().endswith(DOCUMENT_OP_SUFFIXES)
+
+
+def _sources_readonly(path: str) -> str:
+    """The refusal for an upload, naming the way forward for this file type.
+
+    A Word file has one — copy it and edit the copy — and pointing at .html
+    pages instead would be telling the agent it cannot do something it can.
+    """
+    if _is_document_file(path):
+        return _SOURCES_READONLY_DOCUMENT.format(path=path)
+    return _SOURCES_READONLY
+
+
+def _renderer_for(path: str, converters: list[SourceConverter]) -> PageRenderable | None:
+    converter = converter_for(path, converters)
+    return converter if isinstance(converter, PageRenderable) else None
+
+
+def _verified(data: bytes, path: str, converters: list[SourceConverter]) -> str:
+    """"" when the edited bytes pass every check, else why they did not.
+
+    Two checks beyond the save-time one every file already gets: the result
+    still opens as a document, and it still renders. A document that parses
+    but no longer draws is exactly the failure a user finds by opening the
+    file, and the caller refuses to save on either — an edit that cannot be
+    seen is not an edit that gets reported as done.
+    """
+    problem = reopens(data)
+    if problem is not None:
+        return f"Error: the edit did not save — the result no longer opens ({problem})."
+    renderer = _renderer_for(path, converters)
+    if renderer is None:
+        return ""
+    try:
+        renderer.render_pages(data, path=path, pages=[1])
+    except Exception as exc:  # any renderer failure blocks the save
+        return (
+            f"Error: the edit did not save — the result no longer renders ({exc}). "
+            "The file on the canvas is unchanged."
+        )
+    return ""
+
+
+def _look_note(path: str, converters: list[SourceConverter]) -> str:
+    """The instruction to actually look at what was just written."""
+    if _renderer_for(path, converters) is None:
+        return (
+            " No page renderer is installed here, so the result was reopened but "
+            "not seen — check it yourself before telling the user it is done."
+        )
+    return (
+        f' Look at it before telling the user it is done: read_canvas(path="{path}", '
+        'pages="grid").'
+    )
+
+
+def _broadcast_source(
+    store: CanvasStore,
+    runtime: ToolRuntime,
+    canvas_id: str,
+    path: str,
+    is_new: bool,
+    commit: Commit,
+) -> None:
+    """Push the file's card to a connected client (silent without a writer)."""
+    writer = getattr(runtime, "stream_writer", None)
+    if writer is None:
+        return
+    for event in source_preview_events(
+        store,
+        canvas_id,
+        path,
+        is_new=is_new,
+        revision=commit.revision,
+        description=commit.description,
+    ):
+        writer(event)
+
+
+def _save_document(
+    store: CanvasStore,
+    runtime: ToolRuntime,
+    canvas_id: str,
+    path: str,
+    data: bytes,
+    description: str,
+    revision: str,
+    *,
+    converters: list[SourceConverter],
+    verb: str,
+    note: str = "",
+) -> str:
+    """Check the edited bytes, save them, redraw the card, say what to look at.
+
+    The order is the point: a result that no longer opens or no longer renders
+    never reaches the store, so "saved" and "still a document" cannot come
+    apart. The save itself keeps the read-before-write contract every other
+    write keeps — a stale ``revision`` is refused, not overwritten.
+    """
+    problem = _verified(data, path, converters)
+    if problem:
+        return problem
+    try:
+        commit = store.write_bytes(
+            canvas_id, path, data, description, base_revision=revision, actor="agent"
+        )
+    except RevisionMismatchError as exc:
+        return f"Error: {exc}. {_RETRY_HINT}"
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+    _broadcast_source(store, runtime, canvas_id, path, False, commit)
+    return f"{verb} {path} (revision {commit.revision}).{note}" + _look_note(path, converters)
 
 
 def _canvas_id(runtime: ToolRuntime) -> str:
@@ -341,6 +473,44 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
+    def _edit_document(
+        runtime: ToolRuntime,
+        canvas_id: str,
+        path: str,
+        old: str,
+        new: str,
+        description: str,
+        revision: str,
+    ) -> str:
+        """`edit_canvas` over a Word file — same contract, real paragraphs.
+
+        Word splits one visible sentence across runs, so a replacement that
+        matched the file's raw XML would almost never be the one the reader
+        asked for. This matches the text as read, across run boundaries, and
+        keeps the same one-match-only rule the text path has.
+        """
+        try:
+            got = store.read_bytes(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            edited = replace_text(got.data, old, new, path=path)
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Edited",
+        )
+
     def _canvas_paths(canvas_id: str) -> set[str] | None:
         try:
             return {info.path for info in store.list_files(canvas_id)}
@@ -567,7 +737,7 @@ def create_canvas_tools(
         `.table.json` sheet is `{"type": "table", "data": {"sheet": {...}}}`.
         """
         if path.startswith(_SOURCES_PREFIX):
-            return _SOURCES_READONLY
+            return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
         page_note = None
         if path.lower().endswith(".slides.json"):
@@ -611,10 +781,17 @@ def create_canvas_tools(
         `old` must match exactly once; include enough surrounding context to
         make it unique. `description` is the version-history entry. Files
         under `sources/` (the user's uploads) are read-only.
+
+        Word files ({document_formats}) are edited the same way: `old` is text
+        copied from `read_canvas`, matched across the runs Word split it into,
+        and it must still match exactly once in the whole file — body, tables,
+        headers and footers included.
         """
         if path.startswith(_SOURCES_PREFIX):
-            return _SOURCES_READONLY
+            return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
+        if _is_document_file(path):
+            return _edit_document(runtime, canvas_id, path, old, new, description, revision)
         try:
             commit = store.edit(
                 canvas_id,
@@ -669,7 +846,241 @@ def create_canvas_tools(
     read_canvas.description = read_canvas.description.replace(
         "{page_formats}", ", ".join(renderable) if renderable else "none installed"
     )
+    edit_canvas.description = edit_canvas.description.replace(
+        "{document_formats}", _DOCUMENT_FORMATS
+    )
     return [read_canvas, write_canvas, edit_canvas, list_canvas_files]
+
+
+def create_document_tools(
+    store: CanvasStore, *, converters: list[SourceConverter] | None = None
+) -> list[Any]:
+    """Build the Word-editing tools bound to ``store``.
+
+    The agent already replaces text in a document through ``edit_canvas``;
+    these are the edits text replacement cannot express — adding a paragraph,
+    dropping one, swapping a picture — plus the copy step that makes an
+    upload editable in the first place. Kept out of
+    :func:`create_canvas_tools` so the four standard tools stay a stable
+    contract; mount these when your agent should hand documents back.
+
+    Uploads under ``sources/`` stay read-only here as everywhere else. The
+    working copy is what gets edited, and the original the user sent is still
+    on the canvas next to it, unchanged, for as long as the canvas lives.
+
+    ``converters`` is the same list :func:`create_canvas_tools` takes, used
+    here to prove an edited file still renders before it is saved; defaults
+    to the built-in set.
+    """
+    active_converters = default_converters() if converters is None else converters
+
+    def _document(canvas_id: str, path: str) -> tuple[bytes | None, str]:
+        """The stored bytes of a document path, or why they are not usable."""
+        if not _is_document_file(path):
+            return None, (
+                f"Error: these operations edit {_DOCUMENT_FORMATS} files (got {path}). "
+                "For a canvas document (.md) or a page (.html) use edit_canvas."
+            )
+        if path.startswith(_SOURCES_PREFIX):
+            return None, _sources_readonly(path)
+        try:
+            return store.read_bytes(canvas_id, path).data, ""
+        except CanvasFileNotFoundError as exc:
+            return None, f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return None, f"Error: {exc}."
+
+    @tool
+    def open_document_for_editing(
+        source: str, runtime: ToolRuntime, destination: str | None = None
+    ) -> str:
+        """Make an editable copy of an uploaded Word file.
+
+        Use this once, before the first edit: uploads under `sources/` are the
+        user's originals and stay read-only, so edits go to a copy. The copy
+        lands beside them at the canvas root under the same name (pass
+        `destination` for another name), and the original stays where it was.
+
+        After this, read the copy with `read_canvas` and change it with
+        `edit_canvas`, `insert_document_paragraph`,
+        `remove_document_paragraph` and `replace_document_image`.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not _is_document_file(source):
+            return (
+                f"Error: this opens {_DOCUMENT_FORMATS} files (got {source}). Text canvas "
+                "files are already editable — read one and use edit_canvas."
+            )
+        target = (destination or source.rsplit("/", 1)[-1]).strip()
+        if target.startswith(_SOURCES_PREFIX):
+            return (
+                "Error: sources/ holds the user's uploads — put the working copy "
+                "somewhere else (the default is the file name at the canvas root)."
+            )
+        if not _is_document_file(target):
+            return f"Error: the copy has to keep the document's format ({_DOCUMENT_FORMATS})."
+        try:
+            got = store.read_bytes(canvas_id, source)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        if any(info.path == target for info in store.list_files(canvas_id)):
+            return (
+                f"Error: {target} is already on the canvas. Edit that one, or pass "
+                "`destination` to copy under another name."
+            )
+        try:
+            commit = store.write_bytes(
+                canvas_id, target, got.data, f"Copy {source} for editing", actor="agent"
+            )
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        _broadcast_source(store, runtime, canvas_id, target, True, commit)
+        return (
+            f"Copied {source} to {target} ({len(got.data)} bytes, revision "
+            f"{commit.revision}). Edit {target}; {source} keeps the user's original."
+        )
+
+    @tool
+    def insert_document_paragraph(
+        path: str,
+        anchor: str,
+        text: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        style: str | None = None,
+        position: str = "after",
+    ) -> str:
+        """Add a paragraph next to one that is already in a Word file.
+
+        `anchor` is text copied from `read_canvas` that appears exactly once
+        in the document — it names the paragraph to add next to, and an anchor
+        matching nothing or several places is refused rather than guessed at.
+        `position` is `after` (the default) or `before`. `style` names a
+        paragraph style the document already has, such as `Heading 2` or
+        `List Bullet`; `read_canvas` shows each paragraph's style in
+        parentheses, so match the paragraphs around the new one. Omitted, the
+        new paragraph takes the document's default style.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        try:
+            edited = insert_paragraph(
+                data, anchor=anchor, text=text, style=style, position=position, path=path
+            )
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Added a paragraph to",
+        )
+
+    @tool
+    def remove_document_paragraph(
+        path: str, anchor: str, description: str, revision: str, runtime: ToolRuntime
+    ) -> str:
+        """Delete one paragraph from a Word file.
+
+        `anchor` is text copied from `read_canvas` that appears exactly once
+        in the document; the paragraph holding it is the one removed. A
+        paragraph that is the only one in its table cell cannot be removed —
+        Word needs one there — so replace its text instead.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        try:
+            edited = remove_paragraph(data, anchor=anchor, path=path)
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Removed a paragraph from",
+        )
+
+    @tool
+    def replace_document_image(
+        path: str,
+        index: int,
+        image_path: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+    ) -> str:
+        """Swap the picture at `[img<index>]` in a Word file for another image.
+
+        `index` is the number `read_canvas` prints next to the picture —
+        `[img0]` is 0. `image_path` is a file already on the canvas, under
+        `assets/` or `sources/`; bring an image the user attached onto the
+        canvas before pointing at it here. The picture keeps the width it has
+        on the page and its height is refitted to the new image, so the
+        layout around it does not move.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        reference = normalize_asset_reference(image_path)
+        if reference is None:
+            return (
+                f"Error: {image_path} is not a canvas image path — pass one under "
+                f"{ASSETS_PREFIX} or {_SOURCES_PREFIX}, exactly as list_canvas_files "
+                "shows it."
+            )
+        try:
+            picture = store.read_bytes(canvas_id, reference).data
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            edited, note = replace_image(data, index=index, image=picture, path=path)
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Replaced a picture in",
+            note=f" {note}",
+        )
+
+    return [
+        open_document_for_editing,
+        insert_document_paragraph,
+        remove_document_paragraph,
+        replace_document_image,
+    ]
 
 
 def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:

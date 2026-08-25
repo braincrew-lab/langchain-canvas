@@ -1268,6 +1268,48 @@
 }
 .cv-file__download:hover { border-color: var(--cv-accent); }
 
+/* Word preview — a page the user reads and points at, never types into.
+   The renderer writes the document's own colours and fonts inline, so this
+   only frames it: the banner that says it is read-only, the pointing
+   highlight, and the status line under it. */
+.cv-docx {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.cv-docx__banner {
+  padding: 7px 12px;
+  border: 1px solid var(--cv-border);
+  border-radius: 10px;
+  background: var(--cv-bg);
+  color: var(--cv-muted);
+  font-size: 12px;
+}
+.cv-docx__page {
+  max-height: 68vh;
+  overflow: auto;
+  border: 1px solid var(--cv-border);
+  border-radius: 12px;
+  background: var(--cv-bg);
+}
+.cv-docx__page [data-canvas-docx] { cursor: pointer; }
+.cv-docx__page [data-canvas-docx]:hover { outline: 1px dashed var(--cv-border); outline-offset: 2px; }
+.cv-docx__page .is-picked {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.cv-docx__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--cv-muted);
+}
+.cv-docx__picked { color: var(--cv-accent); }
+.cv-docx__fonts { color: var(--cv-warn, #b45309); }
+
 /* Tablet / narrow desktop: tighten paddings, let toolbars wrap. */
 @media (max-width: 900px) {
   .cv-body { padding: 16px; }

@@ -18,13 +18,14 @@ const { sendMessage, messages, canvas } = useCanvasStream({ endpoint: "/api/chat
 npm i @braincrew-lab/langchain-canvas
 ```
 
-Export/import for Office formats uses optional peers — install only what you need:
+Office formats use optional peers — install only what you need:
 
 ```bash
-npm i exceljs docx pptxgenjs fast-formula-parser
+npm i exceljs docx pptxgenjs fast-formula-parser   # export / import
+npm i docx-preview                                 # read an uploaded .docx on the canvas
 ```
 
-If a format's package isn't installed, that one export just tells the user what to add; everything else keeps working.
+If a format's package isn't installed, that one feature says what to add and the rest keeps working: an export tells the user, and a Word upload falls back to the file card it showed before.
 
 ## Mount it
 

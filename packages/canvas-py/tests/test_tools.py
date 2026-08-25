@@ -675,3 +675,470 @@ def test_a_store_with_no_page_renderable_converter_says_so() -> None:
         for t in create_canvas_tools(InMemoryCanvasStore(), converters=[_TextOnly()])
     }
     assert "none installed" in tools["read_canvas"].description
+
+
+# --- documents: editing what the user uploaded -----------------------------------
+
+
+def _document_tools(store: InMemoryCanvasStore, converters: Any = None) -> dict[str, Any]:
+    from langchain_canvas import create_document_tools
+
+    built = [
+        *create_canvas_tools(store, converters=converters),
+        *create_document_tools(store, converters=converters),
+    ]
+    return {t.name: t for t in built}
+
+
+def _uploaded(store: InMemoryCanvasStore, path: str = "sources/plan.docx") -> str:
+    from documents import sample_document
+
+    commit = store.write_bytes("t1", path, sample_document(), "Upload", actor="human")
+    return commit.revision
+
+
+def _open_copy(tools: dict[str, Any], runtime: Any) -> tuple[str, str]:
+    """Copy the upload out of sources/ and return (path, revision)."""
+    reply = _invoke(tools["open_document_for_editing"], runtime, source="sources/plan.docx")
+    assert reply.startswith("Copied "), reply
+    revision = reply.split("revision ")[1].split(")")[0]
+    return "plan.docx", revision
+
+
+def test_reading_an_uploaded_document_gives_addresses(tmp_path: Any = None) -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    text = _invoke(tools["read_canvas"], _runtime(thread_id="t1"), path="sources/plan.docx")
+    assert "[p0] (Heading 1) 2026 반영계획안" in text
+    assert "[t0] 3x3 table" in text
+    assert "[img0]" in text
+
+
+def test_uploads_stay_read_only_for_every_document_operation() -> None:
+    """I4 — the guard over the user's originals does not open for documents."""
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    before = store.read_bytes("t1", "sources/plan.docx").data
+
+    edited = _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path="sources/plan.docx",
+        old="즉시 조치",
+        new="즉각 조치",
+        description="x",
+        revision="1",
+    )
+    assert "read-only" in edited
+    # Not the generic "make an .html page instead": a Word upload has a way
+    # forward, and naming the wrong one tells the agent it cannot do this.
+    assert "open_document_for_editing" in edited
+    assert ".html" not in edited
+    for name, extra in (
+        ("insert_document_paragraph", {"anchor": "사진 1. 점검 당일 현장", "text": "x"}),
+        ("remove_document_paragraph", {"anchor": "사진 1. 점검 당일 현장"}),
+        ("replace_document_image", {"index": 0, "image_path": "assets/x.png"}),
+    ):
+        reply = _invoke(
+            tools[name], runtime, path="sources/plan.docx", description="x", revision="1", **extra
+        )
+        assert "read-only" in reply, name
+        assert "open_document_for_editing" in reply, name
+    assert store.read_bytes("t1", "sources/plan.docx").data == before
+
+
+def test_the_working_copy_leaves_the_upload_alone() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    original = store.read_bytes("t1", "sources/plan.docx").data
+
+    path, revision = _open_copy(tools, runtime)
+    assert store.read_bytes("t1", path).data == original
+
+    reply = _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치가 필요한",
+        new="즉시 조치가 반드시 필요한",
+        description="Sharpen the finding",
+        revision=revision,
+    )
+    assert reply.startswith("Edited plan.docx")
+    assert "반드시" in _invoke(tools["read_canvas"], runtime, path=path)
+    assert store.read_bytes("t1", "sources/plan.docx").data == original
+
+
+def test_copying_twice_names_the_conflict() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    _open_copy(tools, runtime)
+    again = _invoke(tools["open_document_for_editing"], runtime, source="sources/plan.docx")
+    assert "already on the canvas" in again
+    assert "destination" in again
+
+
+def test_the_copy_can_be_given_another_name() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    reply = _invoke(
+        tools["open_document_for_editing"],
+        runtime,
+        source="sources/plan.docx",
+        destination="draft/plan-v2.docx",
+    )
+    assert "draft/plan-v2.docx" in reply
+    assert store.read_bytes("t1", "draft/plan-v2.docx").data
+
+
+def test_the_copy_cannot_land_back_in_sources() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    reply = _invoke(
+        tools["open_document_for_editing"],
+        _runtime(thread_id="t1"),
+        source="sources/plan.docx",
+        destination="sources/copy.docx",
+    )
+    assert "sources/" in reply and reply.startswith("Error")
+
+
+def test_a_stale_revision_is_refused_the_same_way_text_files_are() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치",
+        new="즉각 조치",
+        description="first",
+        revision=revision,
+    )
+    late = _invoke(
+        tools["insert_document_paragraph"],
+        runtime,
+        path=path,
+        anchor="사진 1. 점검 당일 현장",
+        text="사진 2.",
+        description="second",
+        revision=revision,
+    )
+    assert "Call read_canvas again" in late
+
+
+def test_insert_remove_and_picture_swap_land_on_the_copy() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    from documents import png_bytes
+
+    store.write_bytes("t1", "assets/new.png", png_bytes(200, 50, (3, 3, 3)), "Add", actor="human")
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+
+    added = _invoke(
+        tools["insert_document_paragraph"],
+        runtime,
+        path=path,
+        anchor="사진 1. 점검 당일 현장",
+        text="4. 후속 조치",
+        style="Heading 2",
+        description="Add a closing section",
+        revision=revision,
+    )
+    assert added.startswith("Added a paragraph to plan.docx")
+    revision = added.split("revision ")[1].split(")")[0]
+    assert "[p10] (Heading 2) 4. 후속 조치" in _invoke(tools["read_canvas"], runtime, path=path)
+
+    removed = _invoke(
+        tools["remove_document_paragraph"],
+        runtime,
+        path=path,
+        anchor="담당 부서와 일정은 별도 협의한다.",
+        description="Drop a bullet",
+        revision=revision,
+    )
+    assert removed.startswith("Removed a paragraph from plan.docx")
+    revision = removed.split("revision ")[1].split(")")[0]
+    assert "담당 부서와 일정" not in _invoke(tools["read_canvas"], runtime, path=path)
+
+    swapped = _invoke(
+        tools["replace_document_image"],
+        runtime,
+        path=path,
+        index=0,
+        image_path="assets/new.png",
+        description="Use the new photo",
+        revision=revision,
+    )
+    assert swapped.startswith("Replaced a picture in plan.docx")
+    assert "width kept, height refitted" in swapped
+
+
+def test_an_anchor_that_matches_nothing_reaches_the_agent_intact() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    reply = _invoke(
+        tools["remove_document_paragraph"],
+        runtime,
+        path=path,
+        anchor="담당 부서와 일정은 별도로 협의한다.",
+        description="Drop a bullet",
+        revision=revision,
+    )
+    assert "0 matches" in reply
+    assert "Closest paragraph [p6]" in reply
+    assert "First difference at character" in reply
+
+
+def test_document_operations_refuse_a_file_that_is_not_a_document() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t1", "notes.md", "hello", "Write")
+    tools = _document_tools(store)
+    reply = _invoke(
+        tools["remove_document_paragraph"],
+        _runtime(thread_id="t1"),
+        path="notes.md",
+        anchor="hello",
+        description="x",
+        revision="1",
+    )
+    assert ".docx" in reply and "edit_canvas" in reply
+
+
+def test_a_picture_has_to_come_from_the_canvas() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    reply = _invoke(
+        tools["replace_document_image"],
+        runtime,
+        path=path,
+        index=0,
+        image_path="https://example.com/photo.png",
+        description="x",
+        revision=revision,
+    )
+    assert "not a canvas image path" in reply
+
+
+# --- documents: nothing is saved that cannot be opened and seen ------------------
+
+
+class _FakePages:
+    """A page renderer whose render can be told to fail."""
+
+    suffixes = (".docx",)
+
+    def __init__(self, working: bool = True) -> None:
+        self.working = working
+        self.renders = 0
+
+    def convert(self, data: bytes, *, path: str):
+        from langchain_canvas.converters import DocxSourceConverter
+
+        return DocxSourceConverter().convert(data, path=path)
+
+    def render_pages(self, data: bytes, *, path: str, pages: list[int]):
+        self.renders += 1
+        if not self.working:
+            raise ValueError("the renderer is down")
+        from langchain_canvas.converters import ConvertedSource
+
+        return ConvertedSource(blocks=[{"type": "text", "text": "page"}])
+
+    def render_grid(self, data: bytes, *, path: str):  # pragma: no cover - unused here
+        raise NotImplementedError
+
+
+def test_a_document_that_no_longer_renders_is_not_saved() -> None:
+    """I5 — the check runs before the store, so a failure changes nothing."""
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    renderer = _FakePages(working=True)
+    converters = [renderer, *default_converters()]
+    tools = _document_tools(store, converters=converters)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    before = store.read_bytes("t1", path).data
+
+    renderer.working = False
+    reply = _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치",
+        new="즉각 조치",
+        description="Sharpen",
+        revision=revision,
+    )
+    assert "did not save" in reply and "no longer renders" in reply
+    assert store.read_bytes("t1", path).data == before
+    assert store.read_bytes("t1", path).revision == revision
+
+
+def test_a_working_render_saves_and_says_to_look_at_it() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    renderer = _FakePages(working=True)
+    tools = _document_tools(store, converters=[renderer, *default_converters()])
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    reply = _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치",
+        new="즉각 조치",
+        description="Sharpen",
+        revision=revision,
+    )
+    assert 'read_canvas(path="plan.docx", pages="grid")' in reply
+    assert renderer.renders >= 1
+
+
+def test_without_a_renderer_the_reply_says_the_change_was_not_seen() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    reply = _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치",
+        new="즉각 조치",
+        description="Sharpen",
+        revision=revision,
+    )
+    assert "No page renderer is installed" in reply
+
+
+def test_a_document_edit_redraws_the_file_card() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _StreamingRuntime(config={"configurable": {"thread_id": "t1"}})
+    path, revision = _open_copy(tools, runtime)
+    runtime.events.clear()
+    _invoke(
+        tools["edit_canvas"],
+        runtime,
+        path=path,
+        old="즉시 조치",
+        new="즉각 조치",
+        description="Sharpen",
+        revision=revision,
+    )
+    kinds = [event["type"] for event in runtime.events]
+    assert "canvas.patch" in kinds and "canvas.commit" in kinds
+
+
+# --- the contract the descriptions state -----------------------------------------
+
+
+def test_no_description_ships_an_unfilled_placeholder() -> None:
+    """I6 — a constant bumped without editing the text leaves the model lied to."""
+    import re
+
+    from langchain_canvas import (
+        create_asset_tool,
+        create_check_table_tool,
+        create_document_tools,
+        create_export_tool,
+    )
+
+    store = InMemoryCanvasStore()
+    built = [
+        *create_canvas_tools(store),
+        *create_document_tools(store),
+        create_export_tool(store),
+        create_asset_tool(store),
+        create_check_table_tool(store),
+    ]
+    for tool_obj in built:
+        assert not re.search(r"\{[a-z_]+\}", tool_obj.description), tool_obj.name
+
+
+def test_descriptions_only_name_tools_that_exist() -> None:
+    """A description that sends the model to a tool nobody built is a dead end."""
+    import re
+
+    from langchain_canvas import (
+        create_asset_tool,
+        create_check_table_tool,
+        create_document_tools,
+        create_export_tool,
+    )
+
+    store = InMemoryCanvasStore()
+    built = [
+        *create_canvas_tools(store),
+        *create_document_tools(store),
+        create_export_tool(store),
+        create_asset_tool(store),
+        create_check_table_tool(store),
+    ]
+    names = {tool_obj.name for tool_obj in built}
+    pattern = re.compile(
+        r"\b(?:read|write|edit|list|export|check|open|insert|remove|replace)_[a-z_]+\b"
+    )
+    mentioned: set[str] = set()
+    for tool_obj in built:
+        mentioned |= set(pattern.findall(tool_obj.description))
+    assert mentioned <= names, mentioned - names
+
+
+def test_the_edit_tool_names_the_document_formats_it_handles() -> None:
+    from langchain_canvas.document_ops import DOCUMENT_OP_SUFFIXES
+
+    tools = _tools(InMemoryCanvasStore())
+    for suffix in DOCUMENT_OP_SUFFIXES:
+        assert suffix in tools["edit_canvas"].description
+
+
+def test_document_tools_only_claim_formats_the_operations_accept() -> None:
+    import re
+
+    from langchain_canvas import create_document_tools
+    from langchain_canvas.document_ops import DOCUMENT_OP_SUFFIXES
+
+    allowed = set(DOCUMENT_OP_SUFFIXES)
+    for tool_obj in create_document_tools(InMemoryCanvasStore()):
+        for suffix in re.findall(r"\.[a-z]{2,5}\b", tool_obj.description):
+            assert suffix in allowed, f"{tool_obj.name} names {suffix}"
+
+
+def test_a_non_document_upload_still_gets_the_general_refusal() -> None:
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/photo.png", b"\x89PNG\r\n\x1a\n", "Upload", actor="human")
+    tools = _tools(store)
+    reply = _invoke(
+        tools["write_canvas"],
+        _runtime(thread_id="t1"),
+        path="sources/photo.png",
+        content="x",
+        description="d",
+    )
+    assert "read-only" in reply
+    assert "open_document_for_editing" not in reply
