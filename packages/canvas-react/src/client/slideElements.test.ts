@@ -25,10 +25,39 @@ const onWire = (el: SlideElement) =>
 const bulletsOf = (s: Slide, page?: SlidePage) => toElements(s, page).filter((e) => e.id.startsWith("bul"));
 const listSlide = (n: number): Slide => ({ title: "Heading", bullets: Array.from({ length: n }, (_, i) => `point ${i}`) });
 
+type Golden = { name: string; slide: Slide; page?: SlidePage; elements: Array<Record<string, number | string | boolean>> };
+
 describe("the golden fixture", () => {
   it("has cases", () => expect(golden.length).toBeGreaterThan(0));
 
-  for (const kase of golden as Array<{ name: string; slide: Slide; page?: SlidePage; elements: unknown[] }>) {
+  /**
+   * The boundary the layout owes every caller, pinned case by case. Nothing
+   * off the page, no zero-sized box, no two bullets on top of each other.
+   * The save-time check cannot make up for a layout that breaks this: a
+   * slide's coordinates are ours, not the agent's, so a violation here is a
+   * defect the agent has no way to fix.
+   */
+  for (const kase of golden as Golden[]) {
+    it(`stays on the page: ${kase.name}`, () => {
+      for (const el of kase.elements) {
+        const [x, y, w, h] = [el.x as number, el.y as number, el.w as number, el.h as number];
+        expect(x).toBeGreaterThanOrEqual(-0.01);
+        expect(y).toBeGreaterThanOrEqual(-0.01);
+        expect(x + w).toBeLessThanOrEqual(100.01);
+        expect(y + h).toBeLessThanOrEqual(100.01);
+        expect(w).toBeGreaterThan(0);
+        expect(h).toBeGreaterThan(0);
+      }
+      const bullets = kase.elements.filter((e) => String(e.id).startsWith("bul_"));
+      for (let i = 1; i < bullets.length; i += 1) {
+        expect(bullets[i].y as number).toBeGreaterThanOrEqual(
+          (bullets[i - 1].y as number) + (bullets[i - 1].h as number) - 0.01,
+        );
+      }
+    });
+  }
+
+  for (const kase of golden as Golden[]) {
     it(`matches this implementation: ${kase.name}`, () => {
       expect(toElements(kase.slide, kase.page).map(onWire)).toEqual(kase.elements);
     });

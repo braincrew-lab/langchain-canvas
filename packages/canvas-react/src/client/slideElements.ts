@@ -36,6 +36,10 @@ export const FONT_DISPLAY = 48;
 export const FONT_TITLE = 38;
 /** Largest first — the layout takes the first step whose block fits. */
 export const BODY_RAMP = [30, 24, 19];
+/** A heading shrinks before it eats the slide it is heading. */
+export const TITLE_RAMP = [FONT_TITLE, 30, 24];
+/** A cover line shrinks the same way. */
+export const DISPLAY_RAMP = [FONT_DISPLAY, FONT_TITLE, 30];
 
 /** Line box over font size. The renderer, the print sheet, and PowerPoint all
  *  sit near this, so a box this tall holds its text at every destination. */
@@ -56,6 +60,17 @@ const BODY_WIDTH = 84;
 const TITLE_TOP = 7;
 const TITLE_LEFT = 6;
 const TITLE_WIDTH = 88;
+/** How far down the page a heading may reach. Past this the body band would
+ *  collapse, and a collapsed band is how a slide starts placing its bullets
+ *  below the page — or, with a negative band, in reverse order. */
+const TITLE_BOTTOM = 46;
+/** A subtitle on a content slide gets a couple of lines, no more. */
+const SUBTITLE_BUDGET = 12;
+/** The cover's safe area, and how the two lines share it. */
+const COVER_TOP = 6;
+const COVER_BOTTOM = 94;
+const COVER_TITLE_SHARE = 0.66;
+const COVER_SUBTITLE_SHARE = 0.22;
 const COLUMN_WIDTH = 42;
 const COLUMN_RIGHT_LEFT = 52;
 
@@ -107,6 +122,27 @@ function fit(texts: string[], width: number, band: number, [pageW, pageH]: [numb
     if (ink + floorGap <= band) return [candidate, counts];
   }
   return [size, counts];
+}
+
+/**
+ * [font size, height] for one headline, inside a vertical budget.
+ *
+ * Steps down the ramp until the wrapped text fits the budget, and clamps the
+ * box if even the smallest step does not. The clamp is what keeps a runaway
+ * title from pushing the body band to zero — or below zero, where the bullets
+ * came out reversed and off the page.
+ */
+function headline(
+  text: string, width: number, budget: number, [pageW, pageH]: [number, number], ramp: number[],
+): [number, number] {
+  let size = ramp[ramp.length - 1];
+  let height = 0;
+  for (const candidate of ramp) {
+    size = candidate;
+    height = lineCount(text, width, candidate, pageW) * linePercent(candidate, pageH);
+    if (height <= budget) return [candidate, height];
+  }
+  return [size, Math.min(height, budget)];
 }
 
 interface Box { x: number; y: number; w: number; h: number; fontSize: number }
@@ -172,25 +208,32 @@ export function toElements(s: Slide, page?: SlidePage): SlideElement[] {
   if (layout === "title" || layout === "section") {
     // A cover and a section break are the same gesture: one line, centred, at
     // the display size — with the pair sitting on the page's middle.
-    const titleH = s.title ? lineCount(s.title, TITLE_WIDTH, FONT_DISPLAY, pageW) * linePercent(FONT_DISPLAY, pageH) : 0;
-    const subH = s.subtitle ? lineCount(s.subtitle, TITLE_WIDTH, BODY_RAMP[0], pageW) * linePercent(BODY_RAMP[0], pageH) : 0;
-    const spacer = titleH && subH ? linePercent(BODY_RAMP[0], pageH) : 0;
-    let y = (100 - (titleH + spacer + subH)) / 2;
+    const budget = COVER_BOTTOM - COVER_TOP;
+    const [titleSize, titleH] = s.title
+      ? headline(s.title, TITLE_WIDTH, budget * COVER_TITLE_SHARE, px, DISPLAY_RAMP)
+      : [FONT_DISPLAY, 0];
+    const [subSize, subH] = s.subtitle
+      ? headline(s.subtitle, TITLE_WIDTH, budget * COVER_SUBTITLE_SHARE, px, BODY_RAMP)
+      : [BODY_RAMP[0], 0];
+    const spacer = titleH && subH ? linePercent(subSize, pageH) : 0;
+    // The shares leave the block inside the safe area, so the centred pair
+    // cannot reach either edge however long the text runs.
+    let y = Math.max(COVER_TOP, (100 - (titleH + spacer + subH)) / 2);
     if (s.title) {
-      push("title", { type: "text", x: TITLE_LEFT, y, w: TITLE_WIDTH, h: titleH, text: s.title, fontSize: FONT_DISPLAY, bold: true, align: "center" });
+      push("title", { type: "text", x: TITLE_LEFT, y, w: TITLE_WIDTH, h: titleH, text: s.title, fontSize: titleSize, bold: true, align: "center" });
       y += titleH + spacer;
     }
     if (s.subtitle) {
-      push("subtitle", { type: "text", x: TITLE_LEFT, y, w: TITLE_WIDTH, h: subH, text: s.subtitle, fontSize: BODY_RAMP[0], align: "center" });
+      push("subtitle", { type: "text", x: TITLE_LEFT, y, w: TITLE_WIDTH, h: subH, text: s.subtitle, fontSize: subSize, align: "center" });
     }
     return els;
   }
 
   let bodyTop = BODY_TOP;
   if (s.title) {
-    const h = lineCount(s.title, TITLE_WIDTH, FONT_TITLE, pageW) * linePercent(FONT_TITLE, pageH);
-    push("title", { type: "text", x: TITLE_LEFT, y: TITLE_TOP, w: TITLE_WIDTH, h, text: s.title, fontSize: FONT_TITLE, bold: true });
-    bodyTop = Math.max(bodyTop, TITLE_TOP + h + linePercent(FONT_TITLE, pageH) * 0.9);
+    const [size, h] = headline(s.title, TITLE_WIDTH, TITLE_BOTTOM - TITLE_TOP, px, TITLE_RAMP);
+    push("title", { type: "text", x: TITLE_LEFT, y: TITLE_TOP, w: TITLE_WIDTH, h, text: s.title, fontSize: size, bold: true });
+    bodyTop = Math.max(bodyTop, TITLE_TOP + h + linePercent(size, pageH) * 0.9);
   }
 
   if (layout === "image") {
@@ -201,9 +244,9 @@ export function toElements(s: Slide, page?: SlidePage): SlideElement[] {
   if (s.subtitle) {
     // A subtitle on a content slide used to vanish — the layout drew the title
     // and the bullets and nothing else. It sits under the heading.
-    const h = lineCount(s.subtitle, TITLE_WIDTH, BODY_RAMP[0], pageW) * linePercent(BODY_RAMP[0], pageH);
-    push("subtitle", { type: "text", x: TITLE_LEFT, y: bodyTop, w: TITLE_WIDTH, h, text: s.subtitle, fontSize: BODY_RAMP[0] });
-    bodyTop = bodyTop + h + linePercent(BODY_RAMP[0], pageH) * 0.9;
+    const [size, h] = headline(s.subtitle, TITLE_WIDTH, SUBTITLE_BUDGET, px, BODY_RAMP);
+    push("subtitle", { type: "text", x: TITLE_LEFT, y: bodyTop, w: TITLE_WIDTH, h, text: s.subtitle, fontSize: size });
+    bodyTop = bodyTop + h + linePercent(size, pageH) * 0.9;
   }
 
   if (layout === "two-column") {
