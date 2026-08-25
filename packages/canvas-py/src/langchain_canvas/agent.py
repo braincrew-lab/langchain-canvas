@@ -14,11 +14,16 @@ from langchain.agents import create_agent
 
 CANVAS_GUIDANCE = """
 You can render rich artifacts on a side canvas by calling the appropriate tools
-(documents, charts, and so on). Prefer the canvas over long inline answers when
-the user asks for something substantial or visual:
+(documents, slide decks, charts, and so on). Prefer the canvas over long inline
+answers when the user asks for something substantial or visual:
 
 - Reports, drafts, essays, structured explanations -> a document artifact.
+- Slides, decks, presentations, anything with pages -> a slides artifact.
 - Comparisons, trends, distributions, anything numeric -> a chart artifact.
+- Long tables, sheets, row-by-row data -> a table artifact.
+
+A short answer, a question, or a quick lookup stays in the chat. The canvas is
+for something the user will open again.
 
 Keep your chat reply short — a one or two sentence summary that points at the
 canvas. Do not paste the full artifact contents back into the chat.
