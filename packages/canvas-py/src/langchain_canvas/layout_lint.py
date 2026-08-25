@@ -11,7 +11,12 @@ render needed. Three families:
   everywhere, so the structured text is written but never drawn.
 * **Coordinates** — an element off the page, a zero-sized box, an empty
   text element, an image pointing at a file the canvas does not have, an
-  element completely hidden behind an opaque rectangle.
+  element completely hidden behind an opaque rectangle. A structured
+  slide carries no coordinates of its own, so these run on the boxes it
+  will be *drawn* as, named the way the author wrote them
+  (``"bullets[3]"``, not ``"bul_2"``).
+* **Room** — a slide with more body than the layout can hold at its
+  smallest text size, and text smaller than the slide can show.
 
 These run at save time and their findings ride the ``write_canvas``
 result, so the model sees a defect the moment it writes one and can fix
@@ -33,8 +38,13 @@ Design rules, in order of importance:
 Nothing here blocks a save. A draft in progress is worth more than a
 rejected write.
 
-Structured slides (title / bullets, no ``elements``) skip the coordinate
-checks: their layout is derived and always in bounds.
+Who a warning is for decides whether it belongs here at all. A finding the
+author can act on — too much on one slide, text too small, a reference to a
+file that is not there — is a warning. A derived box landing off the page is
+*our* defect, not theirs, and belongs in the layout's own tests
+(``test_slide_layout.py`` holds every golden case to the page bounds). The
+coordinate checks still run on derived boxes as a backstop, but a finding
+there means the layout is wrong, not the deck.
 """
 
 from __future__ import annotations
@@ -52,6 +62,7 @@ from langchain_canvas.protocol.artifacts import (
     SlidePage,
     SlidesData,
 )
+from langchain_canvas.slide_layout import BULLET_PREFIX, DerivedLayout, derive_layout
 
 # Percent-point slack so the 4-decimal rounding the re-fit writes can never
 # trip the boundary checks.
@@ -84,6 +95,16 @@ _FIX_HINTS = {
     "id": 'give every element a short unique id string, e.g. "title"',
 }
 
+# Text below this is smaller than anything the layout itself will draw (its
+# body ramp bottoms out at 19px) and smaller than the deck preview can show.
+# Read off a render ladder: at 13px and below a Hangul glyph loses its
+# strokes at the preview's own scale; 14px still reads.
+MIN_TEXT_PX = 14.0
+
+# A derived element's id, said the way the author wrote it.
+_DERIVED_FIELDS = {"title": "title", "subtitle": "subtitle", "img": "image"}
+_DERIVED_LISTS = (("bul2_", "bullets2"), ("bul_", "bullets"))
+
 # (field, pydantic error type) pairs a dedicated check below already reports
 # with a fuller message; listing them twice would say the same thing twice.
 # Only the bound errors are skipped — a padding of the wrong *type* still
@@ -110,21 +131,34 @@ def lint_slides_data(
     slides = data.get("slides")
     if not isinstance(slides, list):
         return _capped(warnings)
+    page = data.get("page") if isinstance(data.get("page"), dict) else None
     for number, slide in enumerate(slides, start=1):
         if not isinstance(slide, dict):
             continue
         _check_shadowed_content(slide, number, warnings)
         _check_padding(slide, number, warnings)
-        elements = slide.get("elements")
-        if not isinstance(elements, list):
-            continue
-        boxed = [
-            (element, _box(element))
-            for element in elements
-            if isinstance(element, dict)
-        ]
+        own = slide.get("elements")
+        own = own if isinstance(own, list) and own else None
+        if own is not None:
+            elements = [element for element in own if isinstance(element, dict)]
+            _check_small_text(elements, number, warnings)
+        else:
+            # A structured slide is drawn from boxes the layout derives, so
+            # that is what the coordinate checks have to look at. Skipping
+            # them here is how nine bullets used to run off the page in
+            # silence.
+            derived = _derived(slide, page)
+            if derived is None:
+                continue
+            if derived.overfull:
+                _report_overfull(slide, number, warnings)
+            elements = [
+                element.model_dump(by_alias=True, exclude_none=True)
+                for element in derived.elements
+            ]
+        boxed = [(element, _box(element)) for element in elements]
         for index, (element, box) in enumerate(boxed):
-            label = _label(element, index)
+            label = _label(element, index) if own is not None else _source_label(element)
             if box is None:
                 continue
             x, y, w, h = box
@@ -139,6 +173,77 @@ def lint_slides_data(
             _check_broken_reference(element, number, label, ref_exists, warnings)
             _check_full_cover(number, index, label, box, boxed, warnings)
     return _capped(warnings)
+
+
+def _derived(slide: dict[str, Any], page: dict[str, Any] | None) -> DerivedLayout | None:
+    """The boxes a structured slide will be drawn as, or None if it cannot parse.
+
+    A slide the schema rejects is already reported by :func:`_check_schema`;
+    deriving it would repeat that finding in different words.
+    """
+    try:
+        model = Slide.model_validate(slide)
+        page_model = SlidePage.model_validate(page) if page else None
+    except ValidationError:
+        return None
+    except Exception:  # noqa: BLE001 - a check must never break the save
+        return None
+    return derive_layout(model, page_model)
+
+
+def _source_label(element: dict[str, Any]) -> str:
+    """A derived element named the way its author wrote it."""
+    identifier = element.get("id")
+    if not isinstance(identifier, str):
+        return '"?"'
+    field = _DERIVED_FIELDS.get(identifier)
+    if field is not None:
+        return f'"{field}"'
+    for prefix, name in _DERIVED_LISTS:
+        index = identifier.removeprefix(prefix)
+        if index != identifier and index.isdigit():
+            return f'"{name}[{int(index) + 1}]"'
+    return f'"{identifier}"'
+
+
+def _report_overfull(slide: dict[str, Any], number: int, warnings: list[str]) -> None:
+    """The body did not fit at the smallest text size, so the lines overlap."""
+    count = sum(
+        len(slide.get(field) or [])
+        for field in ("bullets", "bullets2")
+        if isinstance(slide.get(field), list)
+    )
+    warnings.append(
+        f"slide {number}: {count} bullets do not fit — the layout ran out of "
+        "room at its smallest text size and had to close the lines up, so "
+        "they now overlap. Split this across two slides, or shorten them."
+    )
+
+
+def _check_small_text(
+    elements: list[dict[str, Any]], number: int, warnings: list[str]
+) -> None:
+    """Text an author sized smaller than the slide can show.
+
+    Grouped: a slide that sets one tiny size usually sets several, and eight
+    separate lines would crowd out every other finding.
+    """
+    sizes = sorted(
+        float(size)
+        for element in elements
+        if element.get("type") == "text"
+        and isinstance(size := element.get("fontSize"), (int, float))
+        and not isinstance(size, bool)
+        and 0 < float(size) < MIN_TEXT_PX
+    )
+    if not sizes:
+        return
+    listed = ", ".join(f"{_fmt(size)}px" for size in sizes)
+    warnings.append(
+        f"slide {number}: {len(sizes)} text element(s) below {_fmt(MIN_TEXT_PX)}px "
+        f"({listed}) — too small to read on the canvas or a projector. The "
+        "layout's own sizes are 48 / 38 / 30 / 24 / 19."
+    )
 
 
 def _capped(warnings: list[str]) -> list[str]:
@@ -388,6 +493,10 @@ def _check_empty_text(
     if element.get("type") != "text":
         return
     text = element.get("text")
+    if isinstance(text, str):
+        # A bare bullet marker is not content — it draws one dot and nothing
+        # else, which is what an empty string in `bullets` turns into.
+        text = text.strip().removeprefix(BULLET_PREFIX.strip())
     if text is None or (isinstance(text, str) and not text.strip()):
         warnings.append(
             f"slide {number}, element {label}: a text element with no text "

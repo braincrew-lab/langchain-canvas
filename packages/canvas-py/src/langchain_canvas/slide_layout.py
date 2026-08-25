@@ -34,6 +34,7 @@ The body block
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from .protocol.artifacts import Slide, SlideElement, SlidePage
 
@@ -48,6 +49,10 @@ FONT_DISPLAY = 48.0
 FONT_TITLE = 38.0
 #: Largest first — the layout takes the first step whose block fits.
 BODY_RAMP = (30.0, 24.0, 19.0)
+#: A heading shrinks before it eats the slide it is heading.
+TITLE_RAMP = (FONT_TITLE, 30.0, 24.0)
+#: A cover line shrinks the same way.
+DISPLAY_RAMP = (FONT_DISPLAY, FONT_TITLE, 30.0)
 
 #: Line box over font size. The renderer, the print sheet, and PowerPoint all
 #: sit near this, so a box this tall holds its text at every destination.
@@ -69,6 +74,17 @@ BODY_WIDTH = 84.0
 _TITLE_TOP = 7.0
 _TITLE_LEFT = 6.0
 _TITLE_WIDTH = 88.0
+# How far down the page a heading may reach. Past this the body band would
+# collapse, and a collapsed band is how a slide starts placing its bullets
+# below the page — or, with a negative band, in reverse order.
+_TITLE_BOTTOM = 46.0
+# A subtitle on a content slide gets a couple of lines, no more.
+_SUBTITLE_BUDGET = 12.0
+# The cover's safe area, and how the two lines share it.
+_COVER_TOP = 6.0
+_COVER_BOTTOM = 94.0
+_COVER_TITLE_SHARE = 0.66
+_COVER_SUBTITLE_SHARE = 0.22
 _COLUMN_WIDTH = 42.0
 _COLUMN_RIGHT_LEFT = 52.0
 
@@ -133,6 +149,41 @@ def _fit(
     return size, counts
 
 
+def _headline(
+    text: str, width: float, budget: float, page_px: tuple[float, float],
+    ramp: tuple[float, ...],
+) -> tuple[float, float]:
+    """(font size, height) for one headline, inside a vertical budget.
+
+    Steps down the ramp until the wrapped text fits the budget, and clamps
+    the box if even the smallest step does not. The clamp is what keeps a
+    runaway title from pushing the body band to zero — or below zero, where
+    the bullets came out reversed and off the page.
+    """
+    page_w, page_h = page_px
+    size = ramp[-1]
+    height = 0.0
+    for size in ramp:
+        height = line_count(text, width, size, page_w) * line_percent(size, page_h)
+        if height <= budget:
+            return size, height
+    return size, min(height, budget)
+
+
+@dataclass(frozen=True)
+class DerivedLayout:
+    """What a structured slide turns into, and whether it fitted.
+
+    ``overfull`` is the one thing about a structured slide the layout cannot
+    fix and the author can: the body did not fit even at the smallest body
+    step, so the band was tiled and the lines now sit closer together than
+    they are tall.
+    """
+
+    elements: list[SlideElement]
+    overfull: bool
+
+
 def _place(
     texts: list[str],
     counts: list[int],
@@ -143,8 +194,8 @@ def _place(
     left: float,
     width: float,
     page_height_px: float,
-) -> list[tuple[float, float, float, float, float]]:
-    """(x, y, w, h, fontSize) per line of text, laid into the band.
+) -> tuple[list[tuple[float, float, float, float, float]], bool]:
+    """The boxes for a band, and whether the band had to be tiled to hold them.
 
     The room left over is shared out between the bullets up to a ceiling;
     past that the block is centred, so a slide of two points sits on the
@@ -152,7 +203,7 @@ def _place(
     """
     n = len(texts)
     if n == 0:
-        return []
+        return [], False
     band = bottom - top
     line = line_percent(size, page_height_px)
     ink = sum(counts) * line
@@ -163,7 +214,7 @@ def _place(
         # this replaced simply walked off the bottom and took the last
         # bullets with it.
         pitch = band / n
-        return [(left, top + i * pitch, width, pitch, size) for i in range(n)]
+        return [(left, top + i * pitch, width, pitch, size) for i in range(n)], True
 
     gap = 0.0
     if n > 1:
@@ -176,7 +227,7 @@ def _place(
         height = count * line
         boxes.append((left, y, width, height, size))
         y += height + gap
-    return boxes
+    return boxes, False
 
 
 def _bullets(
@@ -188,10 +239,10 @@ def _bullets(
     width: float,
     page_px: tuple[float, float],
     size: float | None = None,
-) -> list[tuple[float, float, float, float, float]]:
+) -> tuple[list[tuple[float, float, float, float, float]], bool]:
     """Lay bulleted lines into a band."""
     if not texts:
-        return []
+        return [], False
     lines = [BULLET_PREFIX + t for t in texts]
     if size is None:
         size, counts = _fit(lines, width, bottom - top, page_px)
@@ -205,6 +256,11 @@ def _bullets(
 
 def derive_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideElement]:
     """The elements a structured slide turns into."""
+    return derive_layout(slide, page).elements
+
+
+def derive_layout(slide: Slide, page: SlidePage | None = None) -> DerivedLayout:
+    """The elements a structured slide turns into, and whether they fitted."""
     page_px = _page_px(page)
     page_w, page_h = page_px
     layout = slide.layout or "content"
@@ -214,48 +270,51 @@ def derive_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideEl
         kwargs.setdefault("color", slide.text_color)
         elements.append(SlideElement(id=element_id, **kwargs))  # type: ignore[arg-type]
 
-    def text_block(element_id: str, text: str, *, y: float, size: float, **rest: object) -> float:
-        """Push a text box tall enough for its own wrapping; return its bottom."""
-        width = float(rest.pop("w", _TITLE_WIDTH))  # type: ignore[arg-type]
-        height = line_count(text, width, size, page_w) * line_percent(size, page_h)
-        push(element_id, type="text", y=y, w=width, h=height, text=text, font_size=size, **rest)
-        return y + height
-
     if layout in ("title", "section"):
         # A cover and a section break are the same gesture: one line, centred,
         # at the display size — with the pair sitting on the page's middle.
-        title_lines = (
-            line_count(slide.title, _TITLE_WIDTH, FONT_DISPLAY, page_w) if slide.title else 0
+        budget = _COVER_BOTTOM - _COVER_TOP
+        title_size, title_h = (
+            _headline(
+                slide.title, _TITLE_WIDTH, budget * _COVER_TITLE_SHARE, page_px, DISPLAY_RAMP
+            )
+            if slide.title
+            else (FONT_DISPLAY, 0.0)
         )
-        title_h = title_lines * line_percent(FONT_DISPLAY, page_h)
-        sub_h = (
-            line_count(slide.subtitle, _TITLE_WIDTH, BODY_RAMP[0], page_w)
-            * line_percent(BODY_RAMP[0], page_h)
+        sub_size, sub_h = (
+            _headline(
+                slide.subtitle, _TITLE_WIDTH, budget * _COVER_SUBTITLE_SHARE, page_px, BODY_RAMP
+            )
             if slide.subtitle
-            else 0.0
+            else (BODY_RAMP[0], 0.0)
         )
-        spacer = line_percent(BODY_RAMP[0], page_h) if (title_h and sub_h) else 0.0
-        y = (100.0 - (title_h + spacer + sub_h)) / 2.0
+        spacer = line_percent(sub_size, page_h) if (title_h and sub_h) else 0.0
+        # The shares leave the block inside the safe area, so the centred
+        # pair cannot reach either edge however long the text runs.
+        y = max(_COVER_TOP, (100.0 - (title_h + spacer + sub_h)) / 2.0)
         if slide.title:
             push(
                 "title", type="text", x=_TITLE_LEFT, y=y, w=_TITLE_WIDTH, h=title_h,
-                text=slide.title, font_size=FONT_DISPLAY, bold=True, align="center",
+                text=slide.title, font_size=title_size, bold=True, align="center",
             )
             y += title_h + spacer
         if slide.subtitle:
             push(
                 "subtitle", type="text", x=_TITLE_LEFT, y=y, w=_TITLE_WIDTH, h=sub_h,
-                text=slide.subtitle, font_size=BODY_RAMP[0], align="center",
+                text=slide.subtitle, font_size=sub_size, align="center",
             )
-        return elements
+        return DerivedLayout(elements, False)
 
     body_top = BODY_TOP
     if slide.title:
-        bottom = text_block(
-            "title", slide.title, y=_TITLE_TOP, size=FONT_TITLE,
-            x=_TITLE_LEFT, w=_TITLE_WIDTH, bold=True,
+        size, height = _headline(
+            slide.title, _TITLE_WIDTH, _TITLE_BOTTOM - _TITLE_TOP, page_px, TITLE_RAMP
         )
-        body_top = max(body_top, bottom + line_percent(FONT_TITLE, page_h) * 0.9)
+        push(
+            "title", type="text", x=_TITLE_LEFT, y=_TITLE_TOP, w=_TITLE_WIDTH,
+            h=height, text=slide.title, font_size=size, bold=True,
+        )
+        body_top = max(body_top, _TITLE_TOP + height + line_percent(size, page_h) * 0.9)
 
     if layout == "image":
         if slide.image:
@@ -265,16 +324,19 @@ def derive_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideEl
                     w=72.0, h=max(BODY_BOTTOM - body_top, 0.0), src=slide.image,
                 )
             )
-        return elements
+        return DerivedLayout(elements, False)
 
     if slide.subtitle:
         # A subtitle on a content slide used to vanish — the layout drew the
         # title and the bullets and nothing else. It sits under the heading.
-        bottom = text_block(
-            "subtitle", slide.subtitle, y=body_top, size=BODY_RAMP[0],
-            x=_TITLE_LEFT, w=_TITLE_WIDTH,
+        size, height = _headline(
+            slide.subtitle, _TITLE_WIDTH, _SUBTITLE_BUDGET, page_px, BODY_RAMP
         )
-        body_top = bottom + line_percent(BODY_RAMP[0], page_h) * 0.9
+        push(
+            "subtitle", type="text", x=_TITLE_LEFT, y=body_top, w=_TITLE_WIDTH,
+            h=height, text=slide.subtitle, font_size=size,
+        )
+        body_top = body_top + height + line_percent(size, page_h) * 0.9
 
     if layout == "two-column":
         # One size for both columns, so the two halves read as one slide.
@@ -283,27 +345,29 @@ def derive_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideEl
             return _fit([BULLET_PREFIX + t for t in texts], _COLUMN_WIDTH, band, page_px)[0]
 
         size = min(column_size(slide.bullets), column_size(slide.bullets2))
+        overfull = False
         for prefix, texts, left in (
             ("bul", slide.bullets, BODY_LEFT - 2.0),
             ("bul2", slide.bullets2, _COLUMN_RIGHT_LEFT),
         ):
-            boxes = _bullets(
+            boxes, tiled = _bullets(
                 list(texts), top=body_top, bottom=BODY_BOTTOM, left=left,
                 width=_COLUMN_WIDTH, page_px=page_px, size=size,
             )
+            overfull = overfull or tiled
             for i, (x, y, w, h, font) in enumerate(boxes):
                 push(f"{prefix}_{i}", type="text", x=x, y=y, w=w, h=h,
                      text=BULLET_PREFIX + texts[i], font_size=font)
-        return elements
+        return DerivedLayout(elements, overfull)
 
-    boxes = _bullets(
+    boxes, overfull = _bullets(
         list(slide.bullets), top=body_top, bottom=BODY_BOTTOM,
         left=BODY_LEFT, width=BODY_WIDTH, page_px=page_px,
     )
     for i, (x, y, w, h, font) in enumerate(boxes):
         push(f"bul_{i}", type="text", x=x, y=y, w=w, h=h,
              text=BULLET_PREFIX + slide.bullets[i], font_size=font)
-    return elements
+    return DerivedLayout(elements, overfull)
 
 
 def resolve_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideElement]:

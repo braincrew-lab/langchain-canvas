@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -41,6 +42,32 @@ def deck_slide(**fields: object) -> Slide:
 
 def bullets_of(slide: Slide, page: SlidePage | None = None):
     return [e for e in derive_elements(slide, page) if e.id.startswith("bul")]
+
+
+def _golden_cases() -> list[dict[str, Any]]:
+    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+
+
+def test_every_golden_case_stays_on_the_page() -> None:
+    """The boundary the layout owes every caller, pinned case by case.
+
+    Nothing off the page, no zero-sized box, no two bullets on top of each
+    other. The save-time check cannot make up for a layout that breaks this:
+    a slide's coordinates are ours, not the agent's, so a violation here is
+    a defect the agent has no way to fix.
+    """
+    for case in _golden_cases():
+        elements = case["elements"]
+        for element in elements:
+            where = f'{case["name"]}: {element["id"]}'
+            assert element["x"] >= -0.01, where
+            assert element["y"] >= -0.01, where
+            assert element["x"] + element["w"] <= 100.01, where
+            assert element["y"] + element["h"] <= 100.01, where
+            assert element["w"] > 0 and element["h"] > 0, where
+        bullets = [e for e in elements if e["id"].startswith("bul_")]
+        for previous, following in zip(bullets, bullets[1:], strict=False):
+            assert following["y"] >= previous["y"] + previous["h"] - 0.01, case["name"]
 
 
 def test_the_golden_fixture_matches_this_implementation() -> None:

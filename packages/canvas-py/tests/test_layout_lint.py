@@ -458,3 +458,123 @@ def test_a_padded_deck_still_exports_and_validates() -> None:
         json.loads(encode_slides("D", {"slides": [{"padding": 6, "elements": []}]}))["data"]
     )
     assert deck.slides[0].padding == 6
+
+
+# --- structured slides: the checks look at what will be drawn -----------------
+
+
+def _structured(**fields: Any) -> dict[str, Any]:
+    return {"slides": [fields]}
+
+
+def test_a_structured_slide_is_checked_through_its_derived_boxes() -> None:
+    """The gap this closes: a slide with no coordinates used to be skipped."""
+    warnings = lint_slides_data(_structured(title="T", bullets=["real", "", "also real"]))
+    assert len(warnings) == 1
+    assert "no text" in warnings[0]
+
+
+def test_a_derived_finding_is_named_the_way_the_author_wrote_it() -> None:
+    """`bullets[2]`, not `bul_1` — the author never typed `bul_1`."""
+    (warning,) = lint_slides_data(_structured(title="T", bullets=["real", "  "]))
+    assert '"bullets[2]"' in warning
+
+
+def test_a_derived_finding_in_the_second_column_names_that_column() -> None:
+    (warning,) = lint_slides_data(
+        _structured(layout="two-column", title="T", bullets=["a"], bullets2=["b", ""])
+    )
+    assert '"bullets2[2]"' in warning
+
+
+def test_a_structured_image_reference_is_checked() -> None:
+    (warning,) = lint_slides_data(
+        _structured(layout="image", title="T", image="assets/missing.png"),
+        ref_exists=lambda _: False,
+    )
+    assert '"image"' in warning and "not on the canvas" in warning
+
+
+def test_a_clean_structured_slide_stays_silent() -> None:
+    assert lint_slides_data(_structured(title="Quarter", bullets=["one", "two", "three"])) == []
+
+
+def test_a_slide_the_schema_rejects_is_not_reported_twice() -> None:
+    """The schema line already says it; deriving it would repeat the finding."""
+    warnings = lint_slides_data(_structured(layout="title_bullets", title="T", bullets=["a"]))
+    assert len(warnings) == 1
+    assert "slides schema" in warnings[0]
+
+
+# --- room: too much body, and text too small ---------------------------------
+
+
+def _many(count: int) -> dict[str, Any]:
+    return _structured(
+        title="T", bullets=[f"운영 지표 {i}: 전분기 대비 개선 추세" for i in range(count)]
+    )
+
+
+@pytest.mark.parametrize("count", [3, 6, 10, 12])
+def test_a_slide_the_layout_can_hold_stays_silent(count: int) -> None:
+    assert lint_slides_data(_many(count)) == []
+
+
+@pytest.mark.parametrize("count", [13, 16, 20])
+def test_a_slide_with_more_body_than_fits_says_so(count: int) -> None:
+    """13 is where the band starts being tiled and the lines touch."""
+    (warning,) = lint_slides_data(_many(count))
+    assert f"{count} bullets do not fit" in warning
+    assert "Split this across two slides" in warning
+
+
+def test_long_bullets_can_overfill_a_slide_of_few_of_them() -> None:
+    """Rows, not bullets: five bullets that each wrap four times do not fit."""
+    warnings = lint_slides_data(_structured(title="T", bullets=["아주 긴 불릿 " * 30] * 5))
+    assert any("do not fit" in warning for warning in warnings)
+
+
+def test_text_smaller_than_the_slide_can_show_is_reported_once_per_slide() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 5, "w": 40, "h": 5,
+         "text": "tiny", "fontSize": 9},
+        {"id": "b", "type": "text", "x": 5, "y": 15, "w": 40, "h": 5,
+         "text": "small", "fontSize": 13},
+        {"id": "c", "type": "text", "x": 5, "y": 25, "w": 40, "h": 5,
+         "text": "fine", "fontSize": 24},
+    ]}]}
+    (warning,) = lint_slides_data(data)
+    assert "2 text element(s) below 14px" in warning
+    assert "9px, 13px" in warning
+
+
+@pytest.mark.parametrize("size", [14, 19, 24, 30, 38, 48])
+def test_text_at_or_above_the_floor_stays_silent(size: int) -> None:
+    data = {"slides": [{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 5, "w": 40, "h": 5, "text": "hi", "fontSize": size}
+    ]}]}
+    assert lint_slides_data(data) == []
+
+
+def test_a_shape_with_no_font_size_is_not_small_text() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "s", "type": "shape", "shape": "rect", "x": 5, "y": 5, "w": 10, "h": 10}
+    ]}]}
+    assert lint_slides_data(data) == []
+
+
+def test_derived_sizes_are_never_reported_as_too_small() -> None:
+    """The layout's own sizes are ours; warning about them teaches nothing."""
+    for count in (3, 8, 13, 30):
+        assert not any("below 14px" in warning for warning in lint_slides_data(_many(count)))
+
+
+def test_the_pitch_this_replaced_would_be_caught_now() -> None:
+    """Nine bullets at the old fixed pitch ran to y+h = 108 without a word."""
+    data = {"slides": [{"elements": [
+        {"id": f"bul_{i}", "type": "text", "x": 8, "y": 28 + i * 9, "w": 84, "h": 8,
+         "text": f"• item {i}", "fontSize": 20}
+        for i in range(9)
+    ]}]}
+    warnings = lint_slides_data(data)
+    assert any("off the page" in warning and "108" in warning for warning in warnings)
