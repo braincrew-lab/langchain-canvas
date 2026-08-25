@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_canvas import InMemoryCanvasStore, create_canvas_tools
+from langchain_canvas.converters import default_converters
 
 
 @dataclass
@@ -630,3 +631,47 @@ def test_skin_swaps_never_push_content_off_the_page():
                      path="deck.slides.json", content=got.content,
                      description="no-op", revision=got.revision)
     assert "scaled to fit" not in result
+
+
+def test_the_read_tool_names_the_formats_its_eye_actually_reaches() -> None:
+    """A format the description omits is one the model will decline to look at."""
+    tools = {t.name: t for t in create_canvas_tools(InMemoryCanvasStore())}
+    description = tools["read_canvas"].description
+    assert "{page_formats}" not in description
+    assert ".pdf" in description
+
+
+def test_a_host_converter_gets_announced_too() -> None:
+    class _DeckPages:
+        suffixes = (".pptx",)
+
+        def convert(self, data: bytes, *, path: str):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        def render_pages(self, data: bytes, *, path: str, pages: list[int]):  # pragma: no cover
+            raise NotImplementedError
+
+        def render_grid(self, data: bytes, *, path: str):  # pragma: no cover
+            raise NotImplementedError
+
+    tools = {
+        t.name: t
+        for t in create_canvas_tools(
+            InMemoryCanvasStore(), converters=[_DeckPages(), *default_converters()]
+        )
+    }
+    assert ".pptx" in tools["read_canvas"].description
+
+
+def test_a_store_with_no_page_renderable_converter_says_so() -> None:
+    class _TextOnly:
+        suffixes = (".md",)
+
+        def convert(self, data: bytes, *, path: str):  # pragma: no cover - unused
+            raise NotImplementedError
+
+    tools = {
+        t.name: t
+        for t in create_canvas_tools(InMemoryCanvasStore(), converters=[_TextOnly()])
+    }
+    assert "none installed" in tools["read_canvas"].description
