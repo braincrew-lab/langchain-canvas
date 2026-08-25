@@ -53,6 +53,30 @@ _SRC_ATTR_PATTERN = re.compile(
 )
 
 
+_MD_IMAGE_ANGLE = re.compile(r"!\[[^\]]*\]\(\s*<([^>\n]+)>")
+_MD_IMAGE_PLAIN = re.compile(r"!\[[^\]]*\]\(\s*([^<)\s]+)")
+
+
+def find_asset_references(text: str) -> list[tuple[int, str]]:
+    """Every canvas-asset reference in ``text``, as (offset, raw src).
+
+    Covers both forms canvas content uses: an HTML ``src`` attribute and a
+    markdown image. Only references :func:`normalize_asset_reference` accepts
+    are returned, so an ``https://`` URL, a ``data:`` URI, and a path to
+    anywhere but ``assets/`` / ``sources/`` are all absent by construction —
+    they point outside the canvas and the canvas has nothing to say about them.
+    """
+    found: list[tuple[int, str]] = []
+    for match in _SRC_ATTR_PATTERN.finditer(text):
+        found.append((match.start(3), match.group(3)))
+    for pattern in (_MD_IMAGE_ANGLE, _MD_IMAGE_PLAIN):
+        for match in pattern.finditer(text):
+            if normalize_asset_reference(match.group(1)) is not None:
+                found.append((match.start(1), match.group(1)))
+    found.sort()
+    return found
+
+
 def normalize_asset_reference(src: str) -> str | None:
     """The canvas-root-relative path ``src`` refers to, or ``None``.
 
