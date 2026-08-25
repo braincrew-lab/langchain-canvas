@@ -63,6 +63,7 @@ from .exporters import (
     pptx_page_size_inches,
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
+from .layout_lint import format_layout_warnings, lint_slides_data
 from .replay import ARTIFACT_SUFFIXES, events_for_commit
 from .store import (
     BinaryContentError,
@@ -188,6 +189,11 @@ def _refit_slides_to_page(
         # stored percents back out of the projected on-page position.
         pad = (slide.get("padding") or 0.0) / 100.0
         span = 1.0 - 2.0 * pad
+        if span <= 0:
+            # padding >= 50 leaves no content area to solve back into — the
+            # schema refuses it and the layout check names it; never divide
+            # by it (a re-fit crash would take the whole save down).
+            continue
         for el in elements:
             if not isinstance(el, dict):
                 continue
@@ -329,6 +335,33 @@ def create_canvas_tools(
 
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
+
+    def _layout_note(canvas_id: str, path: str, content: str) -> str:
+        """Certain-only layout warnings for a saved deck ('' when clean).
+
+        Free to compute (coordinates and fields, no render), so it rides
+        every deck save — the model sees a defect the moment it writes one.
+        See :mod:`langchain_canvas.layout_lint` for the no-false-positives
+        contract.
+        """
+        if not path.lower().endswith(".slides.json"):
+            return ""
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError:
+            return ""
+        data = envelope.get("data") if isinstance(envelope, dict) else None
+        if not isinstance(data, dict):
+            return ""
+        try:
+            on_canvas = {info.path for info in store.list_files(canvas_id)}
+        except CanvasStoreError:
+            on_canvas = None
+        warnings = lint_slides_data(
+            data,
+            ref_exists=None if on_canvas is None else on_canvas.__contains__,
+        )
+        return format_layout_warnings(warnings)
 
     def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
         """Rendered page images (or the grid overview) for one paged source.
@@ -514,7 +547,8 @@ def create_canvas_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
-        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}"
+        layout_note = _layout_note(canvas_id, path, content)
+        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}{layout_note}"
 
     @tool
     def edit_canvas(
@@ -556,7 +590,13 @@ def create_canvas_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new=False, commit=commit)
-        return f"Edited {path} (revision {commit.revision})."
+        layout_note = ""
+        if path.lower().endswith(".slides.json"):
+            # Small edits introduce defects as easily as full writes; lint
+            # the file as the edit left it.
+            edited = store.read(canvas_id, path, revision=commit.revision).content
+            layout_note = _layout_note(canvas_id, path, edited)
+        return f"Edited {path} (revision {commit.revision}).{layout_note}"
 
     @tool
     def list_canvas_files(runtime: ToolRuntime) -> str:
