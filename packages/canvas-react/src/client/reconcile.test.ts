@@ -132,6 +132,22 @@ describe("reduceCanvas", () => {
     expect((s.history.a1[0].data as { content: string }).content).toBe(""); // untouched
   });
 
+  it("an amending commit with no edit before it renames its version in place", () => {
+    // Naming the current version commits without an edit first, so the tail is
+    // already a described version — restamp it, never swallow its neighbour.
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Agent draft", revision: "v1" });
+    s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "mine" } });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Manual edit", revision: "v2" });
+    s = reduceCanvas(s, { type: "canvas.commit", id: "a1", description: "Ready to send", revision: "v3", amends: "v2" });
+
+    expect(s.history.a1).toHaveLength(2);
+    expect(s.history.a1.map((v) => v.meta?.commitDescription)).toEqual([
+      "Agent draft",
+      "Ready to send",
+    ]);
+  });
+
   it("an amending commit never drops the only version on the rail", () => {
     let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc() });
     s = reduceCanvas(s, { type: "canvas.patch", id: "a1", patch: { content: "edited" } });
