@@ -114,9 +114,107 @@ def test_a_fully_covered_element_is_flagged() -> None:
     assert 'element "hidden" is completely covered by element "panel"' in warnings[0]
 
 
-def test_out_of_range_padding_is_flagged() -> None:
+# --- schema: what the export will refuse ------------------------------------------
+
+
+def _schema_warning(warnings: list[str]) -> str:
+    matched = [w for w in warnings if "does not match the slides schema" in w]
+    assert len(matched) == 1, warnings
+    return matched[0]
+
+
+def test_a_missing_element_id_is_flagged_with_the_export_consequence() -> None:
+    deck = {"slides": [{"elements": [
+        {"type": "text", "x": 6, "y": 8, "w": 88, "h": 10, "text": "Q3"}
+    ]}]}
+    warning = _schema_warning(lint_slides_data(deck))
+    assert "exporting it fails" in warning
+    assert 'slide 1, element #1: "id" is required' in warning
+    assert "short unique id string" in warning
+
+
+def test_an_invalid_layout_value_names_the_allowed_values() -> None:
+    deck = {"slides": [{"layout": "title+bullets", "title": "Q3"}]}
+    warning = _schema_warning(lint_slides_data(deck))
+    assert "slide 1: \"layout\" = 'title+bullets'" in warning
+    assert "'title', 'content', 'section', 'image', 'two-column' or 'blank'" in warning
+
+
+def test_the_same_mistake_across_many_elements_is_summarized() -> None:
+    deck = {"slides": [{"elements": [
+        {"type": "text", "x": 1, "y": i, "w": 10, "h": 5, "text": "x"}
+        for i in range(10)
+    ]}]}
+    warning = _schema_warning(lint_slides_data(deck))
+    assert warning.count('"id" is required') == 6
+    assert "... and 4 more" in warning
+
+
+def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", stroke="#333"))
+    warnings = lint_slides_data(deck)
+    assert len(warnings) == 1
+    assert "the canvas and the export both ignore them" in warnings[0]
+    assert 'slide 1, element "box": "stroke"' in warnings[0]
+
+
+def test_unknown_fields_are_caught_at_every_level() -> None:
+    deck = {
+        "theme": "dark",
+        "slides": [{"transition": "fade", "elements": []}],
+        "page": {"widthIn": 10, "heightIn": 5.625, "dpi": 96},
+    }
+    warnings = lint_slides_data(deck)
+    assert len(warnings) == 1
+    assert 'the deck: "theme"' in warnings[0]
+    assert 'slide 1: "transition"' in warnings[0]
+    assert 'the deck page: "dpi"' in warnings[0]
+
+
+def test_out_of_range_padding_is_reported_once_not_twice() -> None:
     warnings = lint_slides_data({"slides": [{"padding": 60, "elements": []}]})
-    assert "padding = 60 leaves no content area" in warnings[0]
+    assert warnings == [
+        "slide 1: padding = 60 leaves no content area (must be 0 to below 50)"
+    ]
+
+
+def test_a_padding_of_the_wrong_type_still_reaches_the_schema_line() -> None:
+    # The dedicated padding check ignores non-numbers, so the schema line is
+    # the only thing standing between this deck and a refused export.
+    warning = _schema_warning(lint_slides_data({"slides": [{"padding": "wide"}]}))
+    assert 'slide 1: "padding"' in warning
+
+
+# --- shadowed content: written but never drawn ------------------------------------
+
+
+def test_structured_text_next_to_elements_is_flagged() -> None:
+    deck = {"slides": [{
+        "layout": "content",
+        "title": "지표",
+        "bullets": ["a", "b"],
+        "elements": [_el("kpi", "text", 60, 20, 35, 10, text="128건")],
+    }]}
+    warnings = lint_slides_data(deck)
+    assert len(warnings) == 1
+    assert '"title", "bullets" are set next to "elements"' in warnings[0]
+    assert "only \"elements\" is drawn" in warnings[0]
+    assert "move that text into an element" in warnings[0]
+
+
+def test_one_shadowed_field_reads_as_singular() -> None:
+    deck = {"slides": [{
+        "subtitle": "요약",
+        "elements": [_el("kpi", "text", 60, 20, 35, 10, text="128건")],
+    }]}
+    assert '"subtitle" is set next to "elements"' in lint_slides_data(deck)[0]
+
+
+def test_an_empty_elements_array_does_not_shadow_anything() -> None:
+    # An empty array is what the structured shape looks like on the wire.
+    assert lint_slides_data(
+        {"slides": [{"layout": "content", "title": "지표", "elements": []}]}
+    ) == []
 
 
 # --- what deliberately does NOT fire ---------------------------------------------
@@ -189,6 +287,91 @@ def test_real_deck_shapes_from_use_stay_silent() -> None:
         assert lint_slides_data(deck, ref_exists=lambda ref: True) == [], deck
 
 
+def test_both_wire_spellings_of_every_field_stay_silent() -> None:
+    """camelCase and snake_case are both the schema — neither is unknown."""
+    camel = {
+        "page": {"widthIn": 10, "heightIn": 5.625},
+        "slides": [{"textColor": "#111", "elements": [
+            _el("t", "text", 5, 5, 40, 10, text="Hi", fontSize=28, bold=True),
+        ]}],
+    }
+    snake = {
+        "page": {"width_in": 10, "height_in": 5.625},
+        "slides": [{"text_color": "#111", "elements": [
+            _el("t", "text", 5, 5, 40, 10, text="Hi", font_size=28, bold=True),
+        ]}],
+    }
+    assert lint_slides_data(camel) == []
+    assert lint_slides_data(snake) == []
+
+
+_LAYOUTS = [None, "title", "content", "section", "image", "two-column", "blank"]
+_ELEMENTS = [
+    {"type": "text", "text": "Hi", "fontSize": 24, "color": "#111", "align": "center"},
+    {"type": "image", "src": "sources/photo.png"},
+    {"type": "shape", "shape": "rect", "fill": "#0d1b3e"},
+    {"type": "shape", "shape": "ellipse", "fill": "#ff0000"},
+    {"type": "shape", "shape": "line", "fill": "#888888"},
+]
+
+
+def test_the_valid_deck_sweep_stays_silent() -> None:
+    """Every combination of the schema's own options warns about nothing.
+
+    One warning here means a check claims a valid deck is broken, which is
+    the one failure mode that would teach a model to ignore the channel.
+    """
+    checked = 0
+    for layout in _LAYOUTS:
+        for element in _ELEMENTS:
+            for padding in (None, 0, 5, 49.9):
+                for page in (None, {"widthIn": 10, "heightIn": 5.625},
+                             {"widthIn": 13.333, "heightIn": 7.5}):
+                    for background in (None, "#ffffff"):
+                        slide: dict[str, Any] = {
+                            "elements": [{"id": "e1", "x": 5, "y": 5, "w": 40,
+                                          "h": 10, **element}]
+                        }
+                        if layout is not None:
+                            slide["layout"] = layout
+                        if padding is not None:
+                            slide["padding"] = padding
+                        if background is not None:
+                            slide["background"] = background
+                        deck: dict[str, Any] = {"slides": [slide]}
+                        if page is not None:
+                            deck["page"] = page
+                        assert lint_slides_data(
+                            deck, ref_exists=lambda ref: True
+                        ) == [], deck
+                        checked += 1
+    assert checked == 840
+
+
+def test_the_structured_deck_sweep_stays_silent() -> None:
+    """The same options with the derived layout instead of free elements."""
+    checked = 0
+    for layout in _LAYOUTS:
+        for filled in ({"title": "제목"}, {"title": "제목", "bullets": ["a", "b"]},
+                       {"title": "제목", "subtitle": "요약"},
+                       {"title": "제목", "bullets": ["a"], "bullets2": ["b"]},
+                       {"title": "제목", "image": "sources/photo.png"}):
+            for notes in (None, "speaker notes"):
+                for elements in (None, []):
+                    slide: dict[str, Any] = dict(filled)
+                    if layout is not None:
+                        slide["layout"] = layout
+                    if notes is not None:
+                        slide["notes"] = notes
+                    if elements is not None:
+                        slide["elements"] = elements
+                    assert lint_slides_data(
+                        {"slides": [slide]}, ref_exists=lambda ref: True
+                    ) == [], slide
+                    checked += 1
+    assert checked == 140
+
+
 # --- the write/edit channel -------------------------------------------------------
 
 
@@ -198,7 +381,7 @@ def test_write_canvas_appends_the_layout_check_block() -> None:
         {"id": "title", "type": "text", "x": 60, "y": 10, "w": 58, "h": 10, "text": "Hi"}
     ]}]})
     assert result.startswith("Wrote deck.slides.json")
-    assert "Layout check:" in result
+    assert "Deck check:" in result
     assert 'element "title": x + w = 118' in result
     assert 'pages="grid"' in result
 
@@ -208,7 +391,28 @@ def test_write_canvas_stays_silent_for_a_clean_deck() -> None:
     result = _write(store, {"slides": [{"elements": [
         {"id": "t", "type": "text", "x": 10, "y": 10, "w": 50, "h": 10, "text": "Hi"}
     ]}]})
-    assert "Layout check" not in result
+    assert "Deck check" not in result
+
+
+def test_write_canvas_carries_the_schema_and_shadow_findings() -> None:
+    """What an agent actually wrote in a run, checked at the save that made it."""
+    store = InMemoryCanvasStore()
+    result = _write(store, {"slides": [{
+        "layout": "title+bullets",
+        "title": "3분기 실적",
+        "bullets": ["매출 128억", "신규 고객 24곳"],
+        "elements": [
+            {"type": "text", "x": 60, "y": 20, "w": 35, "h": 12,
+             "text": "128억", "fontSize": 40, "stroke": "#333"}
+        ],
+    }]})
+    assert result.startswith("Wrote deck.slides.json")  # the save still lands
+    assert "Deck check:" in result
+    assert "exporting it fails" in result
+    assert '"id" is required' in result
+    assert "'title', 'content', 'section'" in result
+    assert '"stroke"' in result
+    assert '"title", "bullets" are set next to "elements"' in result
 
 
 def test_edit_canvas_lints_the_edited_deck() -> None:
