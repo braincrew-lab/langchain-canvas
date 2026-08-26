@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -460,6 +462,79 @@ def test_slides_pptx_unusable_skin_degrades_to_blank_export():
         assert deck.slide_width == Inches(10)
         assert deck.slide_height == Inches(5.625)  # blank 16:9 default
         assert len(list(deck.slides)) == 1
+
+
+def _face_uri(faces: list[str], *, on_slide: bool) -> str:
+    """A skin whose runs name ``faces``, on its slides or on a layout.
+
+    ``+mj-lt`` rides along as a theme reference — a pointer at the theme,
+    not a face, and the theme is where the east-asian entry goes missing.
+    """
+    from pptx import Presentation as _P
+
+    skin = _P()
+    if on_slide:
+        holder = skin.slides.add_slide(skin.slide_layouts[6]).shapes.add_textbox(
+            Inches(1), Inches(1), Inches(4), Inches(1)
+        )
+    else:
+        holder = skin.slide_layouts[0].placeholders[0]
+    paragraph = holder.text_frame.paragraphs[0]
+    for face in [*faces, "+mj-lt"]:
+        run = paragraph.add_run()
+        run.text = "x"
+        run.font._rPr.get_or_add_latin().set("typeface", face)
+    buf = io.BytesIO()
+    skin.save(buf)
+    return f"data:{PPTX_MIME};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+def _exported_faces(template: str | None) -> list[list[tuple[str, str]]]:
+    """Every exported run's script-to-face pairs, in document order."""
+    data = {"slides": [
+        {"elements": [{"id": "t", "type": "text", "x": 10, "y": 10, "w": 80,
+                       "h": 20, "text": "Hangul 한글", "fontSize": 40}]},
+        {"title": "Second", "bullets": ["One"]},
+    ]}
+    if template:
+        data["template"] = template
+    result = SlidesPptxExporter().export(
+        json.dumps({"type": "slides", "data": data}), path="d.slides.json"
+    )
+    runs = []
+    with zipfile.ZipFile(io.BytesIO(result.data)) as archive:
+        for name in sorted(archive.namelist()):
+            if not (name.startswith("ppt/slides/slide") and name.endswith(".xml")):
+                continue
+            xml = archive.read(name).decode("utf-8")
+            for properties in re.findall(r"<a:rPr\b[^>]*(?:/>|>.*?</a:rPr>)", xml, re.S):
+                runs.append(re.findall(r'<a:(latin|ea|cs) typeface="([^"]+)"', properties))
+    return runs
+
+
+def test_slides_pptx_names_the_skin_face_for_every_script():
+    # Latin, east-asian, and complex scripts each read their own element;
+    # naming only a:latin leaves Hangul to whatever the theme says, and a
+    # theme's east-asian entry is routinely empty.
+    runs = _exported_faces(_face_uri(["Pretendard"] * 3 + ["Arial"], on_slide=True))
+    assert runs
+    for run in runs:
+        assert run == [("latin", "Pretendard"), ("ea", "Pretendard"), ("cs", "Pretendard")]
+
+
+def test_slides_pptx_reads_a_slideless_template_from_its_layouts():
+    # A real template file carries layouts and no slides. Its faces tie one
+    # to one there, and the plainest name is the family rather than one of
+    # its weights.
+    runs = _exported_faces(_face_uri(["Pretendard Light", "Pretendard"], on_slide=False))
+    assert runs
+    assert all(face == "Pretendard" for run in runs for _, face in run)
+
+
+def test_slides_pptx_without_a_skin_names_no_face():
+    # No skin, no evidence — inventing a face would be making one up.
+    assert _exported_faces(None)
+    assert all(run == [] for run in _exported_faces(None))
 
 
 def _bare_skin_uri(width_in: float, height_in: float) -> str:
