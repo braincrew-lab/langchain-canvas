@@ -404,7 +404,9 @@ def _skin_typeface(template: str | None) -> str | None:
     faces its author picked run by run — and falls back to its layouts when
     the file carries no slides, as a true template does. A value starting
     with ``+`` is a theme reference, not a face, so it is not counted: the
-    theme is where a missing east-asian entry hides.
+    theme is where a missing east-asian entry hides. Only the three script
+    elements are read — a bullet's or a symbol's font is a dingbat picked
+    for one glyph, never the face the deck is set in.
 
     A family and its weight variants can tie (``Pretendard`` /
     ``Pretendard Light`` / ``Pretendard SemiBold``, three uses each). The
@@ -428,7 +430,9 @@ def _skin_typeface(template: str | None) -> str | None:
                     xml = archive.read(name).decode("utf-8", "replace")
                     faces.update(
                         face
-                        for face in re.findall(r'typeface="([^"]+)"', xml)
+                        for face in re.findall(
+                            r'<a:(?:latin|ea|cs)\b[^>]*typeface="([^"]+)"', xml
+                        )
                         if not face.startswith("+")
                     )
                 if faces:
