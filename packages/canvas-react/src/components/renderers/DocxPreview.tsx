@@ -19,6 +19,12 @@
  * `symbolBullets`). The status line names the fonts that happened to, because
  * that is a place the screen and the file differ.
  *
+ * One thing is put back where the file meant it: a table asked to sit in the
+ * middle of the page arrives with that request stuck to its text, which
+ * centres every answer inside it. It is read as the placement it is (see
+ * `docxAlignment`), and the text keeps the alignment each paragraph asked
+ * for.
+ *
  * Drawn shapes are counted rather than assumed (see `docxShapes`). Some of
  * them do not survive the trip to the page, and a shape that goes missing
  * without a word is worse than one that is plainly absent — a circle round an
@@ -40,6 +46,7 @@ import {
   type DocxPick,
   type DocxStats,
 } from "../../io/docxAddress";
+import { separateBlockAlignment } from "../../io/docxAlignment";
 import { tallyShapes } from "../../io/docxShapes";
 import { redrawnFonts, restoreSymbolBullets } from "../../io/symbolBullets";
 import { loadOptional } from "../../optionalImport";
@@ -124,6 +131,8 @@ export function DocxPreview({
         keepOrigin: true,
       } as Parameters<typeof renderAsync>[3]);
       if (!live) return;
+      // First, because it moves text: everything below measures the page.
+      separateBlockAlignment(host);
       stampDocxAddresses(host);
       // Before measuring: the swap changes what the markers draw, and the
       // reader is told about it on the same line as the substituted fonts.
