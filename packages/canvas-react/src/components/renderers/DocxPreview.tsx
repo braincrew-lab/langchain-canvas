@@ -25,7 +25,11 @@
  * `docxAlignment`), and the text keeps the alignment each paragraph asked
  * for.
  *
- * Drawn shapes are counted rather than assumed (see `docxShapes`). Some of
+ * Drawn shapes are painted with the colours their file states (see
+ * `docxVmlPaint`), because the renderer reads a legacy shape's place but not
+ * its outline, and a ring round an answer with no outline is an empty box.
+ *
+ * The rest are counted rather than assumed (see `docxShapes`). Some of
  * them do not survive the trip to the page, and a shape that goes missing
  * without a word is worse than one that is plainly absent — a circle round an
  * answer is the answer. The stored parts are kept (`keepOrigin`) so the count
@@ -48,6 +52,7 @@ import {
 } from "../../io/docxAddress";
 import { separateBlockAlignment } from "../../io/docxAlignment";
 import { tallyShapes } from "../../io/docxShapes";
+import { paintVmlShapes } from "../../io/docxVmlPaint";
 import { redrawnFonts, restoreSymbolBullets } from "../../io/symbolBullets";
 import { loadOptional } from "../../optionalImport";
 
@@ -133,11 +138,14 @@ export function DocxPreview({
       if (!live) return;
       // First, because it moves text: everything below measures the page.
       separateBlockAlignment(host);
+      const parts = storedParts(parsed);
+      // Before the tally, so a shape that is now visible is not called missing.
+      paintVmlShapes(host, parts);
       stampDocxAddresses(host);
       // Before measuring: the swap changes what the markers draw, and the
       // reader is told about it on the same line as the substituted fonts.
       setRedrawn(redrawnFonts(restoreSymbolBullets(host)));
-      setMissingShapes(tallyShapes(host, storedParts(parsed)).missing);
+      setMissingShapes(tallyShapes(host, parts).missing);
       setStats(docxStats(host));
       setStatus("ready");
       let fittedFor = host.clientWidth;
