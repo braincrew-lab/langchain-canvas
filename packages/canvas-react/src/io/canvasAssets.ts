@@ -55,6 +55,22 @@ export function resolveAssetUrl(src: string, assetBaseUrl: string): string {
   return assetBaseUrl + encodeURIComponent(normalizeAssetReference(src) ?? src);
 }
 
+/**
+ * Absolute URL for a stored canvas file, wherever on the canvas it sits.
+ *
+ * Not the same question as `isAssetReference`. That one reads a string found
+ * *inside* content and asks whether it points at a canvas file — a guess that
+ * has to be conservative, because most strings in a document are not paths. A
+ * `file` artifact's `path` needs no guessing: it came from the store, so it is
+ * a canvas file by definition, at the root or under any folder. Asking the
+ * reference gate instead would leave every file outside `assets/` / `sources/`
+ * with no URL — no preview, no download — and widening that gate to fix it
+ * would make body-text scanning claim paths it should leave alone.
+ */
+export function resolveCanvasFileUrl(path: string, assetBaseUrl: string): string {
+  return assetBaseUrl + encodeURIComponent(path);
+}
+
 // src="assets/..." / src='sources/...' (leading ./ and ../ tolerated) — built
 // from the constant above so the matcher can never drift from the contract.
 const REF_ALTERNATION = ASSET_REFERENCE_PREFIXES.map((p) => p.slice(0, -1)).join("|");

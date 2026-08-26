@@ -334,13 +334,25 @@ def _resolve(spots: list[_Spot], anchor: str) -> tuple[_Spot, int]:
 # --- repacking -------------------------------------------------------------------
 
 
-def repack(original: bytes, saved: bytes, changed: set[str]) -> bytes:
+def repack(
+    original: bytes,
+    saved: bytes,
+    changed: set[str],
+    *,
+    removed: set[str] | None = None,
+) -> bytes:
     """``original`` with only ``changed`` (and brand-new) entries from ``saved``.
 
     Every other entry — styles, theme, fonts, numbering, media the edit never
     looked at — is copied with its bytes and its ZIP metadata intact, so a
     checksum of any untouched part matches the file the user uploaded.
+
+    ``removed`` names entries to leave out. An operation has to say so
+    explicitly: dropping a part is a change like any other, and a package
+    that quietly loses whatever the edit did not mention is how a document
+    comes back missing a picture nobody meant to touch.
     """
+    gone = removed or set()
     with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(
         io.BytesIO(saved)
     ) as edited:
@@ -349,6 +361,8 @@ def repack(original: bytes, saved: bytes, changed: set[str]) -> bytes:
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as result:
             for info in source.infolist():
+                if info.filename in gone:
+                    continue
                 take_edited = info.filename in changed and info.filename in edited.namelist()
                 payload = edited.read(info.filename) if take_edited else source.read(info.filename)
                 result.writestr(
@@ -357,16 +371,52 @@ def repack(original: bytes, saved: bytes, changed: set[str]) -> bytes:
                     compress_type=info.compress_type,
                 )
             for info in edited.infolist():
-                if info.filename in known:
+                if info.filename in known or info.filename in gone:
                     continue
                 result.writestr(info, edited.read(info.filename))
         return out.getvalue()
 
 
-def _saved(document: Any) -> bytes:
+def _saved(document: Any, *, drop_unused: str | None = None) -> bytes:
+    """The package as python-docx writes it, optionally letting one image go.
+
+    ``drop_unused`` is a relationship id the caller has just stopped using.
+    It is released only when nothing in that part points at it any more — the
+    same picture can appear twice under one id, and one of them may still be
+    on the page. Releasing it is what lets python-docx's own walk of the
+    package decide whether the image behind it is still reachable: a picture
+    the header also shows stays, because the header's own relationship still
+    reaches it.
+    """
+    if drop_unused is not None and _relationship_uses(document.part, drop_unused) == 0:
+        document.part.drop_rel(drop_unused)
     out = io.BytesIO()
     document.save(out)
     return out.getvalue()
+
+
+def _relationship_uses(part: Any, relationship_id: str) -> int:
+    """How many times this part's XML still points at ``relationship_id``."""
+    used = part._element.xpath("//@r:embed | //@r:link")
+    return sum(1 for value in used if value == relationship_id)
+
+
+def _orphaned(original: bytes, saved: bytes) -> set[str]:
+    """Media entries the original carried that the saved package dropped.
+
+    Only ``word/media/`` — that is where an image lives, and it is the one
+    place a replaced picture leaves bytes behind. Anything else missing from
+    a re-serialization would be a surprise, not a result, so it is kept.
+    """
+    with zipfile.ZipFile(io.BytesIO(original)) as before, zipfile.ZipFile(
+        io.BytesIO(saved)
+    ) as after:
+        still_there = set(after.namelist())
+        return {
+            name
+            for name in before.namelist()
+            if name.startswith("word/media/") and name not in still_there
+        }
 
 
 
@@ -491,8 +541,10 @@ def replace_image(
         raise DocumentOpError(f"the replacement is not a readable image ({exc}).") from exc
     shape = shapes[index]
     old_width, old_height = _shape_size_in(shape)
+    blip = shape._inline.graphic.graphicData.pic.blipFill.blip
+    previous_id = blip.embed
     relationship_id, _ = document.part.get_or_add_image(io.BytesIO(image))
-    shape._inline.graphic.graphicData.pic.blipFill.blip.embed = relationship_id
+    blip.embed = relationship_id
     width = shape.width.emu
     ratio = replacement.px_height / replacement.px_width if replacement.px_width else 1.0
     shape.height = Emu(max(_MIN_EMU, int(round(width * ratio))))
@@ -502,11 +554,13 @@ def replace_image(
         "word/_rels/document.xml.rels",
         "[Content_Types].xml",
     }
+    saved = _saved(document, drop_unused=previous_id)
+    dropped = _orphaned(data, saved)
     note = (
         f"[img{index}] was {old_width} x {old_height} in and is now "
         f"{new_width} x {new_height} in (width kept, height refitted)."
     )
-    return repack(data, _saved(document), changed), note
+    return repack(data, saved, changed, removed=dropped), note
 
 
 # --- verification ----------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   isAssetReference,
   normalizeAssetReference,
   resolveAssetUrl,
+  resolveCanvasFileUrl,
 } from "./canvasAssets";
 
 const BASE = "http://host/api/canvas/t1/file?path=";
@@ -57,6 +58,22 @@ describe("isAssetReference / resolveAssetUrl", () => {
     expect(normalizeAssetReference("../report/01.html")).toBeNull();
     expect(isAssetReference("../sources/photo.png")).toBe(true);
     expect(resolveAssetUrl("../sources/photo.png", BASE)).toBe(`${BASE}sources%2Fphoto.png`);
+  });
+});
+
+describe("resolveCanvasFileUrl", () => {
+  it("resolves a stored file wherever it sits, without widening the reference gate", () => {
+    // I2 — a `file` artifact's own path needs no guessing, and asking the
+    // reference gate about it would leave a canvas-root file with no URL.
+    const root = "Editing - plan.docx";
+    expect(isAssetReference(root)).toBe(false);
+    expect(resolveCanvasFileUrl(root, BASE)).toBe(`${BASE}Editing%20-%20plan.docx`);
+    expect(resolveCanvasFileUrl("sources/plan.docx", BASE)).toBe(
+      `${BASE}sources%2Fplan.docx`,
+    );
+    expect(resolveCanvasFileUrl("exports/out.docx", BASE)).toBe(
+      `${BASE}exports%2Fout.docx`,
+    );
   });
 });
 
