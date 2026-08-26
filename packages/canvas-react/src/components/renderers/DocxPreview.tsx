@@ -12,6 +12,12 @@
  * The renderer is an optional peer (`docx-preview`): a canvas that never shows
  * a Word file does not pay for it, and a host that has not installed it falls
  * back to the file card rather than breaking.
+ *
+ * One thing is redrawn rather than shown as written: a list bullet the file
+ * asks for by symbol-font slot has no glyph anywhere without that exact font,
+ * so it is swapped for the standard character meaning the same mark (see
+ * `symbolBullets`). The status line names the fonts that happened to, because
+ * that is a place the screen and the file differ.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -27,6 +33,7 @@ import {
   type DocxPick,
   type DocxStats,
 } from "../../io/docxAddress";
+import { redrawnFonts, restoreSymbolBullets } from "../../io/symbolBullets";
 import { loadOptional } from "../../optionalImport";
 
 export interface DocxPreviewProps {
@@ -52,6 +59,7 @@ export function DocxPreview({
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [stats, setStats] = useState<DocxStats | null>(null);
+  const [redrawn, setRedrawn] = useState<string[]>([]);
   const [picked, setPicked] = useState<string | null>(null);
   const setSelections = useCanvasStore((s) => s.setSelections);
 
@@ -62,6 +70,7 @@ export function DocxPreview({
     if (!host) return;
     setStatus("loading");
     setStats(null);
+    setRedrawn([]);
     setPicked(null);
     (async () => {
       const { renderAsync } = await loadOptional(
@@ -83,6 +92,9 @@ export function DocxPreview({
       });
       if (!live) return;
       stampDocxAddresses(host);
+      // Before measuring: the swap changes what the markers draw, and the
+      // reader is told about it on the same line as the substituted fonts.
+      setRedrawn(redrawnFonts(restoreSymbolBullets(host)));
       setStats(docxStats(host));
       setStatus("ready");
       let fittedFor = host.clientWidth;
@@ -168,6 +180,14 @@ export function DocxPreview({
           {stats.substitutedFonts.length > 0 && (
             <span className="cv-docx__fonts">
               substituted: {stats.substitutedFonts.join(", ")}
+            </span>
+          )}
+          {redrawn.length > 0 && (
+            <span
+              className="cv-docx__redrawn"
+              title="This document writes its list bullets as characters in a symbol font's own private area, which no other font can draw. They are shown here as the standard characters that mean the same mark; the stored file is unchanged."
+            >
+              bullets redrawn: {redrawn.join(", ")}
             </span>
           )}
         </div>
