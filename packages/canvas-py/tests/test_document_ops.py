@@ -422,3 +422,120 @@ def test_every_advertised_format_has_a_document_that_proves_it() -> None:
         edited = ops.replace_text(data, anchor, replacement, path=f"upload{suffix}")
         assert ops.reopens(edited) is None, suffix
         assert replacement in ops.outline(edited).render(), suffix
+
+
+# --- adding a picture -------------------------------------------------------------
+
+
+def _text_column_inches(data: bytes) -> float:
+    from docx import Document
+
+    section = Document(io.BytesIO(data)).sections[-1]
+    return (section.page_width - section.left_margin - section.right_margin) / 914400
+
+
+def test_adding_a_picture_touches_only_its_own_parts(document: bytes) -> None:
+    after, _ = ops.insert_image(document, image=png_bytes(120, 90, (0, 0x8B, 0)))
+    changed = _changed(document, after)
+    assert changed <= {
+        "word/document.xml",
+        "word/_rels/document.xml.rels",
+        "[Content_Types].xml",
+        "word/media/image2.png",
+    }
+    assert "word/document.xml" in changed
+    assert "word/styles.xml" not in changed
+
+
+def test_the_added_picture_is_a_picture(document: bytes) -> None:
+    from docx import Document
+
+    before = len(Document(io.BytesIO(document)).inline_shapes)
+    after, _ = ops.insert_image(document, image=png_bytes(120, 90, (0, 0x8B, 0)))
+    assert len(Document(io.BytesIO(after)).inline_shapes) == before + 1
+
+
+def test_a_picture_with_no_anchor_lands_at_the_end(document: bytes) -> None:
+    from docx import Document
+
+    after, _ = ops.insert_image(document, image=png_bytes(120, 90, (0, 0x8B, 0)))
+    last = Document(io.BytesIO(after)).paragraphs[-1]
+    assert last._p.xpath(".//pic:pic")
+
+
+def test_a_picture_lands_next_to_its_anchor(document: bytes) -> None:
+    from docx import Document
+
+    anchor = "사진 1. 점검 당일 현장"
+    for position, step in (("after", 1), ("before", -1)):
+        edited, _ = ops.insert_image(
+            document, image=png_bytes(120, 90, (0, 0x8B, 0)), anchor=anchor, position=position
+        )
+        paragraphs = Document(io.BytesIO(edited)).paragraphs
+        at = next(i for i, p in enumerate(paragraphs) if anchor in p.text)
+        assert paragraphs[at + step]._p.xpath(".//pic:pic"), position
+
+
+def test_a_wide_picture_is_brought_down_to_the_text_column(document: bytes) -> None:
+    from docx import Document
+
+    after, note = ops.insert_image(document, image=png_bytes(1200, 300, (0, 0x8B, 0)))
+    shape = Document(io.BytesIO(after)).inline_shapes[-1]
+    room = _text_column_inches(document)
+    assert round(shape.width.inches, 2) == round(room, 2)
+    assert round(shape.height.inches, 2) == round(room * 300 / 1200, 2)
+    assert "scaled down" in note
+
+
+def test_a_small_picture_is_never_enlarged(document: bytes) -> None:
+    from docx import Document
+
+    after, note = ops.insert_image(document, image=png_bytes(144, 72, (0, 0x8B, 0)))
+    shape = Document(io.BytesIO(after)).inline_shapes[-1]
+    # No pHYs chunk, so 72 dpi: 144px is two inches, well inside the column.
+    assert round(shape.width.inches, 2) == 2.0
+    assert "scaled down" not in note
+
+
+def test_a_stated_width_is_used_and_the_height_follows(document: bytes) -> None:
+    from docx import Document
+
+    after, _ = ops.insert_image(
+        document, image=png_bytes(400, 100, (0, 0x8B, 0)), width_inches=3.0
+    )
+    shape = Document(io.BytesIO(after)).inline_shapes[-1]
+    assert round(shape.width.inches, 2) == 3.0
+    assert round(shape.height.inches, 2) == 0.75
+
+
+def test_alt_text_reaches_the_picture(document: bytes) -> None:
+    from docx import Document
+
+    after, _ = ops.insert_image(
+        document, image=png_bytes(120, 90, (0, 0x8B, 0)), alt_text="현장 사진"
+    )
+    shape = Document(io.BytesIO(after)).inline_shapes[-1]
+    assert shape._inline.docPr.get("descr") == "현장 사진"
+
+
+def test_a_picture_that_is_not_an_image_is_refused(document: bytes) -> None:
+    with pytest.raises(ops.DocumentOpError, match="readable image"):
+        ops.insert_image(document, image=b"not a picture at all")
+
+
+def test_a_width_of_zero_is_refused(document: bytes) -> None:
+    with pytest.raises(ops.DocumentOpError, match="more than zero"):
+        ops.insert_image(document, image=png_bytes(10, 10, (0, 0, 0)), width_inches=0)
+
+
+def test_an_anchor_that_matches_nothing_refuses_the_picture(document: bytes) -> None:
+    with pytest.raises(ops.AnchorError):
+        ops.insert_image(document, image=png_bytes(10, 10, (0, 0, 0)), anchor="no such text")
+
+
+def test_adding_a_picture_leaves_the_look_of_the_document_alone(document: bytes) -> None:
+    untouched = {"word/styles.xml", "word/settings.xml", "word/theme/theme1.xml"}
+    after, _ = ops.insert_image(document, image=png_bytes(120, 90, (0, 0x8B, 0)))
+    before, now = _entries(document), _entries(after)
+    for name in untouched & set(before):
+        assert now[name] == before[name], name

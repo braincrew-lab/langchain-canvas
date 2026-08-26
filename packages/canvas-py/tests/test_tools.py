@@ -744,6 +744,7 @@ def test_uploads_stay_read_only_for_every_document_operation() -> None:
     assert ".html" not in edited
     for name, extra in (
         ("insert_document_paragraph", {"anchor": "사진 1. 점검 당일 현장", "text": "x"}),
+        ("insert_document_image", {"image_path": "assets/x.png"}),
         ("remove_document_paragraph", {"anchor": "사진 1. 점검 당일 현장"}),
         ("replace_document_image", {"index": 0, "image_path": "assets/x.png"}),
     ):
@@ -1173,3 +1174,77 @@ def test_a_non_document_upload_still_gets_the_general_refusal() -> None:
     )
     assert "read-only" in reply
     assert "open_document_for_editing" not in reply
+
+
+def test_a_picture_can_be_added_to_the_copy() -> None:
+    """The gap this closes: a Word file could only have a picture swapped."""
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    from documents import png_bytes
+
+    store.write_bytes("t1", "assets/site.png", png_bytes(240, 120, (7, 7, 7)), "Add", actor="human")
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+
+    added = _invoke(
+        tools["insert_document_image"],
+        runtime,
+        path=path,
+        image_path="assets/site.png",
+        description="Add the site photo",
+        revision=revision,
+        alt_text="현장 전경",
+    )
+    assert added.startswith(f"Added a picture to {path}")
+    assert "in" in added
+    # Read back: the document now addresses a second picture.
+    assert "[img1]" in _invoke(tools["read_canvas"], runtime, path=path)
+
+
+def test_markdown_image_syntax_is_refused_and_says_where_to_go() -> None:
+    """The agent's own mistake: markdown habits carried into a Word file."""
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    before = store.read_bytes("t1", path)
+
+    reply = _invoke(
+        tools["insert_document_paragraph"],
+        runtime,
+        path=path,
+        anchor="사진 1. 점검 당일 현장",
+        text="![이미지](sources/photo.png)",
+        description="Add the picture",
+        revision=revision,
+    )
+    assert "markdown image syntax" in reply
+    assert "insert_document_image" in reply
+    after = store.read_bytes("t1", path)
+    assert after.data == before.data
+    assert after.revision == before.revision
+
+
+def test_the_paragraph_tool_says_it_writes_text_only() -> None:
+    tools = _document_tools(InMemoryCanvasStore())
+    description = tools["insert_document_paragraph"].description
+    assert "insert_document_image" in description
+
+
+def test_the_picture_tool_only_takes_images_from_the_canvas() -> None:
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    runtime = _runtime(thread_id="t1")
+    path, revision = _open_copy(tools, runtime)
+    reply = _invoke(
+        tools["insert_document_image"],
+        runtime,
+        path=path,
+        image_path="https://example.com/photo.png",
+        description="Add it",
+        revision=revision,
+    )
+    assert "not a canvas image path" in reply

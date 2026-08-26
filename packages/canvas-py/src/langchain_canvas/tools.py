@@ -63,6 +63,7 @@ from .document_ops import (
     DOCUMENT_OP_SUFFIXES,
     DocumentOpError,
     MissingDocumentDependencyError,
+    insert_image,
     insert_paragraph,
     remove_paragraph,
     reopens,
@@ -112,6 +113,11 @@ def _is_document_file(path: str) -> bool:
 
 _WORKING_COPY_MARKER = "Editing - "
 
+
+# Markdown image syntax: `![alt](path)`. A Word file has no such shorthand and
+# shows it as the literal characters, so a paragraph carrying one is refused
+# and told where the picture goes instead.
+_MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 def _working_copy_name(source: str) -> str:
     """Canvas-root name for the editable copy of ``source``.
@@ -921,7 +927,7 @@ def create_document_tools(
         Pass `destination` to name the copy yourself.
 
         After this, read the copy with `read_canvas` and change it with
-        `edit_canvas`, `insert_document_paragraph`,
+        `edit_canvas`, `insert_document_paragraph`, `insert_document_image`,
         `remove_document_paragraph` and `replace_document_image`.
         """
         canvas_id = _canvas_id(runtime)
@@ -983,9 +989,20 @@ def create_document_tools(
         parentheses, so match the paragraphs around the new one. Omitted, the
         new paragraph takes the document's default style.
 
+        This writes text. A picture goes in with `insert_document_image` —
+        markdown image syntax is refused here, because a Word file would show
+        it as the characters themselves.
+
         `revision` must come from your most recent `read_canvas` of this file.
         """
         canvas_id = _canvas_id(runtime)
+        found = _MARKDOWN_IMAGE.search(text)
+        if found:
+            return (
+                f"Error: {found.group(0)!r} is markdown image syntax, which a Word file "
+                "shows as plain text rather than a picture. Use insert_document_image to "
+                "put the picture in."
+            )
         data, problem = _document(canvas_id, path)
         if data is None:
             return problem
@@ -1038,6 +1055,79 @@ def create_document_tools(
             revision,
             converters=active_converters,
             verb="Removed a paragraph from",
+        )
+
+    @tool
+    def insert_document_image(
+        path: str,
+        image_path: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        anchor: str | None = None,
+        position: str = "after",
+        width_inches: float | None = None,
+        alt_text: str | None = None,
+    ) -> str:
+        """Put a picture into a Word file.
+
+        `image_path` is a file already on the canvas, under `assets/` or
+        `sources/`; bring an image the user attached onto the canvas before
+        pointing at it here. Nothing is fetched from outside the canvas.
+
+        Leave `anchor` out to put the picture at the end of the document.
+        Given one — text copied from `read_canvas` that appears exactly once —
+        the picture goes next to that paragraph, `after` it by default or
+        `before` it.
+
+        The picture arrives at its own size, brought down to the width of the
+        text column if it is wider than that; it is never enlarged. Pass
+        `width_inches` to choose the width yourself, and the height follows
+        the picture's proportions. `alt_text` describes it for a reader who
+        cannot see it.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        reference = normalize_asset_reference(image_path)
+        if reference is None:
+            return (
+                f"Error: {image_path} is not a canvas image path — pass one under "
+                f"{ASSETS_PREFIX} or {_SOURCES_PREFIX}, exactly as list_canvas_files "
+                "shows it."
+            )
+        try:
+            picture = store.read_bytes(canvas_id, reference).data
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            edited, note = insert_image(
+                data,
+                image=picture,
+                anchor=anchor,
+                position=position,
+                width_inches=width_inches,
+                alt_text=alt_text,
+                path=path,
+            )
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Added a picture to",
+            note=f" {note}",
         )
 
     @tool
@@ -1097,6 +1187,7 @@ def create_document_tools(
     return [
         open_document_for_editing,
         insert_document_paragraph,
+        insert_document_image,
         remove_document_paragraph,
         replace_document_image,
     ]
