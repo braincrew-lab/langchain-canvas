@@ -1310,6 +1310,7 @@
 .cv-docx__picked { color: var(--cv-accent); }
 .cv-docx__fonts { color: var(--cv-warn, #b45309); }
 .cv-docx__redrawn { color: var(--cv-warn, #b45309); }
+.cv-docx__missing { color: var(--cv-warn, #b45309); }
 
 /* Tablet / narrow desktop: tighten paddings, let toolbars wrap. */
 @media (max-width: 900px) {
