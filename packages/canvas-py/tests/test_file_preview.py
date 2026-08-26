@@ -190,3 +190,38 @@ def test_derivation_is_cached_per_revision() -> None:
         second = hydrate_events(store, "c1")
     assert first == second
     assert calls["n"] == 1, "the page render must be derived once per revision, then cached"
+
+
+# --- working copies: the same file, wherever it sits ------------------------------
+
+
+def test_a_document_at_the_canvas_root_replays_like_the_upload_it_came_from() -> None:
+    """I1 — a reload brings the working copy back, drawn the same way.
+
+    The document tools leave the editable copy at the canvas root and emit it
+    live the moment they make it. Without this, a reload showed the original
+    and lost the file the user was actually having changed.
+    """
+    store = InMemoryCanvasStore()
+    bytes_ = _docx(["Quarterly summary", "Line A is on plan."])
+    store.write_bytes("c1", "sources/notes.docx", bytes_, "Upload")
+    store.write_bytes("c1", "Editing - notes.docx", bytes_, "Copy for editing")
+
+    created = [
+        e["artifact"] for e in hydrate_events(store, "c1") if e["type"] == "canvas.create"
+    ]
+    assert [a["id"] for a in created] == ["sources/notes.docx", "Editing - notes.docx"]
+    assert {a["type"] for a in created} == {"file"}
+    # Same bytes, same card: nothing about the location changes what is counted.
+    upload, copy = (a["data"] for a in created)
+    assert upload["detail"] == copy["detail"] == "2 paragraphs · 0 tables"
+    assert upload["excerpt"] == copy["excerpt"]
+
+
+def test_a_folder_is_not_a_tab() -> None:
+    """`exports/` is a download shelf and `assets/` is referenced material."""
+    store = InMemoryCanvasStore()
+    bytes_ = _docx(["Exported"])
+    store.write_bytes("c1", "exports/report.docx", bytes_, "Export")
+    store.write_bytes("c1", "assets/logo.png", PNG_BYTES, "Asset")
+    assert hydrate_events(store, "c1") == []

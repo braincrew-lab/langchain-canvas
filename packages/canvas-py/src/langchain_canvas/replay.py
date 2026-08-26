@@ -40,6 +40,7 @@ from .converters import (
     converter_for,
     default_converters,
 )
+from .document_ops import DOCUMENT_OP_SUFFIXES
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import BinaryContentError, CanvasStore, CanvasStoreError, fold_history
 from .table_merge import project_sheet_into_rows
@@ -76,10 +77,19 @@ def _replayable(path: str) -> bool:
     Every upload under ``sources/`` does: text formats replay as editable-ish
     previews, everything else as a ``file`` artifact — the person who uploaded
     a file always sees it on the canvas.
+
+    So does a document working copy at the canvas root. It is the file the
+    user is having changed, it is drawn live the moment it is made, and the
+    live builder and this one are the same by contract — leaving it out would
+    make a reload lose exactly the file being worked on. Folders keep their
+    own meaning: ``exports/`` is a download shelf and ``assets/`` is material
+    other files reference, so neither opens as a tab.
     """
     if path.startswith(SOURCES_PREFIX):
         return True
-    return path.endswith(ARTIFACT_SUFFIXES)
+    if path.endswith(ARTIFACT_SUFFIXES):
+        return True
+    return "/" not in path and path.lower().endswith(DOCUMENT_OP_SUFFIXES)
 
 
 def _encode_envelope(artifact_type: str, title: str, data: dict[str, Any]) -> str:
@@ -314,7 +324,7 @@ def source_preview_events(
     revision: str,
     description: str,
 ) -> list[dict]:
-    """Wire events showing one ``sources/`` file at a revision.
+    """Wire events showing one stored file at a revision.
 
     The single builder both replay (:func:`hydrate_events`) and a host's
     upload endpoint use, so the canvas drawn live at upload time and the one
@@ -323,6 +333,10 @@ def source_preview_events(
     whatever honest preview the installed converters can derive (page-one
     cover, text excerpt), or the bare facts (name, size, type) when nothing
     can be.
+
+    Named for its first caller, uploads under ``sources/``; it takes any
+    stored path, and the document tools use it for the working copies they
+    write at the canvas root.
     """
     if path.lower().endswith(_SOURCE_PREVIEW_SUFFIXES):
         try:
@@ -521,7 +535,9 @@ def hydrate_events(
         for path in commit.paths:
             if not _replayable(path):
                 continue
-            if path.startswith(SOURCES_PREFIX):
+            if not path.endswith(ARTIFACT_SUFFIXES) or path.startswith(SOURCES_PREFIX):
+                # Stored-file preview: uploads, and the document working copies
+                # the tools leave at the canvas root.
                 produced = source_preview_events(
                     store,
                     canvas_id,
