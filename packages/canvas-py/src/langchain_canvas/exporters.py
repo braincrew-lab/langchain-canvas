@@ -21,6 +21,7 @@ import binascii
 import io
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
@@ -396,6 +397,51 @@ def _skin_presentation(template: str | None, presentation_cls: Any) -> Any | Non
     return base
 
 
+def _skin_typeface(template: str | None) -> str | None:
+    """The face a template skin actually uses most, or ``None``.
+
+    Counts the literal ``typeface`` values in the skin's own slides — the
+    faces its author picked run by run — and falls back to its layouts when
+    the file carries no slides, as a true template does. A value starting
+    with ``+`` is a theme reference, not a face, so it is not counted: the
+    theme is where a missing east-asian entry hides.
+
+    A family and its weight variants can tie (``Pretendard`` /
+    ``Pretendard Light`` / ``Pretendard SemiBold``, three uses each). The
+    plainest name wins — shortest, then alphabetical — which lands on the
+    family itself rather than on one of its weights, and keeps the answer
+    the same whatever order the archive lists its parts in.
+    """
+    data = _pptx_data_uri_bytes(template)
+    if data is None:
+        return None
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            for folder in ("ppt/slides/slide", "ppt/slideLayouts/slideLayout"):
+                faces: Counter[str] = Counter()
+                for name in names:
+                    if not (name.startswith(folder) and name.endswith(".xml")):
+                        continue
+                    xml = archive.read(name).decode("utf-8", "replace")
+                    faces.update(
+                        face
+                        for face in re.findall(r'typeface="([^"]+)"', xml)
+                        if not face.startswith("+")
+                    )
+                if faces:
+                    most = max(faces.values())
+                    return min(
+                        (face for face, uses in faces.items() if uses == most),
+                        key=lambda face: (len(face), face),
+                    )
+    except (zipfile.BadZipFile, KeyError):
+        return None
+    return None
+
+
 def _content_layout(presentation: Any) -> Any:
     """The least-furnished layout — the closest thing to a blank canvas.
 
@@ -555,7 +601,9 @@ class SlidesPptxExporter:
     base — the skin's masters and layouts style every slide, so the
     original's logos, backgrounds, and headers survive; the skin's own
     slides are dropped and its native page size is kept (percent geometry
-    projects onto any page). A missing or unreadable skin degrades to the
+    projects onto any page). Text takes the face the skin uses most, named
+    for Latin, east-asian, and complex scripts alike, so the deck reads in
+    the template's own type. A missing or unreadable skin degrades to the
     blank default below.
 
     Honest limits: without a skin there is no master or theme (elements sit
@@ -563,7 +611,8 @@ class SlidesPptxExporter:
     (export-time only); no animations, transitions, or SmartArt; image/url
     backgrounds are skipped; an explicit slide ``background`` paints over
     the skin's; non-data-URI image references are skipped (inline assets
-    before exporting); fonts fall back to whatever the viewer has installed.
+    before exporting); without a skin there is no face to name, so fonts
+    fall back to whatever the viewer has installed.
     Requires ``python-pptx`` — installed by the ``office`` extra.
     """
 
@@ -620,6 +669,7 @@ class SlidesPptxExporter:
         canvas_w = deck.page.width_in if deck.page else _SLIDE_WIDTH_IN
         canvas_h = deck.page.height_in if deck.page else _SLIDE_HEIGHT_IN
         presentation = _skin_presentation(deck.template, Presentation)
+        skin_face = _skin_typeface(deck.template) if presentation is not None else None
         if presentation is None:
             presentation = Presentation()
             presentation.slide_width = Inches(canvas_w)
@@ -703,6 +753,17 @@ class SlidesPptxExporter:
                         run.font.bold = bool(element.bold)
                         if color is not None:
                             run.font.color.rgb = RGBColor.from_string(color)
+                        if skin_face:
+                            # `a:latin` covers Latin script only — Korean and
+                            # the rest of CJK read `a:ea`, and complex scripts
+                            # read `a:cs`. A theme's east-asian entry is often
+                            # empty, so a run naming only its Latin face leaves
+                            # Hangul with nowhere to go. python-pptx stops at
+                            # `a:latin`; the schema fixes the sibling order.
+                            latin = run.font._rPr.get_or_add_latin()
+                            latin.set("typeface", skin_face)
+                            latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": skin_face}))
+                            latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": skin_face}))
                 elif element.type == "shape":
                     fill_color = _hex_rgb(element.fill) or _DEFAULT_SHAPE_FILL
                     if element.shape == "line":
