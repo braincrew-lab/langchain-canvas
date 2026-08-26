@@ -307,6 +307,86 @@ def test_image_replacement_keeps_the_width_and_refits_the_height(document: bytes
     assert "width kept, height refitted" in note
 
 
+def _media(data: bytes) -> list[str]:
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return sorted(n for n in archive.namelist() if n.startswith("word/media/"))
+
+
+def _with_picture(*, in_header: bool = False, twice: bool = False) -> bytes:
+    """A document whose one picture is shown in the places named."""
+    from docx import Document
+    from docx.shared import Inches
+
+    picture = png_bytes(120, 80, (0x2E, 0x7D, 0x32))
+    document = Document()
+    document.add_paragraph("intro")
+    document.add_picture(io.BytesIO(picture), width=Inches(2.4))
+    if twice:
+        document.add_picture(io.BytesIO(picture), width=Inches(1.2))
+    if in_header:
+        run = document.sections[0].header.paragraphs[0].add_run()
+        run.add_picture(io.BytesIO(picture), width=Inches(1.0))
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def test_a_replaced_picture_takes_its_old_bytes_with_it() -> None:
+    before = _with_picture()
+    after, _ = ops.replace_image(before, index=0, image=png_bytes(60, 60, (0xC0, 0, 0)))
+    assert _media(before) == ["word/media/image1.png"]
+    assert _media(after) == ["word/media/image2.png"]
+    assert ops.reopens(after) is None
+
+
+def test_replacing_the_same_picture_again_does_not_grow_the_file() -> None:
+    data = _with_picture()
+    for shade in range(5):
+        data, _ = ops.replace_image(data, index=0, image=png_bytes(60, 60, (shade, 9, 9)))
+    assert len(_media(data)) == 1
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert len(archive.namelist()) == 18
+
+
+def test_a_picture_the_header_also_shows_is_kept() -> None:
+    """Only what nothing points at goes — the header's own link still reaches it."""
+    before = _with_picture(in_header=True)
+    after, _ = ops.replace_image(before, index=0, image=png_bytes(60, 60, (0xC0, 0, 0)))
+    assert _media(after) == ["word/media/image1.png", "word/media/image2.png"]
+    assert ops.reopens(after) is None
+
+
+def test_a_picture_shown_twice_in_the_body_is_kept() -> None:
+    before = _with_picture(twice=True)
+    after, _ = ops.replace_image(before, index=0, image=png_bytes(60, 60, (0xC0, 0, 0)))
+    assert "word/media/image1.png" in _media(after)
+    from docx import Document
+
+    assert len(Document(io.BytesIO(after)).inline_shapes) == 2
+
+
+def test_dropping_a_picture_leaves_every_other_part_byte_identical() -> None:
+    before = _with_picture()
+    after, _ = ops.replace_image(before, index=0, image=png_bytes(60, 60, (0xC0, 0, 0)))
+    old, new = _entries(before), _entries(after)
+    edited = {
+        "word/document.xml",
+        "word/_rels/document.xml.rels",
+        "[Content_Types].xml",
+        "word/media/image1.png",
+    }
+    survivors = [name for name in old if name not in edited]
+    assert survivors and all(new.get(name) == old[name] for name in survivors)
+
+
+def test_repack_leaves_out_only_what_the_caller_named(document: bytes) -> None:
+    """A part goes missing because an operation said so, never on its own."""
+    saved = ops.repack(document, document, set())
+    assert _entries(saved).keys() == _entries(document).keys()
+    trimmed = ops.repack(document, document, set(), removed={"word/styles.xml"})
+    assert "word/styles.xml" not in _entries(trimmed)
+
+
 def test_image_index_out_of_range_names_the_range(document: bytes) -> None:
     with pytest.raises(ops.DocumentOpError) as caught:
         ops.replace_image(document, index=4, image=png_bytes(10, 10, (0, 0, 0)))
