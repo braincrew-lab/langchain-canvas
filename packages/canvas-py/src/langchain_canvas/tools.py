@@ -1220,8 +1220,9 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         Template skin: a slides deck whose data carries
         ``"template": "sources/brand.pptx"`` exports onto that file's
         masters and layouts, so the original's logos, backgrounds, and
-        headers survive. A missing or unreadable skin degrades to the
-        plain blank-layout export.
+        headers survive, and the text takes the face that file uses most.
+        A missing or unreadable skin degrades to the plain blank-layout
+        export, where fonts fall back to whatever the viewer has installed.
         """
         canvas_id = _canvas_id(runtime)
         try:
