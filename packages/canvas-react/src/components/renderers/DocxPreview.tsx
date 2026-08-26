@@ -18,6 +18,13 @@
  * so it is swapped for the standard character meaning the same mark (see
  * `symbolBullets`). The status line names the fonts that happened to, because
  * that is a place the screen and the file differ.
+ *
+ * Drawn shapes are counted rather than assumed (see `docxShapes`). Some of
+ * them do not survive the trip to the page, and a shape that goes missing
+ * without a word is worse than one that is plainly absent — a circle round an
+ * answer is the answer. The stored parts are kept (`keepOrigin`) so the count
+ * comes from the file itself, and the status line says how many the reader
+ * cannot see and what to do about it.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -33,6 +40,7 @@ import {
   type DocxPick,
   type DocxStats,
 } from "../../io/docxAddress";
+import { tallyShapes } from "../../io/docxShapes";
 import { redrawnFonts, restoreSymbolBullets } from "../../io/symbolBullets";
 import { loadOptional } from "../../optionalImport";
 
@@ -50,6 +58,25 @@ type Status = "loading" | "ready" | "unavailable";
 
 const BANNER = "Preview only — to change it, ask in chat or select some text.";
 
+/** Which parts of the file hold body content, and so can hold shapes. */
+const CONTENT_PART = /^word\/(document|header\d*|footer\d*)\.xml$/;
+
+/**
+ * The stored XML of every part that can hold a shape.
+ *
+ * Only present when the document was parsed with `keepOrigin`; without it
+ * there is nothing to compare the page against, and the caller says so by
+ * claiming nothing.
+ */
+function storedParts(parsed: unknown): Document[] {
+  const parts = (parsed as { parts?: { path?: string; _xmlDocument?: Document }[] })?.parts;
+  if (!Array.isArray(parts)) return [];
+  return parts
+    .filter((part) => typeof part?.path === "string" && CONTENT_PART.test(part.path))
+    .map((part) => part._xmlDocument)
+    .filter((xml): xml is Document => Boolean(xml));
+}
+
 export function DocxPreview({
   artifactId,
   href,
@@ -60,6 +87,7 @@ export function DocxPreview({
   const [status, setStatus] = useState<Status>("loading");
   const [stats, setStats] = useState<DocxStats | null>(null);
   const [redrawn, setRedrawn] = useState<string[]>([]);
+  const [missingShapes, setMissingShapes] = useState(0);
   const [picked, setPicked] = useState<string | null>(null);
   const setSelections = useCanvasStore((s) => s.setSelections);
 
@@ -71,6 +99,7 @@ export function DocxPreview({
     setStatus("loading");
     setStats(null);
     setRedrawn([]);
+    setMissingShapes(0);
     setPicked(null);
     (async () => {
       const { renderAsync } = await loadOptional(
@@ -83,18 +112,23 @@ export function DocxPreview({
       const data = await response.arrayBuffer();
       if (!live) return;
       host.replaceChildren();
-      await renderAsync(data, host, undefined, {
+      // `keepOrigin` keeps each part's own XML on the parsed document. It is
+      // the only way to ask the file what it contains rather than infer it
+      // from what came out the other end.
+      const parsed = await renderAsync(data, host, undefined, {
         inWrapper: true,
         breakPages: true,
         renderHeaders: true,
         renderFooters: true,
         useBase64URL: true,
-      });
+        keepOrigin: true,
+      } as Parameters<typeof renderAsync>[3]);
       if (!live) return;
       stampDocxAddresses(host);
       // Before measuring: the swap changes what the markers draw, and the
       // reader is told about it on the same line as the substituted fonts.
       setRedrawn(redrawnFonts(restoreSymbolBullets(host)));
+      setMissingShapes(tallyShapes(host, storedParts(parsed)).missing);
       setStats(docxStats(host));
       setStatus("ready");
       let fittedFor = host.clientWidth;
@@ -180,6 +214,15 @@ export function DocxPreview({
           {stats.substitutedFonts.length > 0 && (
             <span className="cv-docx__fonts">
               substituted: {stats.substitutedFonts.join(", ")}
+            </span>
+          )}
+          {missingShapes > 0 && (
+            <span
+              className="cv-docx__missing"
+              title="This document draws shapes the preview cannot show. They are in the file — a download opens with them in place."
+            >
+              {missingShapes} shape{missingShapes === 1 ? "" : "s"} not shown —
+              download the file to see {missingShapes === 1 ? "it" : "them"}
             </span>
           )}
           {redrawn.length > 0 && (
