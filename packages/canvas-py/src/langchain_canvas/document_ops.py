@@ -513,6 +513,119 @@ def remove_paragraph(data: bytes, *, anchor: str, path: str = "document.docx") -
     return repack(data, _saved(document), {spot.part})
 
 
+def _body_ancestor(document: Any, element: Any) -> Any | None:
+    """The top-level body child ``element`` sits under, or None if it is elsewhere."""
+    body = document.element.body
+    node = element
+    while node is not None and node.getparent() is not body:
+        node = node.getparent()
+    return node
+
+
+def _section_of(document: Any, element: Any) -> Any:
+    """The section that governs where ``element`` sits.
+
+    A section ends at the paragraph carrying its ``w:sectPr``, so the number of
+    those before a body element is that element's section. A header, a footer
+    and the end of the document all belong to the last section.
+    """
+    sections = document.sections
+    top = _body_ancestor(document, element)
+    if top is None:
+        return sections[-1]
+    index = 0
+    for child in document.element.body.iterchildren():
+        if child is top:
+            break
+        if child.xpath("./w:pPr/w:sectPr"):
+            index += 1
+    return sections[min(index, len(sections) - 1)]
+
+
+def _text_width(section: Any) -> int:
+    """How wide the text column is in this section, in EMU."""
+    page = section.page_width
+    left = section.left_margin
+    right = section.right_margin
+    if page is None or left is None or right is None:
+        return 0
+    return max(_MIN_EMU, int(page) - int(left) - int(right))
+
+
+def _rels_name(part: str) -> str:
+    """Where a part's relationships live, given the part's own name."""
+    folder, _, name = part.rpartition("/")
+    return f"{folder}/_rels/{name}.rels" if folder else f"_rels/{name}.rels"
+
+
+def insert_image(
+    data: bytes,
+    *,
+    image: bytes,
+    anchor: str | None = None,
+    position: str = "after",
+    width_inches: float | None = None,
+    alt_text: str | None = None,
+    path: str = "document.docx",
+) -> tuple[bytes, str]:
+    """Add ``image`` to the document as a paragraph of its own.
+
+    Without an ``anchor`` the picture goes at the end of the document, which
+    is where a reader asking for "a picture at the bottom" means. With one it
+    goes next to the paragraph that anchor names, the same way a paragraph is
+    inserted.
+
+    The default width is the image's own, brought down to the width of the
+    text column when it is wider than that — never up. A stated
+    ``width_inches`` is used as given and the height follows the image's
+    proportions, the rule a replacement already follows.
+
+    Returns the new file bytes and a one-line note about the size.
+    """
+    from docx.image.image import Image  # type: ignore[import-untyped]
+    from docx.shared import Emu, Inches  # type: ignore[import-untyped]
+
+    if position not in {"after", "before"}:
+        raise DocumentOpError(f'position is "after" or "before" (got {position!r}).')
+    if width_inches is not None and width_inches <= 0:
+        raise DocumentOpError(f"width_inches has to be more than zero (got {width_inches}).")
+    try:
+        picture = Image.from_blob(image)
+    except Exception as exc:  # python-docx raises several unrelated types
+        raise DocumentOpError(f"that file is not a readable image ({exc}).") from exc
+    document = _open(data, path=path)
+    if anchor is None:
+        paragraph = document.add_paragraph()
+        part = _part_name(document.part)
+    else:
+        spot, _ = _resolve(_spots(document), anchor)
+        paragraph = spot.paragraph.insert_paragraph_before()
+        if position == "after":
+            spot.paragraph._p.addnext(paragraph._p)
+        part = spot.part
+    room = _text_width(_section_of(document, paragraph._p))
+    natural = int(picture.width)
+    if width_inches is None:
+        width = min(natural, room) if room else natural
+    else:
+        width = int(Inches(width_inches))
+    ratio = picture.px_height / picture.px_width if picture.px_width else 1.0
+    height = max(_MIN_EMU, int(round(width * ratio)))
+    run = paragraph.add_run()
+    shape = run.add_picture(io.BytesIO(image), width=Emu(width), height=Emu(height))
+    if alt_text:
+        # python-docx has no API for alt text; the attribute is where Word
+        # reads it from, and a screen reader after it.
+        shape._inline.docPr.set("descr", alt_text)
+    changed = {part, _rels_name(part), "[Content_Types].xml"}
+    shrunk = width_inches is None and width < natural
+    size = f"{round(shape.width.inches, 2)} x {round(shape.height.inches, 2)} in"
+    note = f"The picture is {size}" + (
+        " — scaled down to the width of the text column." if shrunk else "."
+    )
+    return repack(data, _saved(document), changed), note
+
+
 def replace_image(
     data: bytes, *, index: int, image: bytes, path: str = "document.docx"
 ) -> tuple[bytes, str]:
