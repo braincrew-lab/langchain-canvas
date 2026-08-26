@@ -111,6 +111,19 @@ def test_asset_reference_prefixes_match_ts():
     assert list(ASSET_REFERENCE_PREFIXES) == ts_prefixes
 
 
+def test_document_file_suffixes_match_ts():
+    # Which files the document tools edit decides two things far apart: what
+    # Python will accept, and how the browser frames a place the user pointed
+    # at. A format added on one side only would frame a .docx selection as a
+    # DOM element and send the agent after outer HTML that is not there.
+    from langchain_canvas.document_ops import DOCUMENT_OP_SUFFIXES
+
+    ts_source = (TS_PATH.parent / "selection.ts").read_text()
+    match = re.search(r"DOCUMENT_FILE_SUFFIXES\s*=\s*\[(.*?)\]", ts_source, re.S)
+    assert match, "DOCUMENT_FILE_SUFFIXES not found in selection.ts"
+    assert list(DOCUMENT_OP_SUFFIXES) == re.findall(r'"([^"]+)"', match.group(1))
+
+
 def test_parser_sees_every_interface():
     # A new TS interface must get a pydantic twin and a PAIRS row.
     assert set(_ts_interfaces()) == {ts_name for _, ts_name in PAIRS}

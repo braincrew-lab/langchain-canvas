@@ -138,15 +138,19 @@ const INSPECTOR_SCRIPT = `
       }
     }
   }
-  function emitEdit(el) {
-    // Serialize the *canonical* HTML — strip the inspector's own injected
-    // attributes/classes so they never persist into the stored source or exports.
-    var cid = el.getAttribute("data-cid");
+  // The element's markup as the *stored file* has it: the inspector's own
+  // attributes and classes exist only on screen, so anything that leaves this
+  // frame — a saved edit, or the markup an agent is asked to match — has to be
+  // scrubbed first, or it names something the file does not contain.
+  function canonicalHtml(el) {
     var clone = el.cloneNode(true);
     scrub(clone);
     var inner = clone.querySelectorAll ? clone.querySelectorAll("[data-cid],[contenteditable],[data-lcx-src],.lcx-hover,.lcx-selected") : [];
     for (var i = 0; i < inner.length; i++) scrub(inner[i]);
-    parent.postMessage({ source: MARK, type: "node_edit", cid: cid, html: clone.outerHTML }, "*");
+    return clone.outerHTML;
+  }
+  function emitEdit(el) {
+    parent.postMessage({ source: MARK, type: "node_edit", cid: el.getAttribute("data-cid"), html: canonicalHtml(el) }, "*");
   }
   // A structural change (insert/delete/move) shifts every cid, so we save the
   // whole document: clone <html>, drop the injected inspector nodes, scrub the
@@ -401,7 +405,7 @@ const INSPECTOR_SCRIPT = `
         selector: selectorFor(t),
         tag: t.tagName.toLowerCase(),
         text: (t.textContent || "").trim().slice(0, 80),
-        outerHtml: t.outerHTML.slice(0, 4000),
+        outerHtml: canonicalHtml(t).slice(0, 4000),
         styles: stylesOf(t),
         isGroup: !!gid
       }, "*");

@@ -16,9 +16,11 @@
 
 import { Client } from "@langchain/langgraph-sdk";
 
-import type { ElementSelection } from "../protocol/selection";
+import { withSelections } from "../protocol/selection";
 import type { CanvasTransport, TransportRequest } from "../transports/types";
 import { translateLangGraphStream, type LangGraphStreamChunk } from "./translate";
+
+export { withSelections };
 
 export interface LangGraphTransportOptions {
   /** LangGraph server URL, e.g. `http://127.0.0.1:2024` (`langgraph dev`). */
@@ -27,21 +29,6 @@ export interface LangGraphTransportOptions {
   assistantId: string;
   /** Extra headers (e.g. auth) passed to the SDK client. */
   headers?: Record<string, string>;
-}
-
-/** Frame a targeted edit so the agent changes only the selected element(s). */
-export function withSelections(message: string, selections: ElementSelection[]): string {
-  if (selections.length === 0) return message;
-  const listed = selections.map((s) => `- \`${s.selector}\` (data-cid=${s.cid})`).join("\n");
-  const artifactId = selections[0].artifactId;
-  return (
-    `${message}\n\n` +
-    `[Targeted edit] Apply the change to these selected element(s) in file ` +
-    `\`${artifactId}\`:\n${listed}\n` +
-    `First call read_canvas on the file to get its current content and revision, ` +
-    `then call edit_canvas with the element's exact current outer HTML as \`old\` ` +
-    `and your replacement as \`new\` (keep the data-cid attribute).`
-  );
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
