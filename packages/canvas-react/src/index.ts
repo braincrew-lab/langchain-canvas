@@ -66,7 +66,9 @@ export { printToPdf } from "./export/pdf";
 export { importFile, parseCsv, canImport, IMPORTABLE_EXTENSIONS } from "./io/importers";
 export { useCanvasImport } from "./hooks/useCanvasImport";
 
-// canvas-asset references (assets/ · sources/) — display resolution + export inlining
+// canvas-asset references (assets/ · sources/) — display resolution + export
+// inlining. `resolveCanvasFileUrl` is the un-gated twin for a stored file's own
+// path; selection framing (`withSelections`) rides the protocol export above.
 export {
   ASSET_REFERENCE_PREFIXES,
   isAssetReference,
@@ -76,4 +78,5 @@ export {
   inlineHtmlAssets,
   inlineArtifactAssets,
 } from "./io/canvasAssets";
+export { resolveCanvasFileUrl } from "./io/canvasAssets";
 export { useAssetUrl } from "./hooks/useAssetUrl";

@@ -17,7 +17,7 @@
 import { Suspense, lazy } from "react";
 
 import type { FileData } from "../../protocol/artifacts";
-import { isAssetReference, resolveAssetUrl } from "../../io/canvasAssets";
+import { resolveCanvasFileUrl } from "../../io/canvasAssets";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 
@@ -47,11 +47,8 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const { path, name, mediaType, size, cover, excerpt, detail } = artifact.data;
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
   // Without an asset endpoint the card still states the file's facts —
-  // only the live image and the download link need the URL.
-  const href =
-    assetBaseUrl && isAssetReference(path)
-      ? resolveAssetUrl(path, assetBaseUrl)
-      : null;
+  // only the live image, the preview and the download link need the URL.
+  const href = assetBaseUrl && path ? resolveCanvasFileUrl(path, assetBaseUrl) : null;
   const isImage = Boolean(mediaType?.startsWith("image/"));
   const isWord = `${path} ${name}`.toLowerCase().includes(".docx");
 
