@@ -110,6 +110,22 @@ def _is_document_file(path: str) -> bool:
     return path.lower().endswith(DOCUMENT_OP_SUFFIXES)
 
 
+_WORKING_COPY_MARKER = "Editing - "
+
+
+def _working_copy_name(source: str) -> str:
+    """Canvas-root name for the editable copy of ``source``.
+
+    The copy and the original are the same document, so nothing in the name
+    itself tells them apart — the marker does. It goes in front because tabs
+    show as much of a name as fits and clip the rest, and these names are
+    long; a mark at the end would be the first thing to disappear. Copying a
+    copy does not stack markers.
+    """
+    name = source.rsplit("/", 1)[-1]
+    return name if name.startswith(_WORKING_COPY_MARKER) else _WORKING_COPY_MARKER + name
+
+
 def _sources_readonly(path: str) -> str:
     """The refusal for an upload, naming the way forward for this file type.
 
@@ -898,8 +914,11 @@ def create_document_tools(
 
         Use this once, before the first edit: uploads under `sources/` are the
         user's originals and stay read-only, so edits go to a copy. The copy
-        lands beside them at the canvas root under the same name (pass
-        `destination` for another name), and the original stays where it was.
+        lands at the canvas root named `Editing - <file name>`, so the two sit
+        side by side and the user can tell at a glance which one is theirs and
+        which one you are changing. The marker goes in front because the two
+        names are otherwise identical and a long one is clipped at the end.
+        Pass `destination` to name the copy yourself.
 
         After this, read the copy with `read_canvas` and change it with
         `edit_canvas`, `insert_document_paragraph`,
@@ -911,11 +930,11 @@ def create_document_tools(
                 f"Error: this opens {_DOCUMENT_FORMATS} files (got {source}). Text canvas "
                 "files are already editable — read one and use edit_canvas."
             )
-        target = (destination or source.rsplit("/", 1)[-1]).strip()
+        target = (destination or _working_copy_name(source)).strip()
         if target.startswith(_SOURCES_PREFIX):
             return (
                 "Error: sources/ holds the user's uploads — put the working copy "
-                "somewhere else (the default is the file name at the canvas root)."
+                "somewhere else (the default is the marked name at the canvas root)."
             )
         if not _is_document_file(target):
             return f"Error: the copy has to keep the document's format ({_DOCUMENT_FORMATS})."

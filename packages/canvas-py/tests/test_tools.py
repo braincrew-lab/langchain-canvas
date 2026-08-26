@@ -698,11 +698,16 @@ def _uploaded(store: InMemoryCanvasStore, path: str = "sources/plan.docx") -> st
 
 
 def _open_copy(tools: dict[str, Any], runtime: Any) -> tuple[str, str]:
-    """Copy the upload out of sources/ and return (path, revision)."""
+    """Copy the upload out of sources/ and return (path, revision).
+
+    The path is read back out of the reply rather than spelled here, so the
+    tests exercise whatever name the tool actually chose.
+    """
     reply = _invoke(tools["open_document_for_editing"], runtime, source="sources/plan.docx")
     assert reply.startswith("Copied "), reply
+    path = reply.split(" to ", 1)[1].rsplit(" (", 1)[0]
     revision = reply.split("revision ")[1].split(")")[0]
-    return "plan.docx", revision
+    return path, revision
 
 
 def test_reading_an_uploaded_document_gives_addresses(tmp_path: Any = None) -> None:
@@ -769,9 +774,35 @@ def test_the_working_copy_leaves_the_upload_alone() -> None:
         description="Sharpen the finding",
         revision=revision,
     )
-    assert reply.startswith("Edited plan.docx")
+    assert reply.startswith(f"Edited {path}")
     assert "반드시" in _invoke(tools["read_canvas"], runtime, path=path)
     assert store.read_bytes("t1", "sources/plan.docx").data == original
+
+
+def test_the_copy_is_named_apart_from_the_original() -> None:
+    """I3 — two tabs, and the user can tell which one is theirs."""
+    store = InMemoryCanvasStore()
+    _uploaded(store)
+    tools = _document_tools(store)
+    path, _ = _open_copy(tools, _runtime(thread_id="t1"))
+    original = "sources/plan.docx"
+    assert path != original
+    assert path.rsplit("/", 1)[-1] != original.rsplit("/", 1)[-1]
+    # The mark is in front: a tab shows the start of a name and clips the end.
+    assert path.startswith("Editing - ")
+    assert "Editing - " in tools["open_document_for_editing"].description
+
+
+def test_copying_a_copy_does_not_stack_the_mark() -> None:
+    store = InMemoryCanvasStore()
+    from documents import sample_document
+
+    store.write_bytes("t1", "Editing - plan.docx", sample_document(), "x", actor="agent")
+    tools = _document_tools(store)
+    reply = _invoke(
+        tools["open_document_for_editing"], _runtime(thread_id="t1"), source="Editing - plan.docx"
+    )
+    assert "already on the canvas" in reply
 
 
 def test_copying_twice_names_the_conflict() -> None:
@@ -860,7 +891,7 @@ def test_insert_remove_and_picture_swap_land_on_the_copy() -> None:
         description="Add a closing section",
         revision=revision,
     )
-    assert added.startswith("Added a paragraph to plan.docx")
+    assert added.startswith(f"Added a paragraph to {path}")
     revision = added.split("revision ")[1].split(")")[0]
     assert "[p10] (Heading 2) 4. 후속 조치" in _invoke(tools["read_canvas"], runtime, path=path)
 
@@ -872,7 +903,7 @@ def test_insert_remove_and_picture_swap_land_on_the_copy() -> None:
         description="Drop a bullet",
         revision=revision,
     )
-    assert removed.startswith("Removed a paragraph from plan.docx")
+    assert removed.startswith(f"Removed a paragraph from {path}")
     revision = removed.split("revision ")[1].split(")")[0]
     assert "담당 부서와 일정" not in _invoke(tools["read_canvas"], runtime, path=path)
 
@@ -885,7 +916,7 @@ def test_insert_remove_and_picture_swap_land_on_the_copy() -> None:
         description="Use the new photo",
         revision=revision,
     )
-    assert swapped.startswith("Replaced a picture in plan.docx")
+    assert swapped.startswith(f"Replaced a picture in {path}")
     assert "width kept, height refitted" in swapped
 
 
@@ -1012,7 +1043,7 @@ def test_a_working_render_saves_and_says_to_look_at_it() -> None:
         description="Sharpen",
         revision=revision,
     )
-    assert 'read_canvas(path="plan.docx", pages="grid")' in reply
+    assert f'read_canvas(path="{path}", pages="grid")' in reply
     assert renderer.renders >= 1
 
 
