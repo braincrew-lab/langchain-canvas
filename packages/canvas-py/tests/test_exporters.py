@@ -512,6 +512,35 @@ def _exported_faces(template: str | None) -> list[list[tuple[str, str]]]:
     return runs
 
 
+def _bullet_font_uri() -> str:
+    """A skin in PowerPoint's ordinary shape: the body left to the theme,
+    the bullets naming a dingbat face of their own."""
+    from pptx import Presentation as _P
+
+    skin = _P()
+    box = skin.slides.add_slide(skin.slide_layouts[6]).shapes.add_textbox(
+        Inches(1), Inches(1), Inches(6), Inches(3)
+    )
+    paragraph = box.text_frame.paragraphs[0]
+    properties = paragraph._p.get_or_add_pPr()
+    properties.append(properties.makeelement(qn("a:buFont"), {"typeface": "Wingdings"}))
+    run = paragraph.add_run()
+    run.text = "x"
+    run.font._rPr.get_or_add_latin().set("typeface", "+mn-lt")
+    buf = io.BytesIO()
+    skin.save(buf)
+    return f"data:{PPTX_MIME};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+def test_slides_pptx_never_takes_a_bullet_font_for_the_deck_face():
+    # A bullet font is a dingbat picked for one glyph. Counting it as a face
+    # left this skin with no other literal to beat it, and every exported
+    # character shipped as Wingdings.
+    runs = _exported_faces(_bullet_font_uri())
+    assert runs
+    assert all(run == [] for run in runs)
+
+
 def test_slides_pptx_names_the_skin_face_for_every_script():
     # Latin, east-asian, and complex scripts each read their own element;
     # naming only a:latin leaves Hangul to whatever the theme says, and a
