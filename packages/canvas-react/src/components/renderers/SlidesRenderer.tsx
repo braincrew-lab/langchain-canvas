@@ -15,7 +15,7 @@ import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
 import { FreeSlide, shapeStyle } from "./FreeSlide";
-import { DEFAULT_SLIDE_PAGE_IN, deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
+import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 
 /** Track a slide box's width and derive the display font scale for `page`.
  *  Re-measures on resize so the panel, present view, and window drags all
@@ -99,9 +99,10 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const aspect = pageAspect(page);
   const editBox = useFontScale(page);
   const presentBox = useFontScale(page);
-  // Thumbnails keep their tuned factor on the classic page and shrink text
-  // proportionally on wider pages (the thumb column width stays fixed).
-  const thumbFont = 0.12 * (DEFAULT_SLIDE_PAGE_IN.widthIn / page.widthIn);
+  // Thumbnails measure like the editor does. A tuned constant read right on
+  // the classic page and wrong everywhere else — a 13.3in deck came out a
+  // quarter too small, so its text piled up and the thumbs looked broken.
+  const thumbBox = useFontScale(page);
 
   useEffect(() => {
     if (!presenting) return;
@@ -205,18 +206,18 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           >
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
-              <div className="cv-deck__thumb-slide" style={{ aspectRatio: aspect, ...(s.background ? { background: s.background } : {}) }}>
+              <div ref={i === 0 ? thumbBox.ref : undefined} className="cv-deck__thumb-slide" style={{ aspectRatio: aspect, ...(s.background ? { background: s.background } : {}) }}>
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s, page).map((el) =>
                   el.type === "text" ? (
                     <span
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * thumbFont, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap" }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * thumbBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap", ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}), ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}), ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}) }}
                     >
                       {el.text}
                     </span>
                   ) : el.type === "shape" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el) }} />
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el, thumbBox.scale) }} />
                   ) : (
                     <img key={el.id} src={assetUrl(el.src)} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
                   ),
@@ -302,13 +303,13 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
-                    <div className="cv-free__text" style={{ fontSize: (el.fontSize ?? 24) * presentBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap" }}>
+                    <div className="cv-free__text" style={{ fontSize: (el.fontSize ?? 24) * presentBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap", ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}), ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}), ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}) }}>
                       {el.text}
                     </div>
                   </div>
                 ) : el.type === "shape" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor }}>
-                    <div style={shapeStyle(el)} />
+                    <div style={shapeStyle(el, presentBox.scale)} />
                   </div>
                 ) : (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>

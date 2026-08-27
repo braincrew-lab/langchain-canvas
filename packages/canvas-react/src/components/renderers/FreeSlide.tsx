@@ -14,11 +14,17 @@ import { useAssetUrl } from "../../hooks/useAssetUrl";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
-export function shapeStyle(el: SlideElement): CSSProperties {
-  const fill = el.fill ?? "currentColor";
-  if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
+export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
+  // A box drawn by its outline alone carries no fill: painting `currentColor`
+  // in that case would hide what the border is meant to frame.
+  const fill = el.fill ?? (el.stroke ? "transparent" : "currentColor");
+  const border = el.stroke
+    ? { border: `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px solid ${el.stroke}`, boxSizing: "border-box" as const }
+    : {};
+  if (el.shape === "ellipse")
+    return { width: "100%", height: "100%", background: fill, borderRadius: "50%", ...border };
   if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
-  return { width: "100%", height: "100%", background: fill, borderRadius: 8 };
+  return { width: "100%", height: "100%", background: fill, borderRadius: 8, ...border };
 }
 
 interface FreeSlideProps {
@@ -226,6 +232,22 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
                 fontWeight: el.bold ? 700 : 400,
                 color: el.color,
                 textAlign: el.align ?? "left",
+                ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}),
+                ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
+                ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
+                ...(el.verticalAlign
+                  ? {
+                      display: "flex",
+                      flexDirection: "column" as const,
+                      justifyContent:
+                        el.verticalAlign === "middle"
+                          ? "center"
+                          : el.verticalAlign === "bottom"
+                            ? "flex-end"
+                            : "flex-start",
+                      height: "100%",
+                    }
+                  : {}),
               }}
               onBlur={(e) => {
                 setEditingId(null);
@@ -235,7 +257,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               {el.text}
             </div>
           ) : el.type === "shape" ? (
-            <div style={shapeStyle(el)} />
+            <div style={shapeStyle(el, fontScale)} />
           ) : (
             <img className="cv-free__img" src={assetUrl(el.src)} alt="" draggable={false} />
           )}

@@ -80,7 +80,13 @@ from .exporters import (
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .layout_lint import format_layout_warnings, lint_slides_data
-from .replay import ARTIFACT_SUFFIXES, events_for_commit, source_preview_events
+from .replay import (
+    ARTIFACT_SUFFIXES,
+    SLIDES_SUFFIX,
+    encode_slides,
+    events_for_commit,
+    source_preview_events,
+)
 from .store import (
     BinaryContentError,
     CanvasFileNotFoundError,
@@ -123,6 +129,12 @@ def _other_ways_to_open(path: str, converters: list[SourceConverter]) -> str:
     pages as images where a renderer covers the format, text otherwise — so
     the answer is a next step rather than a dead end.
     """
+    if path.lower().endswith(".pptx"):
+        return (
+            f"To edit it, copy it out with open_deck_for_editing (it becomes a "
+            f"{SLIDES_SUFFIX} deck you can edit and export back to PowerPoint). "
+            f"To just look, read {path} — with `pages` for the slide images."
+        )
     if any(
         isinstance(c, PageRenderable) and path.lower().endswith(c.suffixes)
         for c in converters
@@ -156,6 +168,18 @@ def _working_copy_name(source: str) -> str:
     """
     name = source.rsplit("/", 1)[-1]
     return name if name.startswith(_WORKING_COPY_MARKER) else _WORKING_COPY_MARKER + name
+
+
+def _deck_copy_name(source: str) -> str:
+    """Canvas-root name for the editable deck made from ``source``.
+
+    The copy is a different kind of file from the upload — a deck the canvas
+    owns, not a PowerPoint document — so it takes the suffix that says so
+    rather than a marker on the same name.
+    """
+    name = source.rsplit("/", 1)[-1]
+    stem = name[: -len(".pptx")] if name.lower().endswith(".pptx") else name
+    return f"{stem}{SLIDES_SUFFIX}"
 
 
 def _sources_readonly(path: str) -> str:
@@ -1688,3 +1712,107 @@ def create_check_table_tool(
 
     check_table.description += "\n\n" + formula_guidance()
     return check_table
+
+
+def create_deck_tools(store: CanvasStore) -> list[Any]:
+    """Build the tool that makes an uploaded deck editable.
+
+    An uploaded ``.pptx`` already shows as slides — the upload path reads it
+    with :func:`~langchain_canvas.pptx_import.pptx_to_slides`. But it shows
+    from under ``sources/``, where the user's originals are read-only, and
+    under its own name, which no exporter matches. So it can be looked at and
+    nothing else.
+
+    This copies it out: the same slides, written to a ``.slides.json`` at the
+    canvas root, which edits and exports like any deck the agent builds. The
+    copy names the original as its ``template``, so exporting rebuilds on the
+    real masters and layouts rather than a blank page.
+
+    Kept out of :func:`create_canvas_tools` so the four standard tools stay a
+    stable contract; mount this when your agent should edit decks people send.
+    """
+
+    @tool
+    def open_deck_for_editing(
+        source: str,
+        runtime: ToolRuntime,
+        destination: str | None = None,
+    ) -> str:
+        """Copy an uploaded PowerPoint file into an editable canvas deck.
+
+        `source` is the uploaded `.pptx` (usually under `sources/`). The copy
+        lands at the canvas root as a `.slides.json` you can edit with
+        `edit_canvas` and export back to PowerPoint; pass `destination` to
+        name it yourself. The upload stays where it is, unchanged.
+
+        The copy keeps each slide's shapes, text, pictures and speaker notes,
+        and points at the original as its template so an export rebuilds on
+        the original's masters. Tables, charts and grouped shapes do not come
+        across — read the upload itself to see those.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not source.lower().endswith(".pptx"):
+            return (
+                f"Error: this opens .pptx files (got {source}). "
+                + _other_ways_to_open(source, default_converters())
+            )
+        target = (destination or _deck_copy_name(source)).strip()
+        if target.startswith(_SOURCES_PREFIX):
+            return (
+                "Error: sources/ holds the user's uploads — put the copy "
+                "somewhere else (the default is the deck's name at the canvas root)."
+            )
+        if not target.endswith(SLIDES_SUFFIX):
+            return f"Error: the copy has to be a {SLIDES_SUFFIX} file (got {target})."
+        if any(info.path == target for info in store.list_files(canvas_id)):
+            return (
+                f"Error: {target} is already on the canvas. Edit that one, or pass "
+                "`destination` to copy under another name."
+            )
+        try:
+            got = store.read_bytes(canvas_id, source)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+
+        from .pptx_import import PptxImportError, pptx_to_slides
+
+        try:
+            deck = pptx_to_slides(got.data)
+        except PptxImportError as exc:
+            return f"Error: {exc}."
+        deck["template"] = source
+        try:
+            commit = store.write(
+                canvas_id,
+                target,
+                # Through the envelope encoder, never json.dumps: a .slides.json
+                # without {"type","title","data"} parses as no artifact at all
+                # and the canvas falls back to showing the JSON as a document.
+                encode_slides(target.rsplit("/", 1)[-1], deck),
+                f"Copy {source} for editing",
+                actor="agent",
+            )
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        # An artifact broadcast, not a source one: source_preview_events treats
+        # a .json path as a text preview, which drew the deck as its own JSON.
+        writer = getattr(runtime, "stream_writer", None)
+        if writer is not None:
+            for event in events_for_commit(
+                target,
+                store.read(canvas_id, target, revision=commit.revision).content,
+                is_new=True,
+                revision=commit.revision,
+                description=commit.description,
+            ):
+                writer(event)
+        count = len(deck.get("slides", []))
+        return (
+            f"Copied {source} to {target} ({count} slide(s), revision "
+            f"{commit.revision}). Edit {target} and export it to pptx; {source} "
+            "keeps the user's original."
+        )
+
+    return [open_deck_for_editing]

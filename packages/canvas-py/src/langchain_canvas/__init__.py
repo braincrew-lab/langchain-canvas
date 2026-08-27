@@ -12,6 +12,7 @@ Public surface:
   formats under ``exports/``), pluggable through ``Exporter``.
 * ``create_document_tools``— editing an uploaded Word file in place (copy it out
   of ``sources/``, add / remove a paragraph, swap a picture).
+* ``create_deck_tools``    — copying an uploaded .pptx into an editable deck.
 * ``create_table_tools``   — writing a spreadsheet by address (put values or
   formulas in named cells of a named sheet, add a sheet).
 * ``sse_from_agent``       — turn an agent run into a Canvas Wire Protocol SSE stream.
@@ -43,6 +44,7 @@ from .tools import (
     create_asset_tool,
     create_canvas_tools,
     create_check_table_tool,
+    create_deck_tools,
     create_document_tools,
     create_export_tool,
     create_table_tools,
@@ -68,6 +70,7 @@ __all__ = [
     "create_canvas_agent",
     "create_canvas_tools",
     "create_check_table_tool",
+    "create_deck_tools",
     "create_document_tools",
     "create_export_tool",
     "create_table_tools",

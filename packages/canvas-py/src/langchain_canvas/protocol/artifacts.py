@@ -114,6 +114,20 @@ class SlideElement(_CamelModel):
     align: Literal["left", "center", "right"] | None = None
     shape: Literal["rect", "ellipse", "line"] | None = None  # for `type: "shape"`
     fill: str | None = None  # fill (rect/ellipse) or stroke (line) color
+    # A shape can be drawn by its outline alone — an empty box around content is
+    # a common annotation, and with only `fill` it renders as nothing at all.
+    stroke: str | None = None  # outline color, independent of fill
+    stroke_width: float | None = Field(default=None, ge=0)  # outline weight in px
+    # Text metrics the box cannot imply. Without the face, line breaks land in
+    # different places than the file they came from.
+    font_family: str | None = None
+    line_height: float | None = Field(default=None, gt=0)  # multiple of font size
+    vertical_align: Literal["top", "middle", "bottom"] | None = None
+    # A highlighted heading reads as a coloured band behind the words; without
+    # it the band disappears and the heading looks like ordinary text.
+    highlight: str | None = None
+    space_before: float | None = Field(default=None, ge=0)  # px above the text
+    space_after: float | None = Field(default=None, ge=0)  # px below the text
 
 
 class Slide(_CamelModel):
