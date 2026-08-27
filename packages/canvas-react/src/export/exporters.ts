@@ -7,11 +7,13 @@
  *    a self-contained `.html` document with inlined styles.
  * 2. **Data exporters** (`dataExporters`) — deterministic, per-type conversions
  *    straight from `artifact.data`: markdown `.md`, table `.csv`/`.xlsx`,
- *    document `.docx`, slides `.pptx`, raw `.json`.
+ *    document `.docx`, raw `.json`.
  *
- * Office formats (xlsx / docx / pptx) are produced with `exceljs` / `docx` /
- * `pptxgenjs`, loaded via **dynamic import** so they never touch the main
- * bundle — only the code path a user actually clicks pulls them in.
+ * Office formats (xlsx / docx) are produced with `exceljs` / `docx`, loaded via
+ * **dynamic import** so they never touch the main bundle — only the code path a
+ * user actually clicks pulls them in. A deck exports to pptx through the Python
+ * side (`SlidesPptxExporter`), which keeps the template skin and its fonts; the
+ * browser has no equivalent.
  */
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
@@ -36,7 +38,6 @@ const MIME = {
   json: "application/json",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 } as const;
 
 /** Per-type data exporters, keyed by `artifact.type`. */
@@ -51,9 +52,6 @@ export const dataExporters: Record<string, FileExport[]> = {
   ],
   chart: [
     { label: "JSON", extension: "json", mime: MIME.json, build: (a) => JSON.stringify(a.data, null, 2) },
-  ],
-  slides: [
-    { label: "PowerPoint", extension: "pptx", mime: MIME.pptx, build: (a) => slidesToPptx(a.data as SlidesData, a.title) },
   ],
 };
 
@@ -195,51 +193,6 @@ async function documentToDocx(data: DocumentData): Promise<BlobPart> {
 
   const doc = new Document({ sections: [{ children: paragraphs }] });
   return Packer.toBlob(doc);
-}
-
-// --- slides → pptx --------------------------------------------------------------
-
-async function slidesToPptx(data: SlidesData, _title: string): Promise<BlobPart> {
-  const PptxGenJS = (await loadOptional("pptxgenjs", () => import("pptxgenjs"))).default;
-  const pptx = new PptxGenJS();
-
-  // The deck page (inches) decides the slide size — the same contract the
-  // editor box and the server-side exporter follow. Absent = classic 16:9.
-  const { widthIn: W, heightIn: H } = deckPage(data);
-  pptx.defineLayout({ name: "CV_PAGE", width: W, height: H });
-  pptx.layout = "CV_PAGE";
-  for (const slide of data.slides) {
-    const s = pptx.addSlide();
-    // Only a solid hex background maps to a pptx slide fill; url()/gradient
-    // backgrounds (e.g. an uploaded image) are skipped rather than corrupting it.
-    if (slide.background && /^#[0-9a-f]{3,8}$/i.test(slide.background)) s.background = { color: slide.background.replace("#", "") };
-    const tc = slide.textColor ? slide.textColor.replace("#", "") : undefined;
-
-    // A slide `padding` (percent) insets the content area; map element geometry
-    // into that safe area so the PPTX matches the editor/PDF.
-    const pad = (slide.padding ?? 0) / 100;
-    const inset = (v: number) => pad + (v / 100) * (1 - 2 * pad);
-    for (const el of resolveElements(slide, { widthIn: W, heightIn: H })) {
-      const box = { x: inset(el.x) * W, y: inset(el.y) * H, w: (el.w / 100) * (1 - 2 * pad) * W, h: (el.h / 100) * (1 - 2 * pad) * H };
-      if (el.type === "text") {
-        const color = el.color ? el.color.replace("#", "") : tc;
-        s.addText(el.text ?? "", { ...box, fontSize: (el.fontSize ?? 24) * 0.75, bold: !!el.bold, align: el.align ?? "left", ...(color ? { color } : {}) });
-      } else if (el.type === "shape") {
-        const fill = (el.fill ?? "#5b5bd6").replace("#", "");
-        if (el.shape === "line") {
-          s.addShape(pptx.ShapeType.line, { ...box, line: { color: fill, width: 2 } });
-        } else {
-          s.addShape(el.shape === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, { ...box, fill: { color: fill } });
-        }
-      } else if (el.src) {
-        s.addImage({ data: el.src, ...box, sizing: { type: "contain", w: box.w, h: box.h } });
-      }
-    }
-
-    if (slide.notes) s.addNotes(slide.notes);
-  }
-
-  return (await pptx.write({ outputType: "blob" })) as Blob;
 }
 
 /**

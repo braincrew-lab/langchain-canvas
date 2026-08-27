@@ -24,7 +24,6 @@ export default defineConfig({
     "exceljs",
     "docx",
     "docx-preview",
-    "pptxgenjs",
     "fast-formula-parser",
   ],
   async onSuccess() {

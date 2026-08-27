@@ -19,20 +19,15 @@ npm i @braincrew-lab/langchain-canvas
 ```
 
 `exceljs`, `docx`, `docx-preview` and `fast-formula-parser` come along with the
-package. **PowerPoint export does not** — add it yourself when you want it:
+package. If one is missing, that single feature says what to add and the rest
+keeps working: an export tells the user, and a Word upload falls back to the file
+card it showed before.
 
-```bash
-npm i pptxgenjs
-```
-
-It is left out because `pptxgenjs` depends on `image-size`, and every published
-version of `image-size` carries an open advisory with no fixed release
-(GHSA — denial of service in the ICNS parser). Shipping it would mark this
-package `high` in every audit, so the choice is yours to make.
-
-If a format's package isn't installed, that one feature says what to add and the
-rest keeps working: an export tells the user, and a Word upload falls back to the
-file card it showed before.
+**A deck exports to PowerPoint from the Python side**, through
+`SlidesPptxExporter` in `langchain-canvas[office]`. It builds on the deck's
+template skin, so the original's masters, layouts and embedded fonts survive —
+which the browser never had. The export menu offers PDF for a deck; wire the
+Python exporter behind an endpoint of your own for `.pptx`.
 
 ## Mount it
 
@@ -175,10 +170,11 @@ Agent output and imported files are treated as untrusted:
 
 ### Dependency advisories
 
-This package's own tree is clean. Two of its dependencies still resolve old
-transitive packages that carry advisories, and neither publishes a release that
-lifts them, so pin them in **your** app — a lockfile override only applies to the
-project that declares it, never to a library you install.
+`pnpm audit` and `npm audit` report nothing against this package. Two of its
+dependencies still resolve old transitive packages that carry advisories, and
+neither publishes a release that lifts them, so pin them in **your** app — a
+lockfile override only applies to the project that declares it, never to a
+library you install.
 
 npm / yarn:
 

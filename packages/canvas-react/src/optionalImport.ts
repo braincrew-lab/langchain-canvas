@@ -1,7 +1,7 @@
 /**
  * Load an optional peer dependency, failing with an actionable message.
  *
- * The Office/formula engines (`exceljs`, `docx`, `pptxgenjs`,
+ * The Office/formula engines (`exceljs`, `docx`,
  * `fast-formula-parser`) are `optionalDependencies` and kept out of the bundle,
  * so a consumer who never exports to those formats doesn't pay for them. When a
  * feature that needs one is used without it installed, surface a clear install
