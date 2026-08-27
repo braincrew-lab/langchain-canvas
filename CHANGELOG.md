@@ -4,6 +4,17 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.24] — 2026-08-27
+
+### Added
+- **Third-party notices ship with the package.** The build bundles Fortune-sheet
+  and its dependencies into `dist/`, so their code travels inside our tarball.
+  Their MIT and Apache-2.0 terms ask us to carry their copyright notices with it,
+  and the tarball held only our own `LICENSE`. `THIRD-PARTY-NOTICES` now lists the
+  license text of all 12 bundled packages and is listed in `files`; `LICENSE`
+  points to it. The notice also records the one change we make to
+  `@fortune-sheet/core`.
+
 ## [0.7.23] — 2026-08-27
 
 ### Fixed
