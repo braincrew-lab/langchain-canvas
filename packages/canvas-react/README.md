@@ -183,7 +183,7 @@ project that declares it, never to a library you install.
 npm / yarn:
 
 ```json
-"overrides": { "uuid": "^11.1.1" }
+"overrides": { "uuid": "^11.1.1", "glob": "^10" }
 ```
 
 pnpm:
@@ -192,13 +192,23 @@ pnpm:
 "pnpm": { "overrides": {
   "uuid@<11.1.1": "^11.1.1",
   "brace-expansion@<1.1.17": "^1.1.17",
-  "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4"
+  "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4",
+  "glob@<9": "^10"
 } }
 ```
+
+`glob` is there for `inflight`, which it stopped depending on in v9. `inflight`
+is abandoned and leaks memory, and the archiver inside `exceljs` still asks for
+`glob@7`. Writing and reading a workbook is covered by this repository's tests
+under the override.
 
 With those in place `npm audit` and `pnpm audit` both report nothing on a fresh
 install of this package. The same overrides run in this repository's own
 lockfile, against its full test suite.
+
+One transitive package stays and cannot be pinned away: `@ungap/structured-clone`,
+which `react-markdown` reaches through `mdast-util-to-hast`. Its current release
+still depends on it. The license is **ISC**, and it carries no advisory.
 
 ## License
 
