@@ -90,6 +90,7 @@ from .store import (
     EditConflictError,
     RevisionMismatchError,
 )
+from .table_outline import table_view
 
 _RETRY_HINT = "Call read_canvas again and retry with the fresh revision and exact content."
 _SOURCES_PREFIX = "sources/"
@@ -667,6 +668,7 @@ def create_canvas_tools(
         offset: int = 0,
         limit: int = _DEFAULT_READ_LIMIT,
         pages: str | None = None,
+        sheet: str | None = None,
     ) -> str | list[dict]:
         """Read one canvas file before viewing or editing it.
 
@@ -685,10 +687,21 @@ def create_canvas_tools(
         overview of every page, then `pages="3"` / `"2-5"` / `"1,4,7"` to
         render just the pages that matter (scans, charts, layout questions)
         as images. At most 8 page images per call.
+
+        A `.table.json` table answers with its map, not its contents: every
+        rectangle addressed, sized, and counted. A table carries the same
+        data twice — `rows`, which is yours, and the grid sheets, which are
+        the person's — and the grid is where the size is. Read one with
+        `sheet="rows"` or `sheet="s0"`; `offset`/`limit` window that one.
         """
         canvas_id = _canvas_id(runtime)
         if pages is not None:
             return _read_source_pages(canvas_id, path, pages)
+        if sheet is not None and not path.endswith(".table.json"):
+            return (
+                f"Error: `sheet` applies to .table.json tables; {path} is not "
+                "one — read it without `sheet`."
+            )
         offset = max(0, offset)
         limit = max(1, limit)
         try:
@@ -702,6 +715,20 @@ def create_canvas_tools(
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
             return f"Error: {exc}."
+        if path.endswith(".table.json"):
+            try:
+                view = table_view(got.content, sheet)
+            except ValueError as exc:
+                return f"Error: {exc}."
+            if view is not None and sheet is None:
+                return f"revision: {got.revision}\n{view}"
+            if view is not None:
+                header, _, body = view.partition("\n")
+                sliced, note = _sliced(body, offset, limit)
+                return (
+                    f"revision: {got.revision}\n{header}\n{sliced}"
+                    + (f"\n{note}" if note else "")
+                )
         sliced, note = _sliced(got.content, offset, limit)
         return f"revision: {got.revision}\n{sliced}" + (f"\n{note}" if note else "")
 
