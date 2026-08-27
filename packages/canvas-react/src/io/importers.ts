@@ -7,18 +7,17 @@
  * pair, so an opened file flows through the exact same reconciler path an
  * agent's stream would — no special-casing downstream.
  *
- * Dependency policy mirrors the exporters: text formats (csv / md / html / json)
- * are parsed inline with zero dependencies; `.xlsx` reuses `exceljs`, loaded via
- * dynamic import so it never touches the main bundle.
+ * Dependency policy mirrors the exporters: every format here is parsed inline
+ * with zero dependencies. A spreadsheet is opened on the Python side instead
+ * (`langchain_canvas.xlsx_import`), which reads a workbook down to its fonts,
+ * fills, merges and images — more than a browser should carry to do well.
  */
 
 import type { Artifact, DocumentData, HtmlData, TableColumn, TableData } from "../protocol/artifacts";
 import type { CanvasCreate, CanvasStatus, StreamEvent } from "../protocol/events";
-import { loadOptional } from "../optionalImport";
-import { xlsxToSheets } from "./xlsx";
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
-export const IMPORTABLE_EXTENSIONS = [".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json", ".xlsx"] as const;
+export const IMPORTABLE_EXTENSIONS = [".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json"] as const;
 
 const extensionOf = (name: string) => {
   const dot = name.lastIndexOf(".");
@@ -69,12 +68,6 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
     }
     case ".json":
       return importJson(await file.text(), id, title);
-    case ".xlsx": {
-      // Rich import: every sheet, with fonts/fills/formats/merges/widths, plus a
-      // flat first-sheet view for export/fallback.
-      const { sheets, columns, rows } = await xlsxToSheets(await file.arrayBuffer(), () => loadOptional("exceljs", () => import("exceljs")));
-      return toEvents(artifact(id, "table", title, { columns, rows, sheet: sheets } satisfies TableData));
-    }
     default:
       throw new Error(`Unsupported file type "${ext || file.name}". Supported: ${IMPORTABLE_EXTENSIONS.join(", ")}`);
   }

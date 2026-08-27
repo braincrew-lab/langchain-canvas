@@ -6,26 +6,27 @@
  * 1. **HTML** (`toStandaloneHtml`) — wrap the *rendered* DOM of any artifact into
  *    a self-contained `.html` document with inlined styles.
  * 2. **Data exporters** (`dataExporters`) — deterministic, per-type conversions
- *    straight from `artifact.data`: markdown `.md`, table `.csv`/`.xlsx`,
- *    document `.docx`, raw `.json`.
+ *    straight from `artifact.data`: markdown `.md`, table `.csv`, document
+ *    `.docx`, raw `.json`.
  *
- * Office formats (xlsx / docx) are produced with `exceljs` / `docx`, loaded via
- * **dynamic import** so they never touch the main bundle — only the code path a
- * user actually clicks pulls them in. A deck exports to pptx through the Python
- * side (`SlidesPptxExporter`), which keeps the template skin and its fonts; the
- * browser has no equivalent.
+ * `docx` is loaded via **dynamic import** so it never touches the main bundle —
+ * only the code path a user actually clicks pulls it in. Spreadsheets and decks
+ * export through the Python side (`TableXlsxExporter`, `SlidesPptxExporter`),
+ * which keeps a deck's template skin and its fonts; the browser has no
+ * equivalent, and reading a workbook well takes more than a browser should
+ * carry.
  */
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
 import { resolveElements } from "../client/slideElements";
 import { deckPage } from "../client/slidePage";
-import { mergeRowsIntoSheet, projectSheetIntoRows } from "../io/tableMerge";
+import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
 export interface FileExport {
   /** Menu label, e.g. "Excel". */
   label: string;
-  /** File extension without the dot, e.g. "xlsx". */
+  /** File extension without the dot, e.g. "csv". */
   extension: string;
   mime: string;
   /** Build the file contents (text or binary; may be async for Office formats). */
@@ -36,7 +37,6 @@ const MIME = {
   md: "text/markdown",
   csv: "text/csv",
   json: "application/json",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 } as const;
 
@@ -48,7 +48,6 @@ export const dataExporters: Record<string, FileExport[]> = {
   ],
   table: [
     { label: "CSV", extension: "csv", mime: MIME.csv, build: (a) => tableToCsv(a.data as TableData) },
-    { label: "Excel", extension: "xlsx", mime: MIME.xlsx, build: (a) => tableToXlsx(a.data as TableData) },
   ],
   chart: [
     { label: "JSON", extension: "json", mime: MIME.json, build: (a) => JSON.stringify(a.data, null, 2) },
@@ -84,7 +83,7 @@ ${renderedHtml}
 </html>`;
 }
 
-// --- table → csv / xlsx ---------------------------------------------------------
+// --- table → csv ----------------------------------------------------------------
 
 function tableToCsv(data: TableData): string {
   // A person's grid edits live in `sheet` — project them into rows first so
@@ -98,84 +97,6 @@ function tableToCsv(data: TableData): string {
     .join("\n");
   return `${header}\n${body}`;
 }
-
-async function tableToXlsx(data: TableData): Promise<BlobPart> {
-  const { Workbook } = await loadOptional("exceljs", () => import("exceljs"));
-  const workbook = new Workbook();
-
-  if (data.sheet?.length) {
-    // The edited Fortune-sheet state carries merges, fonts and formats; rows
-    // the agent wrote after the person's last edit are merged in first, so
-    // the export never drops an agent change.
-    const { computeFormulas } = await import("../io/formula");
-    const merged = mergeRowsIntoSheet(
-      data.columns,
-      data.rows,
-      data.sheet,
-      await computeFormulas(data.columns, data.rows),
-    );
-    fortuneToWorkbook(workbook, merged as Array<Record<string, unknown>>);
-  } else {
-    const sheet = workbook.addWorksheet("Sheet1");
-    sheet.addRow(data.columns.map((c) => c.label ?? c.key));
-    // "=..." cells stay formulas in the workbook, with the computed value as
-    // the cached result — the exported sheet keeps recalculating.
-    const { computeFormulas } = await import("../io/formula");
-    const results = await computeFormulas(data.columns, data.rows);
-    data.rows.forEach((row, dataIdx) => {
-      sheet.addRow(
-        data.columns.map((c, colIdx) => {
-          const v = row[c.key] ?? "";
-          if (typeof v !== "string" || !v.startsWith("=")) return v;
-          return { formula: v.slice(1), result: results.get(`${dataIdx + 1},${colIdx}`) };
-        }),
-      );
-    });
-    sheet.getRow(1).font = { bold: true };
-  }
-  return workbook.xlsx.writeBuffer();
-}
-
-/** Map Fortune-sheet sheets → an ExcelJS workbook (values, fonts, fills, merges). */
-function fortuneToWorkbook(workbook: any, sheets: Array<Record<string, any>>): void {
-  const align = ["center", "left", "right"] as const;
-  for (const s of sheets) {
-    const ws = workbook.addWorksheet(String(s.name ?? "Sheet1"));
-    for (const cell of (s.celldata as any[]) ?? []) {
-      const v = cell.v;
-      const value = v && typeof v === "object" ? v.v ?? v.m ?? null : v;
-      const xc = ws.getCell(cell.r + 1, cell.c + 1);
-      // A typed formula lives in `v.f` — keep it a formula, with the grid's
-      // computed value as the cached result, instead of freezing the value.
-      const formula = v && typeof v === "object" && typeof v.f === "string" ? v.f : null;
-      xc.value = formula ? { formula: formula.replace(/^=/, ""), result: value ?? undefined } : value;
-      if (v && typeof v === "object") {
-        if (v.bl) xc.font = { ...xc.font, bold: true };
-        if (v.it) xc.font = { ...xc.font, italic: true };
-        if (v.fc) xc.font = { ...xc.font, color: { argb: hexToArgb(v.fc) } };
-        if (v.bg) xc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: hexToArgb(v.bg) } };
-        if (typeof v.ht === "number" && align[v.ht]) xc.alignment = { ...xc.alignment, horizontal: align[v.ht] };
-      }
-    }
-    const merge = (s.config as any)?.merge ?? {};
-    for (const key of Object.keys(merge)) {
-      const m = merge[key];
-      try {
-        ws.mergeCells(m.r + 1, m.c + 1, m.r + m.rs, m.c + m.cs);
-      } catch {
-        /* ignore overlapping/invalid merge ranges */
-      }
-    }
-  }
-}
-
-function hexToArgb(hex: string): string {
-  const h = String(hex).replace("#", "");
-  const full = h.length === 3 ? h.split("").map((x) => x + x).join("") : h;
-  return ("FF" + full).toUpperCase();
-}
-
-// --- document (markdown) → docx -------------------------------------------------
 
 async function documentToDocx(data: DocumentData): Promise<BlobPart> {
   const { Document, Packer, Paragraph, HeadingLevel } = await loadOptional("docx", () => import("docx"));
