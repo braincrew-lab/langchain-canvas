@@ -78,7 +78,7 @@ def same_cell_content(rows_value: Any, cell_v: Any) -> bool:
     return _normalized_value(rows_value) == _normalized_value(cell_value)
 
 
-def _cell_map(sheet: dict[str, Any]) -> dict[tuple[int, int], Any]:
+def cell_map(sheet: dict[str, Any]) -> dict[tuple[int, int], Any]:
     """The sheet's cells keyed ``(r, c)`` — from ``celldata`` or the dense
     ``data`` matrix the grid emits from live state."""
     cells: dict[tuple[int, int], Any] = {}
@@ -123,7 +123,7 @@ def project_sheet_into_rows(
     first = sheet[0] if sheet else None
     if not isinstance(first, dict) or not columns:
         return rows
-    cells = _cell_map(first)
+    cells = cell_map(first)
 
     deepest = 0
     for r, c in cells:
@@ -153,7 +153,7 @@ def merge_rows_into_sheet(
     first = sheet[0] if sheet else None
     if not isinstance(first, dict) or not columns:
         return sheet
-    cells = _cell_map(first)
+    cells = cell_map(first)
 
     overrides: dict[tuple[int, int], dict[str, Any] | None] = {}
     for c, column in enumerate(columns):

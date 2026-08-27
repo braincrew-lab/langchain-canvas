@@ -9,6 +9,7 @@ of raising.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,6 +93,65 @@ def test_read_missing_file_returns_error_text() -> None:
     )
     assert out.startswith("Error:")
     assert "list_canvas_files" in out
+
+
+def _wide_table(sheets: int, rows: int) -> str:
+    return json.dumps({
+        "type": "table",
+        "title": "Ledger",
+        "data": {
+            "columns": [{"key": "n"}, {"key": "city"}],
+            "rows": [{"n": i, "city": f"city{i}"} for i in range(rows)],
+            "sheet": [
+                {"name": f"S{i}", "row": 1000, "column": 30, "config": {},
+                 "celldata": [{"r": 0, "c": 0, "v": {"v": f"sheet {i}"}}]}
+                for i in range(sheets)
+            ],
+        },
+    })
+
+
+def test_reading_a_table_answers_with_its_map_not_its_contents() -> None:
+    # The grid state is the person's, and it is where the size is: a real
+    # five-sheet import in the examples is 29.4M characters against 48k of
+    # rows. Handing the file over whole spends the context on borders.
+    store = InMemoryCanvasStore()
+    content = _wide_table(sheets=3, rows=500)
+    store.write("t1", "ledger.table.json", content, "create")
+    out = _invoke(_tools(store)["read_canvas"], _runtime(thread_id="t1"), path="ledger.table.json")
+    assert "[rows] 500 x 2 — what agents read and write" in out
+    assert "[s0] S0 — 1000 x 30 grid, 1 value" in out
+    assert "[s2] S2" in out
+    assert "rewrites all 3 grid sheets" in out
+    assert len(out) < len(content) / 10
+
+
+def test_a_table_address_reads_one_rectangle_through_the_usual_window() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t1", "ledger.table.json", _wide_table(sheets=2, rows=500), "create")
+    tools = _tools(store)
+    out = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
+                  path="ledger.table.json", sheet="rows", offset=3, limit=2)
+    assert "### sheet: rows" in out
+    assert "   4	2,city2" in out
+    assert "   5	3,city3" in out
+    assert "of 501 — call read_canvas again with offset=5" in out
+    grid = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
+                   path="ledger.table.json", sheet="s1")
+    assert grid.endswith("### sheet: S1\n   1\tsheet 1")
+
+
+def test_a_table_address_that_does_not_exist_names_the_ones_that_do() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t1", "ledger.table.json", _wide_table(sheets=2, rows=2), "create")
+    store.write("t1", "page.html", "<p>x</p>", "create")
+    tools = _tools(store)
+    missing = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
+                      path="ledger.table.json", sheet="s5")
+    assert missing == "Error: sheet must be one of: rows, s0, s1 (got 's5')."
+    wrong = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
+                    path="page.html", sheet="s0")
+    assert "`sheet` applies to .table.json tables" in wrong
 
 
 # --- edit: read-before-update ----------------------------------------------------
