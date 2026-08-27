@@ -73,15 +73,15 @@
     "release:major": "npm version major -m \"release: %s\""
   },
   "peerDependencies": {
-    "react": "^18 || ^19",
-    "react-dom": "^18 || ^19",
     "@langchain/langgraph-sdk": ">=0.0.70",
-    "pptxgenjs": "^3.12.0 || ^4"
+    "pptxgenjs": "^3.12.0 || ^4",
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
   },
   "dependencies": {
     "@fortune-sheet/react": "^1.0.4",
-    "react-markdown": "^9.0.1",
     "echarts": "^6.0.0",
+    "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
     "zustand": "^4.5.4"
   },
@@ -92,13 +92,14 @@
     "fast-formula-parser": "^1.0.19"
   },
   "devDependencies": {
+    "@langchain/langgraph-sdk": "^1.9.28",
     "@types/react": "^19.0.0",
     "jsdom": "^25",
-    "tsup": "^8.2.4",
+    "pptxgenjs": "^3.12.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.5.4",
-    "vitest": "^2",
-    "@langchain/langgraph-sdk": "^1.9.28",
-    "pptxgenjs": "^3.12.0"
+    "vite": "^8",
+    "vitest": "^4"
   },
   "peerDependenciesMeta": {
     "@langchain/langgraph-sdk": {
