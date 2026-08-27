@@ -571,3 +571,58 @@ def test_type_size_comes_back_the_same_after_a_round_trip() -> None:
     )
     back = pptx_to_slides(exported.data)
     assert back["slides"][0]["elements"][0]["fontSize"] == pytest.approx(40.0, abs=0.5)
+
+
+def test_background_is_inherited_from_the_layout_and_the_master():
+    """A slide with no background of its own wears the one above it.
+
+    Reading only the slide's own element turns an inherited dark deck white.
+    """
+    pytest.importorskip("pptx")
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+    from lxml import etree
+
+    presentation = Presentation()
+    master = presentation.slide_masters[0]
+    common = master.element.find(qn("p:cSld"))
+    common.insert(
+        0,
+        etree.fromstring(
+            '<p:bg xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<p:bgPr><a:solidFill><a:srgbClr val="151515"/></a:solidFill></p:bgPr></p:bg>'
+        ),
+    )
+    presentation.slides.add_slide(presentation.slide_layouts[6])
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+
+    deck = pptx_to_slides(buffer.getvalue())
+    assert deck["slides"][0]["background"] == "#151515"
+
+
+def test_a_theme_coloured_background_resolves_through_the_scheme():
+    """``schemeClr`` names a colour the theme holds; the name is not a colour."""
+    pytest.importorskip("pptx")
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+    from lxml import etree
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    common = slide.element.find(qn("p:cSld"))
+    common.insert(
+        0,
+        etree.fromstring(
+            '<p:bg xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<p:bgPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></p:bgPr></p:bg>'
+        ),
+    )
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+
+    background = pptx_to_slides(buffer.getvalue())["slides"][0]["background"]
+    assert background is not None and background.startswith("#")
+    assert background.lower() != "#accent1"

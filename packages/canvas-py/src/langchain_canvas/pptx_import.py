@@ -102,13 +102,13 @@ def _slide(slide: Any, width: int, height: int) -> dict[str, Any]:
         element = _element(shape, index, width, height, scheme)
         if element is not None:
             elements.append(element)
-    picture = _background_picture(slide)
+    picture = _background_picture(slide, scheme)
     if picture is not None:
         # Behind everything else, filling the page — a background is what the
         # rest sits on, and the element model has no field for one.
         elements.insert(0, {"id": "bg", "type": "image", "x": 0, "y": 0, "w": 100, "h": 100, "src": picture})
     out: dict[str, Any] = {"elements": elements}
-    background = _background(slide)
+    background = _background(slide, scheme)
     if background:
         out["background"] = background
     notes = _notes(slide)
@@ -117,7 +117,7 @@ def _slide(slide: Any, width: int, height: int) -> dict[str, Any]:
     return out
 
 
-def _background_picture(slide: Any) -> str | None:
+def _background_picture(slide: Any, scheme: dict[str, str]) -> str | None:
     """A picture background as a data URI, scaled down to a screen size.
 
     ``Slide.background`` holds one colour, so a deck built on photographs
@@ -147,46 +147,133 @@ def _background_picture(slide: Any) -> str | None:
     return f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
 
 
-def _background_blob(slide: Any) -> bytes | None:
-    """The bytes of the slide's own picture fill, if it has one."""
+def _background_source(slide: Any) -> tuple[Any, Any] | None:
+    """The part and the ``p:bg`` element that paint this slide's background.
+
+    A slide that declares no background is not a white slide — it wears its
+    layout's, and failing that its master's. Reading only the slide's own
+    element turns an inherited dark deck white, which is what a reader that
+    stops at the slide sees.
+
+    Returns the owning part alongside the element, because a picture fill
+    names its image by a relationship id that only that part can resolve.
+    """
     try:
         from pptx.oxml.ns import qn  # type: ignore[import-untyped]
     except ModuleNotFoundError:  # pragma: no cover - install-time path
         return None
-    element = getattr(getattr(slide, "background", None), "_element", None)
-    if element is None:
+    layout = getattr(slide, "slide_layout", None)
+    master = getattr(layout, "slide_master", None)
+    for part in (slide, layout, master):
+        element = getattr(part, "element", None)
+        if element is None:
+            continue
+        common = element.find(qn("p:cSld"))
+        background = common.find(qn("p:bg")) if common is not None else None
+        if background is not None:
+            return part, background
+    return None
+
+
+def _background_blob(slide: Any) -> bytes | None:
+    """The bytes of the picture fill painting this slide, if there is one."""
+    try:
+        from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+    except ModuleNotFoundError:  # pragma: no cover - install-time path
         return None
-    blip = element.find(f"./{qn('p:bg')}/{qn('p:bgPr')}/{qn('a:blipFill')}/{qn('a:blip')}")
+    source = _background_source(slide)
+    if source is None:
+        return None
+    part, background = source
+    blip = background.find(
+        f"./{qn('p:bgPr')}/{qn('a:blipFill')}/{qn('a:blip')}"
+    )
     if blip is None:
         return None
     rid = blip.get(qn("r:embed"))
     if not rid:
         return None
     try:
-        return slide.part.related_part(rid).blob
+        return part.part.related_part(rid).blob
     except (KeyError, AttributeError):
         return None
 
 
-def _background(slide: Any) -> str | None:
-    """The slide's own solid background colour, if it sets one.
+def _background(slide: Any, scheme: dict[str, str]) -> str | None:
+    """The colour painting this slide, walking slide -> layout -> master.
 
-    A slide painted a flat colour reads as that colour here, so a dark deck
-    stays dark. Three other cases return ``None`` and each is right to:
-    a slide that inherits from its layout (the skin paints it on export), a
-    picture or gradient fill (the field is one colour, and there is nowhere
-    to put the image), and a theme reference (only the skin knows the value).
+    Handles the three fills a background can carry: a flat colour, a
+    gradient (written as the CSS gradient the field can hold), and a theme
+    reference resolved through the deck's own scheme. A picture fill returns
+    ``None`` here — it comes in as the bottom element instead, where the
+    model can hold the image.
     """
-    fill = getattr(getattr(slide, "background", None), "fill", None)
-    if fill is None:
-        return None
     try:
-        if "SOLID" not in str(fill.type or ""):
-            return None
-        rgb = fill.fore_color.rgb
-    except (AttributeError, ValueError, TypeError):
+        from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+    except ModuleNotFoundError:  # pragma: no cover - install-time path
         return None
-    return f"#{rgb}" if rgb is not None else None
+    source = _background_source(slide)
+    if source is None:
+        return None
+    _part, background = source
+    properties = background.find(qn("p:bgPr"))
+    if properties is None:
+        # ``p:bgRef`` points at a theme fill style and carries the colour to
+        # tint it with; the colour alone is much closer than white.
+        reference = background.find(qn("p:bgRef"))
+        return _fill_colour(reference, scheme, qn) if reference is not None else None
+    solid = properties.find(qn("a:solidFill"))
+    if solid is not None:
+        return _fill_colour(solid, scheme, qn)
+    gradient = properties.find(qn("a:gradFill"))
+    if gradient is not None:
+        return _gradient_css(gradient, scheme, qn)
+    return None
+
+
+def _fill_colour(holder: Any, scheme: dict[str, str], qn: Any) -> str | None:
+    """The ``#rrggbb`` of a colour child, theme references resolved."""
+    srgb = holder.find(qn("a:srgbClr"))
+    if srgb is not None and srgb.get("val"):
+        return f"#{_with_brightness(srgb, srgb.get('val', ''), qn)}"
+    themed = holder.find(qn("a:schemeClr"))
+    if themed is not None:
+        # The scheme already carries the master's colour map, so bg1/tx1
+        # resolve here the same way the deck resolves them.
+        value = scheme.get(themed.get("val", ""))
+        if value:
+            return f"#{_with_brightness(themed, value, qn)}"
+    return None
+
+
+def _with_brightness(holder: Any, hex_rgb: str, qn: Any) -> str:
+    """A colour with its ``lumMod``/``lumOff`` applied, as the deck shows it."""
+    brightness = 0.0
+    modulate = holder.find(qn("a:lumMod"))
+    offset = holder.find(qn("a:lumOff"))
+    if modulate is not None and modulate.get("val"):
+        brightness = int(modulate.get("val", "100000")) / 100000 - 1
+    if offset is not None and offset.get("val"):
+        brightness = int(offset.get("val", "0")) / 100000
+    return _shade(hex_rgb, brightness) if brightness else hex_rgb
+
+
+def _gradient_css(gradient: Any, scheme: dict[str, str], qn: Any) -> str | None:
+    """A gradient background as the CSS the ``background`` field can hold."""
+    stops: list[str] = []
+    for stop in gradient.findall(f"./{qn('a:gsLst')}/{qn('a:gs')}"):
+        colour = _fill_colour(stop, scheme, qn)
+        if colour is None:
+            continue
+        position = int(stop.get("pos", "0")) / 1000
+        stops.append(f"{colour} {position:.0f}%")
+    if len(stops) < 2:
+        return stops[0].split(" ")[0] if stops else None
+    linear = gradient.find(qn("a:lin"))
+    # PowerPoint measures the sweep clockwise from east in 1/60000 degree;
+    # CSS measures it clockwise from north, so the two are 90 degrees apart.
+    angle = (int(linear.get("ang", "0")) / 60000 + 90) % 360 if linear is not None else 180
+    return f"linear-gradient({angle:.0f}deg, {', '.join(stops)})"
 
 
 # Theme-colour names as the scheme spells them, keyed by the enum member name
