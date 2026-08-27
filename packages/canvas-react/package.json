@@ -1,6 +1,6 @@
 {
   "name": "@braincrew-lab/langchain-canvas",
-  "version": "0.7.22",
+  "version": "0.7.23",
   "description": "A live canvas for LangChain agents — stream documents, charts, and rich artifacts into a React panel.",
   "license": "MIT",
   "author": "Brain Crew (https://github.com/braincrew-lab)",
@@ -36,7 +36,8 @@
   ],
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES"
   ],
   "comment": "Dev resolves to source (no build needed; Next transpiles via transpilePackages). publishConfig swaps to dist for npm.",
   "main": "./src/index.ts",
@@ -78,8 +79,7 @@
     "react-dom": "^18 || ^19"
   },
   "dependencies": {
-    "@braincrew-lab/fortune-sheet-react": "^1.0.4",
-    "@ungap/structured-clone": "1.3.0",
+    "@ungap/structured-clone": "1.3.3",
     "echarts": "^6.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.0",
@@ -97,11 +97,16 @@
     "tsup": "^8.5.1",
     "typescript": "^5.5.4",
     "vite": "^8",
-    "vitest": "^4"
+    "vitest": "^4",
+    "@fortune-sheet/react": "^1.0.4",
+    "@fortune-sheet/core": "1.0.4"
   },
   "peerDependenciesMeta": {
     "@langchain/langgraph-sdk": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

@@ -4,6 +4,16 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.23] — 2026-08-27
+
+### Fixed
+- **Spreadsheet grid renders again.** 0.7.22 dropped the `@fortune-sheet/react`
+  CSS import from `TableRenderer` while bundling Fortune to remove `uuid`, so the
+  sheet rendered as raw accessibility text without its grid styling. The import
+  is restored; the tsup build resolves it at build time (Fortune is bundled) and
+  also merges Fortune's stylesheet into the shipped `styles.css`. `uuid` stays
+  fully removed from the dependency tree.
+
 ## [0.1.14] — 2026-07-26
 
 ### Changed
