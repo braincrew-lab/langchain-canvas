@@ -1,0 +1,40 @@
+diff --git a/dist/index.esm.js b/dist/index.esm.js
+index 5c9820b1a261305d500e69eeaf350821872beaf4..0da0fe3b924015e901b696cb028ba194359b14dd 100644
+--- a/dist/index.esm.js
++++ b/dist/index.esm.js
+@@ -2,7 +2,7 @@ import _ from 'lodash';
+ import numeral from 'numeral';
+ import dayjs from 'dayjs';
+ import { Parser, ERROR_REF } from '@fortune-sheet/formula-parser';
+-import { v4 } from 'uuid';
++var v4 = () => (globalThis.crypto && globalThis.crypto.randomUUID ? globalThis.crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
+ 
+ function _arrayLikeToArray(r, a) {
+   (null == a || a > r.length) && (a = r.length);
+diff --git a/dist/index.js b/dist/index.js
+index 04113a18dee9feee28e9434ee3023626c800e7d3..50544e83a18d05b61b0d3c5fec9520c13a907638 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -6,7 +6,7 @@ var _ = require('lodash');
+ var numeral = require('numeral');
+ var dayjs = require('dayjs');
+ var formulaParser = require('@fortune-sheet/formula-parser');
+-var uuid = require('uuid');
++var uuid = { v4: () => (globalThis.crypto && globalThis.crypto.randomUUID ? globalThis.crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2)) };
+ 
+ function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
+ 
+diff --git a/package.json b/package.json
+index 4c6268d0fb178f78521d431f2f4a4799cf3dccc4..a302ec01bf9dfecfc127a7f58b5681ee7f1d14f4 100644
+--- a/package.json
++++ b/package.json
+@@ -14,8 +14,7 @@
+     "dayjs": "^1.11.0",
+     "immer": "^9.0.12",
+     "lodash": "^4.17.21",
+-    "numeral": "^2.0.6",
+-    "uuid": "^8.3.2"
++    "numeral": "^2.0.6"
+   },
+   "devDependencies": {
+     "@types/lodash": "^4.14.179",

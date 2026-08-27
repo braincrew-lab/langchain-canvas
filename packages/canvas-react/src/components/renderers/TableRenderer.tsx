@@ -14,9 +14,12 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import "@braincrew-lab/fortune-sheet-react/dist/index.css";
+// Fortune-sheet's grid styles. In source/dev consumers this resolves from the
+// (dev)dependency; the tsup build bundles it (Fortune is noExternal) so the
+// published package carries the styling without a runtime dependency.
+import "@fortune-sheet/react/dist/index.css";
 
-import type { WorkbookInstance } from "@braincrew-lab/fortune-sheet-react";
+import type { WorkbookInstance } from "@fortune-sheet/react";
 
 import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
@@ -24,7 +27,7 @@ import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 
-const Workbook = lazy(() => import("@braincrew-lab/fortune-sheet-react").then((m) => ({ default: m.Workbook })));
+const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
 
 const isFormula = (v: unknown): v is string => typeof v === "string" && v.startsWith("=");
 

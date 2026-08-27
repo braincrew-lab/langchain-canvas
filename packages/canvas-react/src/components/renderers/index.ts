@@ -5,7 +5,7 @@ import { HtmlRenderer } from "./HtmlRenderer";
 
 // The `html` substrate is eager — it's the lightweight base (a sandboxed iframe,
 // no third-party runtime). The structured renderers each pull a sizeable library
-// (recharts / react-markdown / @braincrew-lab/fortune-sheet), so they're lazy: their code and
+// (recharts / react-markdown / @fortune-sheet), so they're lazy: their code and
 // deps split into on-demand chunks and only reach a consumer's bundle when an
 // artifact of that type actually renders. A `<Canvas>` that only shows web pages
 // never downloads recharts or react-markdown.
