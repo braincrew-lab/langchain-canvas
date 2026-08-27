@@ -1,0 +1,682 @@
+{
+  "sheets": [
+    {
+      "name": "Rich",
+      "id": "sheet_0",
+      "order": 0,
+      "status": 1,
+      "row": 24,
+      "column": 10,
+      "celldata": [
+        {
+          "r": 0,
+          "c": 0,
+          "v": {
+            "m": "Item",
+            "v": "Item",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 1,
+          "v": {
+            "m": "Qty",
+            "v": "Qty",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 2,
+          "v": {
+            "m": "Price",
+            "v": "Price",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 3,
+          "v": {
+            "m": "Total",
+            "v": "Total",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 4,
+          "v": {
+            "m": "Share",
+            "v": "Share",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 5,
+          "v": {
+            "m": "When",
+            "v": "When",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 0,
+          "c": 6,
+          "v": {
+            "m": "Item",
+            "v": "Item",
+            "bl": 1,
+            "fs": 12,
+            "ff": "Arial",
+            "fc": "#FFFFFF",
+            "bg": "#4472C4",
+            "ht": 0,
+            "vt": 0
+          }
+        },
+        {
+          "r": 1,
+          "c": 0,
+          "v": {
+            "m": "Widget",
+            "v": "Widget",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 1,
+          "c": 1,
+          "v": {
+            "m": "3",
+            "v": 3,
+            "ct": {
+              "fa": "General",
+              "t": "n"
+            }
+          }
+        },
+        {
+          "r": 1,
+          "c": 2,
+          "v": {
+            "m": "1,234.50",
+            "v": 1234.5,
+            "ct": {
+              "fa": "#,##0.00",
+              "t": "n"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 1,
+          "c": 3,
+          "v": {
+            "m": "3,703.50",
+            "f": "=B2*C2",
+            "v": "3703.5",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 1,
+          "c": 4,
+          "v": {
+            "m": "15.6%",
+            "v": 0.156,
+            "ct": {
+              "fa": "0.0%",
+              "t": "n"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 1,
+          "c": 5,
+          "v": {
+            "m": "2026-03-09",
+            "v": "2026-03-09",
+            "ct": {
+              "fa": "yyyy-mm-dd",
+              "t": "d"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 1,
+          "c": 6,
+          "v": {
+            "m": "wrapped\ntext here",
+            "v": "wrapped\ntext here",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "ht": 2,
+            "vt": 1,
+            "tb": "2"
+          }
+        },
+        {
+          "r": 2,
+          "c": 0,
+          "v": {
+            "m": "Gadget",
+            "v": "Gadget",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 2,
+          "c": 1,
+          "v": {
+            "m": "10",
+            "v": 10,
+            "ct": {
+              "fa": "General",
+              "t": "n"
+            }
+          }
+        },
+        {
+          "r": 2,
+          "c": 2,
+          "v": {
+            "m": "-$2,000",
+            "v": -2000,
+            "ct": {
+              "fa": "$#,##0",
+              "t": "n"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 2,
+          "c": 3,
+          "v": {
+            "m": "-$20,000",
+            "f": "=B3*C3",
+            "v": "-20000",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 2,
+          "c": 4,
+          "v": {
+            "m": "50.0%",
+            "v": 0.5,
+            "ct": {
+              "fa": "0.0%",
+              "t": "n"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 2,
+          "c": 5,
+          "v": {
+            "m": "2025\"년 \"12\"월 \"28일",
+            "v": "2025\"년 \"12\"월 \"28일",
+            "ct": {
+              "fa": "yyyy\"년 \"m\"월 \"d일",
+              "t": "d"
+            },
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 2,
+          "c": 6,
+          "v": {
+            "m": "true",
+            "v": "true",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 3,
+          "c": 0,
+          "v": {
+            "m": "styled",
+            "v": "styled",
+            "it": 1,
+            "un": 1,
+            "fs": 11,
+            "ff": "Cambria",
+            "fc": "#335693",
+            "vt": 2
+          }
+        },
+        {
+          "r": 3,
+          "c": 1,
+          "v": {
+            "m": "indexed",
+            "v": "indexed",
+            "fs": 11,
+            "ff": "Cambria",
+            "fc": "#FF0000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 3,
+          "c": 2,
+          "v": {
+            "m": "tinted fill",
+            "v": "tinted fill",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "bg": "#f4b183",
+            "vt": 2
+          }
+        },
+        {
+          "r": 3,
+          "c": 3,
+          "v": {
+            "m": "",
+            "v": "",
+            "fs": 11,
+            "ff": "나눔고딕",
+            "fc": "#000000",
+            "bg": "#FFC000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 5,
+          "c": 0,
+          "v": {
+            "m": "merged title",
+            "v": "merged title",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "ht": 0,
+            "vt": 2,
+            "mc": {
+              "r": 5,
+              "c": 0,
+              "rs": 1,
+              "cs": 3
+            }
+          }
+        },
+        {
+          "r": 5,
+          "c": 1,
+          "v": {
+            "mc": {
+              "r": 5,
+              "c": 0
+            }
+          }
+        },
+        {
+          "r": 5,
+          "c": 2,
+          "v": {
+            "mc": {
+              "r": 5,
+              "c": 0
+            }
+          }
+        },
+        {
+          "r": 6,
+          "c": 0,
+          "v": {
+            "m": "boxed",
+            "v": "boxed",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        },
+        {
+          "r": 6,
+          "c": 1,
+          "v": {
+            "m": "",
+            "v": "",
+            "fs": 11,
+            "ff": "나눔고딕",
+            "fc": "#000000",
+            "vt": 2
+          }
+        }
+      ],
+      "config": {
+        "merge": {
+          "5_0": {
+            "r": 5,
+            "c": 0,
+            "rs": 1,
+            "cs": 3
+          }
+        },
+        "columnlen": {
+          "0": 134,
+          "1": 76,
+          "2": 108,
+          "3": 84,
+          "4": 60,
+          "5": 156,
+          "6": 156
+        },
+        "rowlen": {
+          "0": 37,
+          "1": 32,
+          "2": 20,
+          "3": 20,
+          "5": 53,
+          "6": 20
+        },
+        "borderInfo": [
+          {
+            "rangeType": "cell",
+            "value": {
+              "row_index": 6,
+              "col_index": 0,
+              "l": {
+                "style": 1,
+                "color": "#000000"
+              },
+              "r": {
+                "style": 7,
+                "color": "#FF0000"
+              },
+              "t": {
+                "style": 3,
+                "color": "#000000"
+              },
+              "b": {
+                "style": 8,
+                "color": "#0000FF"
+              }
+            }
+          },
+          {
+            "rangeType": "cell",
+            "value": {
+              "row_index": 6,
+              "col_index": 1,
+              "t": {
+                "style": 2,
+                "color": "#000000"
+              }
+            }
+          }
+        ]
+      },
+      "images": []
+    },
+    {
+      "name": "Second",
+      "id": "sheet_1",
+      "order": 1,
+      "status": 0,
+      "row": 24,
+      "column": 10,
+      "celldata": [
+        {
+          "r": 0,
+          "c": 0,
+          "v": {
+            "m": "only",
+            "v": "only",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2,
+            "mc": {
+              "r": 0,
+              "c": 0,
+              "rs": 1,
+              "cs": 2
+            }
+          }
+        },
+        {
+          "r": 0,
+          "c": 1,
+          "v": {
+            "mc": {
+              "r": 0,
+              "c": 0
+            }
+          }
+        },
+        {
+          "r": 1,
+          "c": 0,
+          "v": {
+            "m": "42",
+            "v": 42,
+            "ct": {
+              "fa": "General",
+              "t": "n"
+            }
+          }
+        }
+      ],
+      "config": {
+        "merge": {
+          "0_0": {
+            "r": 0,
+            "c": 0,
+            "rs": 1,
+            "cs": 2
+          }
+        },
+        "columnlen": {
+          "0": 56
+        },
+        "rowlen": {
+          "0": 20,
+          "1": 20
+        },
+        "borderInfo": []
+      },
+      "images": []
+    },
+    {
+      "name": "Pictures",
+      "id": "sheet_2",
+      "order": 2,
+      "status": 0,
+      "row": 24,
+      "column": 10,
+      "celldata": [
+        {
+          "r": 0,
+          "c": 0,
+          "v": {
+            "m": "see below",
+            "v": "see below",
+            "fs": 11,
+            "ff": "Calibri",
+            "fc": "#000000",
+            "vt": 2
+          }
+        }
+      ],
+      "config": {
+        "merge": {},
+        "columnlen": {
+          "0": 92
+        },
+        "rowlen": {
+          "0": 20
+        },
+        "borderInfo": []
+      },
+      "images": [
+        {
+          "id": "img_0",
+          "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFUlEQVR4nGP838DwnwEJMCFziBMAAKTRAobDsKmdAAAAAElFTkSuQmCC",
+          "left": 92,
+          "top": 39,
+          "width": 100,
+          "height": 19
+        }
+      ]
+    }
+  ],
+  "columns": [
+    {
+      "key": "Item",
+      "label": "Item"
+    },
+    {
+      "key": "Qty",
+      "label": "Qty"
+    },
+    {
+      "key": "Price",
+      "label": "Price"
+    },
+    {
+      "key": "Total",
+      "label": "Total"
+    },
+    {
+      "key": "Share",
+      "label": "Share"
+    },
+    {
+      "key": "When",
+      "label": "When"
+    },
+    {
+      "key": "Item (2)",
+      "label": "Item"
+    }
+  ],
+  "rows": [
+    {
+      "Item": "Widget",
+      "Qty": 3,
+      "Price": 1234.5,
+      "Total": 3703.5,
+      "Share": 0.156,
+      "When": "2026-03-09",
+      "Item (2)": "wrapped\ntext here"
+    },
+    {
+      "Item": "Gadget",
+      "Qty": 10,
+      "Price": -2000,
+      "Total": -20000,
+      "Share": 0.5,
+      "When": "2025-12-28",
+      "Item (2)": "true"
+    },
+    {
+      "Item": "styled",
+      "Qty": "indexed",
+      "Price": "tinted fill",
+      "Total": "",
+      "Share": "",
+      "When": "",
+      "Item (2)": ""
+    },
+    {
+      "Item": "merged title",
+      "Qty": "merged title",
+      "Price": "merged title",
+      "Total": "",
+      "Share": "",
+      "When": "",
+      "Item (2)": ""
+    },
+    {
+      "Item": "boxed",
+      "Qty": "",
+      "Price": "",
+      "Total": "",
+      "Share": "",
+      "When": "",
+      "Item (2)": ""
+    }
+  ]
+}
