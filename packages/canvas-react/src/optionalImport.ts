@@ -1,11 +1,11 @@
 /**
  * Load an optional peer dependency, failing with an actionable message.
  *
- * The Office/formula engines (`exceljs`, `docx`,
- * `fast-formula-parser`) are `optionalDependencies` and kept out of the bundle,
- * so a consumer who never exports to those formats doesn't pay for them. When a
- * feature that needs one is used without it installed, surface a clear install
- * hint instead of a raw `ERR_MODULE_NOT_FOUND`.
+ * The Office/formula engines (`docx`, `docx-preview`, `fast-formula-parser`)
+ * are `optionalDependencies` and kept out of the bundle, so a consumer who
+ * never uses those formats doesn't pay for them. When a feature that needs one
+ * is used without it installed, surface a clear install hint instead of a raw
+ * `ERR_MODULE_NOT_FOUND`.
  *
  * Pass a thunk with the literal `import("pkg")` so bundlers still code-split it.
  */
