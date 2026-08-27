@@ -138,7 +138,7 @@ def test_a_table_address_reads_one_rectangle_through_the_usual_window() -> None:
     assert "of 501 — call read_canvas again with offset=5" in out
     grid = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
                    path="ledger.table.json", sheet="s1")
-    assert grid.endswith("### sheet: S1\n   1\tsheet 1")
+    assert grid.endswith("### sheet: S1 (columns A-A)\n   1\tsheet 1")
 
 
 def test_a_file_that_is_not_really_a_table_is_still_read_as_itself() -> None:
@@ -163,6 +163,73 @@ def test_a_table_address_that_does_not_exist_names_the_ones_that_do() -> None:
     wrong = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
                     path="page.html", sheet="s0")
     assert "`sheet` applies to .table.json tables" in wrong
+
+
+def _table_tools(store: InMemoryCanvasStore) -> dict[str, Any]:
+    from langchain_canvas import create_table_tools
+
+    tools = _tools(store)
+    tools.update({t.name: t for t in create_table_tools(store)})
+    return tools
+
+
+def _ledger() -> str:
+    return json.dumps({"type": "table", "title": "Q3", "data": {
+        "columns": [{"key": "region", "label": "region"}, {"key": "amount", "label": "amount"}],
+        "rows": [{"region": "Seoul", "amount": 10}],
+        "sheet": [{"name": "Ledger", "id": "sheet_0", "order": 0, "status": 1,
+                   "row": 20, "column": 6, "config": {"merge": {}},
+                   "celldata": [{"r": 0, "c": 0, "v": {"v": "region", "m": "region"}},
+                                {"r": 0, "c": 1, "v": {"v": "amount", "m": "amount"}},
+                                {"r": 1, "c": 0, "v": {"v": "Seoul", "m": "Seoul"}},
+                                {"r": 1, "c": 1, "v": {"v": 10, "m": "10"}}]}],
+    }})
+
+
+def test_a_table_is_written_at_the_addresses_it_was_read_at() -> None:
+    # The read prints the column letters and numbers the rows, so B2 is
+    # visible rather than counted. Rewriting the whole file would take every
+    # sheet and all the person's formatting with it.
+    store = InMemoryCanvasStore()
+    commit = store.write("t1", "q3.table.json", _ledger(), "create")
+    tools = _table_tools(store)
+    shown = _invoke(tools["read_canvas"], _runtime(thread_id="t1"),
+                    path="q3.table.json", sheet="s0")
+    assert "### sheet: Ledger (columns A-B)" in shown
+    assert "   2\tSeoul,10" in shown
+
+    out = _invoke(tools["write_table_cells"], _runtime(thread_id="t1"), path="q3.table.json",
+                  sheet="s0", cells={"B2": 99}, description="fix", revision=commit.revision)
+    assert out.startswith("Wrote B2 on Ledger.")
+    # rows is the projection of s0, and the xlsx export reads it, so it moves
+    # with the write instead of putting the old value back.
+    assert "rows now has 1 entries" in out
+    data = json.loads(store.read("t1", "q3.table.json").content)["data"]
+    assert data["rows"] == [{"region": "Seoul", "amount": 99}]
+
+
+def test_a_table_write_refuses_a_stale_revision() -> None:
+    store = InMemoryCanvasStore()
+    store.write("t1", "q3.table.json", _ledger(), "create")
+    tools = _table_tools(store)
+    out = _invoke(tools["write_table_cells"], _runtime(thread_id="t1"), path="q3.table.json",
+                  sheet="s0", cells={"B2": 1}, description="fix", revision="v0")
+    assert out.startswith("Error:") and "read_canvas again" in out
+    stale = _invoke(tools["write_table_cells"], _runtime(thread_id="t1"), path="page.html",
+                    sheet="s0", cells={"B2": 1}, description="fix", revision="v1")
+    assert ".table.json tables" in stale
+
+
+def test_a_sheet_added_through_the_tool_shows_up_on_the_map() -> None:
+    store = InMemoryCanvasStore()
+    commit = store.write("t1", "q3.table.json", _ledger(), "create")
+    tools = _table_tools(store)
+    out = _invoke(tools["add_table_sheet"], _runtime(thread_id="t1"), path="q3.table.json",
+                  name="Summary", description="new", revision=commit.revision)
+    assert out.startswith('Added sheet "Summary" as s1.')
+    card = _invoke(tools["read_canvas"], _runtime(thread_id="t1"), path="q3.table.json")
+    assert "[s0] Ledger" in card
+    assert "[s1] Summary — 24 x 10 grid, no values" in card
 
 
 # --- edit: read-before-update ----------------------------------------------------
