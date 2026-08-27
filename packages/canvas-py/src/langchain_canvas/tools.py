@@ -90,7 +90,9 @@ from .store import (
     EditConflictError,
     RevisionMismatchError,
 )
+from .table_outline import add_sheet as table_add_sheet
 from .table_outline import table_view
+from .table_outline import write_cells as table_write_cells
 
 _RETRY_HINT = "Call read_canvas again and retry with the fresh revision and exact content."
 _SOURCES_PREFIX = "sources/"
@@ -1218,6 +1220,119 @@ def create_document_tools(
         remove_document_paragraph,
         replace_document_image,
     ]
+
+
+def create_table_tools(store: CanvasStore) -> list[Any]:
+    """Build the table-writing tools bound to ``store``.
+
+    ``read_canvas`` shows a table as a map and hands back one addressed
+    rectangle; these write to the same addresses. Without them the only way
+    to change a cell is to rewrite the whole file, which on a real import
+    means resending millions of characters and losing the person's
+    formatting, merges and other sheets in the process.
+
+    Kept out of :func:`create_canvas_tools` so the four standard tools stay a
+    stable contract; mount these when your agent should edit spreadsheets.
+    """
+
+    def _load(canvas_id: str, path: str) -> Any:
+        if not path.endswith(".table.json"):
+            raise ValueError(f"this works on .table.json tables (got {path})")
+        return store.read(canvas_id, path)
+
+    def _save(
+        runtime: ToolRuntime,
+        canvas_id: str,
+        path: str,
+        content: str,
+        description: str,
+        revision: str,
+        note: str,
+    ) -> str:
+        try:
+            commit = store.write(
+                canvas_id, path, content, description, base_revision=revision, actor="agent"
+            )
+        except RevisionMismatchError as exc:
+            return f"Error: {exc}. {_RETRY_HINT}"
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        # Same silent no-op contract as the other writers: no writer, no wire.
+        writer = getattr(runtime, "stream_writer", None)
+        if writer is not None:
+            for event in events_for_commit(
+                path,
+                content,
+                is_new=False,
+                revision=commit.revision,
+                description=commit.description,
+            ):
+                writer(event)
+        return f"{note} ({path}, revision {commit.revision})"
+
+    @tool
+    def write_table_cells(
+        path: str,
+        sheet: str,
+        cells: dict[str, Any],
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+    ) -> str:
+        """Put values into one sheet of a .table.json table, cell by cell.
+
+        `sheet` is an address `read_canvas` printed — `s0`, `s1`, ... — and
+        `cells` maps cell addresses to what goes in them:
+        `{"B3": 42, "C3": "=B3*2", "D3": "done"}`. The column letters are in
+        the `### sheet:` line of the read, so nothing needs counting. A value
+        starting with `=` stays a formula; `""` clears the cell. Styling on a
+        cell you overwrite stays.
+
+        This is how to change a table: rewriting the whole file with
+        `write_canvas` replaces every sheet and drops the formatting, merges
+        and formulas only the grid holds. `revision` must be the value from
+        your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        try:
+            got = _load(canvas_id, path)
+            content, note = table_write_cells(got.content, sheet, cells)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        except ValueError as exc:
+            return f"Error: {exc}."
+        return _save(runtime, canvas_id, path, content, description, revision, note)
+
+    @tool
+    def add_table_sheet(
+        path: str,
+        name: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+    ) -> str:
+        """Add an empty sheet to a .table.json table.
+
+        The new sheet goes last and takes the next address, so the addresses
+        `read_canvas` already gave you keep pointing at the same sheets.
+        Write into it with `write_table_cells`. `revision` must be the value
+        from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        try:
+            got = _load(canvas_id, path)
+            content, note = table_add_sheet(got.content, name)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        except ValueError as exc:
+            return f"Error: {exc}."
+        return _save(runtime, canvas_id, path, content, description, revision, note)
+
+    return [write_table_cells, add_table_sheet]
 
 
 def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:
