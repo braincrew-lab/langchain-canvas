@@ -75,7 +75,8 @@
   "peerDependencies": {
     "react": "^18 || ^19",
     "react-dom": "^18 || ^19",
-    "@langchain/langgraph-sdk": ">=0.0.70"
+    "@langchain/langgraph-sdk": ">=0.0.70",
+    "pptxgenjs": "^3.12.0 || ^4"
   },
   "dependencies": {
     "@fortune-sheet/react": "^1.0.4",
@@ -88,8 +89,7 @@
     "docx": "^9.0.2",
     "docx-preview": "^0.4.0",
     "exceljs": "^4.4.0",
-    "fast-formula-parser": "^1.0.19",
-    "pptxgenjs": "^3.12.0"
+    "fast-formula-parser": "^1.0.19"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
@@ -97,10 +97,14 @@
     "tsup": "^8.2.4",
     "typescript": "^5.5.4",
     "vitest": "^2",
-    "@langchain/langgraph-sdk": "^1.9.28"
+    "@langchain/langgraph-sdk": "^1.9.28",
+    "pptxgenjs": "^3.12.0"
   },
   "peerDependenciesMeta": {
     "@langchain/langgraph-sdk": {
+      "optional": true
+    },
+    "pptxgenjs": {
       "optional": true
     }
   }

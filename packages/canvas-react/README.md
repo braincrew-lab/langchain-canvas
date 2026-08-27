@@ -18,14 +18,21 @@ const { sendMessage, messages, canvas } = useCanvasStream({ endpoint: "/api/chat
 npm i @braincrew-lab/langchain-canvas
 ```
 
-Office formats use optional peers — install only what you need:
+`exceljs`, `docx`, `docx-preview` and `fast-formula-parser` come along with the
+package. **PowerPoint export does not** — add it yourself when you want it:
 
 ```bash
-npm i exceljs docx pptxgenjs fast-formula-parser   # export / import
-npm i docx-preview                                 # read an uploaded .docx on the canvas
+npm i pptxgenjs
 ```
 
-If a format's package isn't installed, that one feature says what to add and the rest keeps working: an export tells the user, and a Word upload falls back to the file card it showed before.
+It is left out because `pptxgenjs` depends on `image-size`, and every published
+version of `image-size` carries an open advisory with no fixed release
+(GHSA — denial of service in the ICNS parser). Shipping it would mark this
+package `high` in every audit, so the choice is yours to make.
+
+If a format's package isn't installed, that one feature says what to add and the
+rest keeps working: an export tells the user, and a Word upload falls back to the
+file card it showed before.
 
 ## Mount it
 
@@ -165,6 +172,33 @@ Agent output and imported files are treated as untrusted:
 - HTML renders in an iframe with `sandbox="allow-scripts"` and **no** `allow-same-origin` — a null origin with no reach into your app's DOM, cookies, or storage (the Claude Artifacts model).
 - PDF export renders in a **script-disabled** sandboxed iframe, so exporting a malicious page can't run anything in your origin.
 - Imported Markdown renders without raw-HTML passthrough.
+
+### Dependency advisories
+
+This package's own tree is clean. Two of its dependencies still resolve old
+transitive packages that carry advisories, and neither publishes a release that
+lifts them, so pin them in **your** app — a lockfile override only applies to the
+project that declares it, never to a library you install.
+
+npm / yarn:
+
+```json
+"overrides": { "uuid": "^11.1.1" }
+```
+
+pnpm:
+
+```json
+"pnpm": { "overrides": {
+  "uuid@<11.1.1": "^11.1.1",
+  "brace-expansion@<1.1.17": "^1.1.17",
+  "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4"
+} }
+```
+
+With those in place `npm audit` and `pnpm audit` both report nothing on a fresh
+install of this package. The same overrides run in this repository's own
+lockfile, against its full test suite.
 
 ## License
 
