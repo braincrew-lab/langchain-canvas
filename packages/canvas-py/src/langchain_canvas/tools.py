@@ -114,6 +114,29 @@ def _is_document_file(path: str) -> bool:
     return path.lower().endswith(DOCUMENT_OP_SUFFIXES)
 
 
+def _other_ways_to_open(path: str, converters: list[SourceConverter]) -> str:
+    """What to do with a file the document operations cannot open.
+
+    A deck is the case that matters: there is no import from ``.pptx`` to a
+    slides artifact yet, and an agent told only "this opens .docx" tends to
+    invent a summary instead of saying so. Name the reads that do work —
+    pages as images where a renderer covers the format, text otherwise — so
+    the answer is a next step rather than a dead end.
+    """
+    if any(
+        isinstance(c, PageRenderable) and path.lower().endswith(c.suffixes)
+        for c in converters
+    ):
+        return (
+            f"Read {path} with `pages` to see it as images (or without `pages` "
+            "for its text) — it stays a source file either way. Text canvas "
+            "files are already editable: read one and use edit_canvas."
+        )
+    return (
+        "Text canvas files are already editable — read one and use edit_canvas."
+    )
+
+
 _WORKING_COPY_MARKER = "Editing - "
 
 
@@ -930,7 +953,7 @@ def create_document_tools(
         if not _is_document_file(path):
             return None, (
                 f"Error: these operations edit {_DOCUMENT_FORMATS} files (got {path}). "
-                "For a canvas document (.md) or a page (.html) use edit_canvas."
+                + _other_ways_to_open(path, active_converters)
             )
         if path.startswith(_SOURCES_PREFIX):
             return None, _sources_readonly(path)
@@ -962,8 +985,8 @@ def create_document_tools(
         canvas_id = _canvas_id(runtime)
         if not _is_document_file(source):
             return (
-                f"Error: this opens {_DOCUMENT_FORMATS} files (got {source}). Text canvas "
-                "files are already editable — read one and use edit_canvas."
+                f"Error: this opens {_DOCUMENT_FORMATS} files (got {source}). "
+                + _other_ways_to_open(source, active_converters)
             )
         target = (destination or _working_copy_name(source)).strip()
         if target.startswith(_SOURCES_PREFIX):
