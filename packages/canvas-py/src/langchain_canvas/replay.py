@@ -338,6 +338,16 @@ def source_preview_events(
     stored path, and the document tools use it for the working copies they
     write at the canvas root.
     """
+    # An uploaded workbook opens as an editable spreadsheet, not a file card:
+    # `xlsx_to_sheets` is the twin of the browser's reader, so the grid a person
+    # sees on upload matches an in-app import. A parse failure falls back to the
+    # ordinary file preview rather than showing nothing.
+    if path.lower().endswith(".xlsx"):
+        table_events = _table_preview_events(
+            store, canvas_id, path, is_new=is_new, revision=revision, description=description
+        )
+        if table_events:
+            return table_events
     if path.lower().endswith(_SOURCE_PREVIEW_SUFFIXES):
         try:
             content = store.read(canvas_id, path, revision=revision).content
@@ -352,6 +362,58 @@ def source_preview_events(
     return _file_preview_events(
         store, canvas_id, path, is_new=is_new, revision=revision, description=description
     )
+
+
+def _table_preview_events(
+    store: CanvasStore,
+    canvas_id: str,
+    path: str,
+    *,
+    is_new: bool,
+    revision: str,
+    description: str,
+) -> list[dict]:
+    """Wire events rendering an uploaded ``.xlsx`` as a ``table`` artifact.
+
+    Reads the workbook with :func:`xlsx_to_sheets` (fonts, fills, formats,
+    merges, images — the same model the browser builds) and lands it on the
+    grid. Returns ``[]`` on any read/parse problem so the caller falls back to
+    the plain file preview.
+    """
+    from .xlsx_import import xlsx_to_sheets
+
+    try:
+        raw = store.read_bytes(canvas_id, path, revision=revision)
+    except CanvasStoreError:
+        return []
+    try:
+        parsed = xlsx_to_sheets(raw.data)
+    except Exception:  # noqa: BLE001 — any workbook problem degrades to a file card
+        return []
+    data: dict[str, Any] = {
+        "columns": parsed.get("columns", []),
+        "rows": parsed.get("rows", []),
+        "sheet": parsed.get("sheets", []),
+    }
+    title = path.rsplit("/", 1)[-1]
+    events: list[dict] = []
+    if is_new:
+        events.append(
+            CanvasCreate(
+                artifact=Artifact(id=path, type="table", title=title, data=data)
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
+        events.append(
+            CanvasStatus(id=path, status="complete").model_dump(by_alias=True, exclude_none=True)
+        )
+    else:
+        events.append(CanvasPatch(id=path, patch=data).model_dump(by_alias=True))
+    events.append(
+        CanvasCommit(id=path, description=description, revision=revision).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+    return events
 
 
 _FILE_DATA_KEYS = ("path", "name", "mediaType", "size", "cover", "excerpt", "detail")
