@@ -1,4 +1,5 @@
 import { defineConfig } from "tsup";
+import { createRequire } from "node:module";
 
 export default defineConfig({
   entry: {
@@ -26,6 +27,12 @@ export default defineConfig({
     "docx-preview",
     "fast-formula-parser",
   ],
+  // Bundle Fortune-sheet into our (lazy) chunks so consumers never install
+  // @fortune-sheet/* — that dependency was the last source of `uuid` in the
+  // tree (its core generated sheet ids with uuid.v4()). We ship a patched,
+  // uuid-free copy (patches/@fortune-sheet__core), so a plain install has zero
+  // uuid. Fortune stays a devDependency: needed to build, never to consume.
+  noExternal: ["@fortune-sheet/react", "@fortune-sheet/core"],
   async onSuccess() {
     const fs = await import("node:fs");
     // The bundle ships React components/hooks, so the entry is a Client Component
@@ -36,6 +43,14 @@ export default defineConfig({
     const code = fs.readFileSync(entry, "utf8");
     if (!code.startsWith('"use client"')) fs.writeFileSync(entry, `"use client";\n${code}`);
     // Ship the stylesheet alongside the JS (imported as "@braincrew-lab/langchain-canvas/styles.css").
-    fs.copyFileSync("src/styles/canvas.css", "dist/styles.css");
+    // Fortune-sheet is bundled (not a runtime dep), so its stylesheet has to
+    // travel with ours — append it so consumers get the grid styling from the
+    // single styles.css they already import.
+    const req = createRequire(import.meta.url);
+    const fortuneCss = fs.readFileSync(req.resolve("@fortune-sheet/react/dist/index.css"), "utf8");
+    fs.writeFileSync(
+      "dist/styles.css",
+      fs.readFileSync("src/styles/canvas.css", "utf8") + "\n\n/* --- @fortune-sheet/react (bundled) --- */\n" + fortuneCss,
+    );
   },
 });

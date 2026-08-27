@@ -14,7 +14,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import "@fortune-sheet/react/dist/index.css";
+// Fortune-sheet CSS ships bundled in the SDK styles.css (see tsup.config).
 
 import type { WorkbookInstance } from "@fortune-sheet/react";
 
