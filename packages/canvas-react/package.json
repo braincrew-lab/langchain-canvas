@@ -36,7 +36,8 @@
   ],
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES"
   ],
   "comment": "Dev resolves to source (no build needed; Next transpiles via transpilePackages). publishConfig swaps to dist for npm.",
   "main": "./src/index.ts",
