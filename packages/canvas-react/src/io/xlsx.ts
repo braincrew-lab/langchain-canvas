@@ -116,19 +116,23 @@ function formatNumber(value: number, numFmt?: string): string {
   return out;
 }
 
-/** Format a Date by an Excel date pattern (yyyy/yy, mm/m, dd/d, hh/h, ss). Uses
- *  local parts so it matches the calendar day the author saw. Non-token text
- *  (e.g. Korean 년/월/일) passes through untouched. */
+/** Format a Date by an Excel date pattern (yyyy/yy, mm/m, dd/d, hh/h, ss).
+ *  Reads UTC parts: a spreadsheet date has no timezone, and exceljs hands it
+ *  over as UTC midnight, so reading it back in local time moves the day
+ *  anywhere west of UTC — 2026-03-09 shows as 2026-03-08 in New York.
+ *  Non-token text (e.g. Korean 년/월/일) passes through untouched. */
 function formatDate(d: Date, numFmt?: string): string {
   const fmt = numFmt && numFmt !== "General" && /[ymdhs]/i.test(numFmt) ? numFmt : "yyyy-mm-dd";
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  const month = (style: "long" | "short") =>
+    d.toLocaleString("en-US", { month: style, timeZone: "UTC" });
   const map: Record<string, string> = {
-    yyyy: String(d.getFullYear()), yy: p(d.getFullYear() % 100),
-    mmmm: d.toLocaleString("en-US", { month: "long" }), mmm: d.toLocaleString("en-US", { month: "short" }),
-    mm: p(d.getMonth() + 1), m: String(d.getMonth() + 1),
-    dd: p(d.getDate()), d: String(d.getDate()),
-    hh: p(d.getHours()), h: String(d.getHours()),
-    ss: p(d.getSeconds()),
+    yyyy: String(d.getUTCFullYear()), yy: p(d.getUTCFullYear() % 100),
+    mmmm: month("long"), mmm: month("short"),
+    mm: p(d.getUTCMonth() + 1), m: String(d.getUTCMonth() + 1),
+    dd: p(d.getUTCDate()), d: String(d.getUTCDate()),
+    hh: p(d.getUTCHours()), h: String(d.getUTCHours()),
+    ss: p(d.getUTCSeconds()),
   };
   // Longest tokens first so "yyyy" wins over "yy", "mmmm" over "mm", etc.
   return fmt.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d|hh|h|ss/g, (t) => map[t] ?? t);
