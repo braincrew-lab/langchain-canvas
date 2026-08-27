@@ -183,7 +183,9 @@ describe("importFile xlsx (robust to real spreadsheets)", () => {
     ws.getCell("A1").value = 1234.5; ws.getCell("A1").numFmt = "#,##0.00";
     ws.getCell("A2").value = 0.156; ws.getCell("A2").numFmt = "0.0%";
     ws.getCell("A3").value = 1000; ws.getCell("A3").numFmt = "$#,##0";
-    ws.getCell("A4").value = new Date(2026, 6, 11); ws.getCell("A4").numFmt = "yyyy-mm-dd";
+    // A spreadsheet date is a calendar day. Built in local time it would be a
+    // different instant in every zone, and this would assert a different day.
+    ws.getCell("A4").value = new Date(Date.UTC(2026, 6, 11)); ws.getCell("A4").numFmt = "yyyy-mm-dd";
     const buf = await wb.xlsx.writeBuffer();
     const f = Object.assign(new File([], "n.xlsx"), { arrayBuffer: async () => buf }) as File;
 
@@ -192,7 +194,7 @@ describe("importFile xlsx (robust to real spreadsheets)", () => {
     expect(m(0)).toBe("1,234.50"); // thousands + 2 decimals
     expect(m(1)).toBe("15.6%"); // percent
     expect(m(2)).toBe("$1,000"); // currency + thousands
-    expect(m(3)).toBe("2026-07-11"); // date pattern, local calendar day
+    expect(m(3)).toBe("2026-07-11"); // date pattern, the day the file names
   });
 
   it("imports embedded images as positioned Fortune images", async () => {
