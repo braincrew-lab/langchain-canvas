@@ -184,7 +184,7 @@ npm / yarn:
 
 ```json
 "overrides": {
-  "uuid": "14.0.2",
+  "uuid": "14.0.1",
   "brace-expansion": "^2.1.4",
   "archiver": "^8",
   "unzipper": "^0.12",
@@ -196,7 +196,7 @@ pnpm:
 
 ```json
 "pnpm": { "overrides": {
-  "uuid@<14.0.2": "14.0.2",
+  "uuid@<14.0.1": "14.0.1",
   "brace-expansion@<1.1.17": "^1.1.17",
   "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4",
   "archiver@<8": "^8",
