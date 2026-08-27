@@ -5,12 +5,8 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  brace-expansion@<1.1.17: ^1.1.17
-  brace-expansion@>=2.0.0 <2.1.4: ^2.1.4
   postcss@<8.5.23: ^8.5.23
   esbuild@<0.28.1: ^0.28.1
-  '@ungap/structured-clone': 1.3.0
-  uuid@<14.0.1: 14.0.1
 
 importers:
 
@@ -50,7 +46,7 @@ importers:
 
   packages/canvas-react:
     dependencies:
-      '@fortune-sheet/react':
+      '@braincrew-lab/fortune-sheet-react':
         specifier: ^1.0.4
         version: 1.0.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@ungap/structured-clone':
@@ -111,6 +107,15 @@ packages:
 
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
+
+  '@braincrew-lab/fortune-sheet-core@1.0.4':
+    resolution: {integrity: sha512-q1K3YKlU+mME8SBR3PU80t8DwA3VncP4sPdqciEP9Eoi9UfvhzJyStnGgoVBfFs2ilweFhCp5JH2w2IXDmX26A==}
+
+  '@braincrew-lab/fortune-sheet-react@1.0.4':
+    resolution: {integrity: sha512-8dB9CVoZxQzMG2BmRH3QjPPQL5kBbnLuX/Je0SDLp3WiAr44G5ACg71R17AhTAHHocHNGcgH32ANp5rl0M8Ugw==}
+    peerDependencies:
+      react: '>= 18.2'
+      react-dom: '>= 18.2'
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
@@ -306,17 +311,8 @@ packages:
     resolution: {integrity: sha512-WpgiuJaBl/Hcda9Ti8a7mlnw/vUZkJrtjABvojz6P6mo6d8EscudyA7iAt/kTLsgi0c8zfmzQd/Yjb4ASFkw+g==}
     hasBin: true
 
-  '@fortune-sheet/core@1.0.4':
-    resolution: {integrity: sha512-CDnUVebfvtT++CymNRw0qnY4sz6zYO3KZazlH+nG6otkRkZ05Bvt7NXqVhmKKSSxIvJR4R6h50abu/dVGBpjpw==}
-
   '@fortune-sheet/formula-parser@0.2.13':
     resolution: {integrity: sha512-za2ZVQ5ZfMSPCtL8MdqhCthPip7AoeU4MPyd5UDo4RCl9/arrv1Jz0y755mACVVi4suSZxrzWoJGDkLmofoSmw==}
-
-  '@fortune-sheet/react@1.0.4':
-    resolution: {integrity: sha512-v+BU5mmp2hhUe4gRF+vOJ3j8zZkzHU0kzhTZzp+Nn00wA/RArMr+CO+SAluKlCPAsTZgPwmgOEK685WPqJ5XNw==}
-    peerDependencies:
-      react: '>= 18.2'
-      react-dom: '>= 18.2'
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -1908,10 +1904,6 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  uuid@14.0.1:
-    resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
-    hasBin: true
-
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
 
@@ -2088,6 +2080,24 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
 
+  '@braincrew-lab/fortune-sheet-core@1.0.4':
+    dependencies:
+      '@fortune-sheet/formula-parser': 0.2.13
+      dayjs: 1.11.21
+      immer: 9.0.21
+      lodash: 4.18.1
+      numeral: 2.0.6
+
+  '@braincrew-lab/fortune-sheet-react@1.0.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@braincrew-lab/fortune-sheet-core': 1.0.4
+      '@types/regenerator-runtime': 0.13.8
+      immer: 9.0.21
+      lodash: 4.18.1
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      regenerator-runtime: 0.14.1
+
   '@cfworker/json-schema@4.1.1': {}
 
   '@csstools/color-helpers@5.1.0': {}
@@ -2198,29 +2208,10 @@ snapshots:
       bessel: 1.0.2
       jstat: 1.9.6
 
-  '@fortune-sheet/core@1.0.4':
-    dependencies:
-      '@fortune-sheet/formula-parser': 0.2.13
-      dayjs: 1.11.21
-      immer: 9.0.21
-      lodash: 4.18.1
-      numeral: 2.0.6
-      uuid: 14.0.1
-
   '@fortune-sheet/formula-parser@0.2.13':
     dependencies:
       '@formulajs/formulajs': 2.9.3
       tiny-emitter: 2.1.0
-
-  '@fortune-sheet/react@1.0.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@fortune-sheet/core': 1.0.4
-      '@types/regenerator-runtime': 0.13.8
-      immer: 9.0.21
-      lodash: 4.18.1
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
-      regenerator-runtime: 0.14.1
 
   '@img/colour@1.1.0':
     optional: true
@@ -3947,8 +3938,6 @@ snapshots:
 
   util-deprecate@1.0.2:
     optional: true
-
-  uuid@14.0.1: {}
 
   vfile-message@4.0.3:
     dependencies:
