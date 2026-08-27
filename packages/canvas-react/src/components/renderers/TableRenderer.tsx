@@ -14,7 +14,10 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// Fortune-sheet CSS ships bundled in the SDK styles.css (see tsup.config).
+// Fortune-sheet's grid styles. In source/dev consumers this resolves from the
+// (dev)dependency; the tsup build bundles it (Fortune is noExternal) so the
+// published package carries the styling without a runtime dependency.
+import "@fortune-sheet/react/dist/index.css";
 
 import type { WorkbookInstance } from "@fortune-sheet/react";
 
