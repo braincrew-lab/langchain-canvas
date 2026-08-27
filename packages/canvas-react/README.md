@@ -184,7 +184,7 @@ npm / yarn:
 
 ```json
 "overrides": {
-  "uuid": "^11.1.1",
+  "uuid": "14.0.2",
   "brace-expansion": "^2.1.4",
   "archiver": "^8",
   "unzipper": "^0.12",
@@ -196,7 +196,7 @@ pnpm:
 
 ```json
 "pnpm": { "overrides": {
-  "uuid@<11.1.1": "^11.1.1",
+  "uuid@<14.0.2": "14.0.2",
   "brace-expansion@<1.1.17": "^1.1.17",
   "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4",
   "archiver@<8": "^8",
@@ -211,9 +211,20 @@ Their old releases reach a chain of abandoned packages — `archiver-utils` →
 all. Both dropped those chains in the versions above. Writing a workbook and
 reading it back — fonts and merges included — is exercised against them.
 
+`uuid` is ESM-only from v12 on, and both `exceljs` and `@fortune-sheet/core`
+still reach it through a CommonJS entry. Node resolves that with `require(esm)`,
+which landed in **20.19**, so pinning `uuid` past v11 raises this package's floor
+to that release — hence the `engines` field. Bundlers take the ESM entry and are
+unaffected; it is plain `node` that needs the newer runtime. On Node 20.18 the
+grid fails to load at all, so the floor is not advisory.
+
 With those in place `npm audit` and `pnpm audit` both report nothing on a fresh
 install of this package. The same overrides run in this repository's own
 lockfile, against its full test suite.
+
+Advisory feeds disagree, and a private one may flag a version the public feed
+calls clean — pin to whatever your own review has cleared. The versions above are
+the ones this repository tests against.
 
 `@ungap/structured-clone` cannot be removed — `react-markdown` reaches it through
 `mdast-util-to-hast`, whose current release still depends on it. It is **ISC** and
