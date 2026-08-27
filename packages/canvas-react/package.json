@@ -74,7 +74,6 @@
   },
   "peerDependencies": {
     "@langchain/langgraph-sdk": ">=0.0.70",
-    "pptxgenjs": "^3.12.0 || ^4",
     "react": "^18 || ^19",
     "react-dom": "^18 || ^19"
   },
@@ -95,7 +94,6 @@
     "@langchain/langgraph-sdk": "^1.9.28",
     "@types/react": "^19.0.0",
     "jsdom": "^25",
-    "pptxgenjs": "^4.0.1",
     "tsup": "^8.5.1",
     "typescript": "^5.5.4",
     "vite": "^8",
@@ -103,9 +101,6 @@
   },
   "peerDependenciesMeta": {
     "@langchain/langgraph-sdk": {
-      "optional": true
-    },
-    "pptxgenjs": {
       "optional": true
     }
   },

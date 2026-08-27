@@ -21,10 +21,13 @@ npm i @braincrew-lab/langchain-canvas
 Office 포맷 import/export는 선택적 peer 패키지를 씁니다 — 필요한 것만 설치하세요:
 
 ```bash
-npm i exceljs docx pptxgenjs fast-formula-parser
+npm i exceljs docx fast-formula-parser
 ```
 
 미설치 시 해당 export만 "무엇을 설치하라"고 안내하고, 나머지는 정상 동작합니다.
+
+덱의 PowerPoint export는 파이썬 쪽 `SlidesPptxExporter`가 담당합니다. 템플릿 스킨 위에
+얹기 때문에 원본의 마스터·레이아웃·임베디드 폰트가 그대로 살아남습니다.
 
 ## 마운트
 
