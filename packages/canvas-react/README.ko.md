@@ -21,7 +21,7 @@ npm i @braincrew-lab/langchain-canvas
 Office 포맷 import/export는 선택적 peer 패키지를 씁니다 — 필요한 것만 설치하세요:
 
 ```bash
-npm i exceljs docx fast-formula-parser
+npm i docx fast-formula-parser
 ```
 
 미설치 시 해당 export만 "무엇을 설치하라"고 안내하고, 나머지는 정상 동작합니다.
@@ -81,7 +81,7 @@ HTML이 기본 substrate이고, 샌드박스 iframe에 렌더됩니다. 에이�
 - **데이터로 온 수식** — 에이전트가 값으로 보낸 수식(`"=AVERAGE(B2:B4)"`)은 **로드 시 미리 계산**되어 결과가 바로 표시
 - **전체 툴바** — 폰트, 숫자/통화/％ 서식, 굵게/기울임, 테두리, 셀 병합, 정렬, 다중 시트 — 데스크톱 수준
 - 넓은 그리드에서 **상하좌우 부드러운 스크롤**
-- **Export** — `.xlsx`(폰트/병합/서식 포함) 또는 `.csv`
+- **Export** — 여기서는 `.csv`, 폰트·병합·서식이 살아 있는 `.xlsx`는 파이썬 쪽에서
 
 ### 🖼️ 슬라이드 (`slides`) — 프리 캔버스 덱
 
@@ -107,7 +107,7 @@ HTML이 기본 substrate이고, 샌드박스 iframe에 렌더됩니다. 에이�
 
 ### 📁 파일 — 라운드트립
 
-- **Import** — 드래그앤드롭 또는 파일 선택: **CSV · Excel · Markdown · HTML · JSON** → 편집 가능한 아티팩트로
+- **Import** — 드래그앤드롭 또는 파일 선택: **CSV · Markdown · HTML · JSON** → 편집 가능한 아티팩트로. 스프레드시트는 파이썬 쪽(`xlsx_import`)이 연다
 - **Export** — 각 아티팩트를 네이티브 포맷으로, 그리고 범용 **standalone `.html`** · **PDF**(브라우저 인쇄)
 
 ### 🧰 모든 아티팩트 공통

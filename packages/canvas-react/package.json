@@ -87,7 +87,6 @@
   "optionalDependencies": {
     "docx": "^9.0.2",
     "docx-preview": "^0.4.0",
-    "exceljs": "^4.4.0",
     "fast-formula-parser": "^1.0.19"
   },
   "devDependencies": {

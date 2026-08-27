@@ -18,10 +18,17 @@ const { sendMessage, messages, canvas } = useCanvasStream({ endpoint: "/api/chat
 npm i @braincrew-lab/langchain-canvas
 ```
 
-`exceljs`, `docx`, `docx-preview` and `fast-formula-parser` come along with the
-package. If one is missing, that single feature says what to add and the rest
-keeps working: an export tells the user, and a Word upload falls back to the file
-card it showed before.
+`docx`, `docx-preview` and `fast-formula-parser` come along with the package. If
+one is missing, that single feature says what to add and the rest keeps working:
+an export tells the user, and a Word upload falls back to the file card it showed
+before.
+
+**A spreadsheet is opened and written from the Python side**, through
+`xlsx_import` and `TableXlsxExporter` in `langchain-canvas[xlsx]`. Reading a
+workbook down to its fonts, fills, number formats, merges, widths and images is
+more than a browser should carry, and the two readers are held to the same
+result by a golden fixture. The grid itself is unchanged: a table artifact still
+opens, edits and exports to CSV in the browser.
 
 **A deck exports to PowerPoint from the Python side**, through
 `SlidesPptxExporter` in `langchain-canvas[office]`. It builds on the deck's
@@ -81,7 +88,7 @@ Runs on a spreadsheet engine (Fortune-sheet), not a static table.
 - **Formulas from data** — a formula the agent sends as a value (e.g. `"=AVERAGE(B2:B4)"`) is **pre-computed on load** so it shows its result immediately.
 - **Full toolbar** — fonts, number/currency/percent formats, bold/italic, borders, cell merging, alignment, multiple sheets — like a desktop spreadsheet.
 - **Smooth scrolling** in both directions over a large grid.
-- **Export** to `.xlsx` (with fonts/merges/formats) or `.csv`.
+- **Export** to `.csv` here, or to `.xlsx` with fonts, merges and formats through the Python side.
 
 ### 🖼️ Slides (`slides`) — a free-canvas deck
 
@@ -107,7 +114,7 @@ A PowerPoint-style editor where every element is movable.
 
 ### 📁 Files — round-trip
 
-- **Import** by drag-and-drop or a file picker: **CSV · Excel · Markdown · HTML · JSON**. They open as editable artifacts.
+- **Import** by drag-and-drop or a file picker: **CSV · Markdown · HTML · JSON**. They open as editable artifacts. A spreadsheet is opened on the Python side (`xlsx_import`).
 - **Export** every artifact to its native format, plus a universal **standalone `.html`** and **PDF** (browser print).
 
 ### 🧰 Across every artifact
@@ -182,8 +189,6 @@ npm / yarn:
 "overrides": {
   "uuid": "14.0.1",
   "brace-expansion": "^2.1.4",
-  "archiver": "^8",
-  "unzipper": "^0.12",
   "@ungap/structured-clone": "1.3.0"
 }
 ```
@@ -195,20 +200,12 @@ pnpm:
   "uuid@<14.0.1": "14.0.1",
   "brace-expansion@<1.1.17": "^1.1.17",
   "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4",
-  "archiver@<8": "^8",
-  "unzipper@<0.12": "^0.12",
   "@ungap/structured-clone": "1.3.0"
 } }
 ```
 
-`archiver` and `unzipper` are what `exceljs` uses to write and read a workbook.
-Their old releases reach a chain of abandoned packages — `archiver-utils` →
-`glob@7` → `inflight`, and `binary` → `buffers`, which publishes no license at
-all. Both dropped those chains in the versions above. Writing a workbook and
-reading it back — fonts and merges included — is exercised against them.
-
-`uuid` is ESM-only from v12 on, and both `exceljs` and `@fortune-sheet/core`
-still reach it through a CommonJS entry. Node resolves that with `require(esm)`,
+`uuid` is ESM-only from v12 on, and `@fortune-sheet/core` still reaches it
+through a CommonJS entry. Node resolves that with `require(esm)`,
 which landed in **20.19**, so pinning `uuid` past v11 raises this package's floor
 to that release — hence the `engines` field. Bundlers take the ESM entry and are
 unaffected; it is plain `node` that needs the newer runtime. On Node 20.18 the

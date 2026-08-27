@@ -58,46 +58,6 @@ describe("toStandaloneHtml", () => {
 });
 
 describe("dataExporters", () => {
-  it("keeps '=' row values as formulas with cached results in xlsx", async () => {
-    const { Workbook } = await import("exceljs");
-    const data: TableData = {
-      columns: [{ key: "a", label: "A" }],
-      rows: [{ a: 10 }, { a: 20 }, { a: "=SUM(A2:A3)" }],
-    };
-    const xlsx = dataExporters.table.find((e) => e.extension === "xlsx")!;
-    const buffer = (await xlsx.build({ id: "t", type: "table", title: "t", version: 1, status: "complete", data })) as ArrayBuffer;
-    const workbook = new Workbook();
-    await workbook.xlsx.load(buffer);
-    const cell = workbook.worksheets[0].getCell(4, 1);
-    expect(cell.formula).toBe("SUM(A2:A3)");
-    expect(cell.result).toBe(30);
-  });
-
-  it("keeps a grid-typed formula (celldata `f`) as a formula in xlsx", async () => {
-    const { Workbook } = await import("exceljs");
-    const data: TableData = {
-      columns: [],
-      rows: [],
-      sheet: [
-        {
-          name: "S",
-          celldata: [
-            { r: 0, c: 0, v: { v: 1 } },
-            { r: 1, c: 0, v: { v: 2 } },
-            { r: 2, c: 0, v: { v: 3, f: "=SUM(A1:A2)" } },
-          ],
-        },
-      ],
-    } as TableData;
-    const xlsx = dataExporters.table.find((e) => e.extension === "xlsx")!;
-    const buffer = (await xlsx.build({ id: "t", type: "table", title: "t", version: 1, status: "complete", data })) as ArrayBuffer;
-    const workbook = new Workbook();
-    await workbook.xlsx.load(buffer);
-    const cell = workbook.worksheets[0].getCell(3, 1);
-    expect(cell.formula).toBe("SUM(A1:A2)");
-    expect(cell.result).toBe(3);
-  });
-
   it("CSV shows the person's grid edits (sheet projected into rows)", async () => {
     const table: TableData = {
       columns: [{ key: "m", label: "M" }, { key: "n", label: "N" }],
@@ -117,33 +77,6 @@ describe("dataExporters", () => {
     const csv = dataExporters.table.find((e) => e.extension === "csv")!;
     const out = String(await csv.build({ id: "t", type: "table", title: "T", version: 1, status: "complete", data: table }));
     expect(out).toContain("Jan,150");
-  });
-
-  it("xlsx merges agent rows into the person's sheet and keeps their styling", async () => {
-    const { Workbook } = await import("exceljs");
-    const data: TableData = {
-      columns: [{ key: "m", label: "M" }, { key: "n", label: "N" }],
-      rows: [
-        { m: "Jan", n: 100 },
-        { m: "Total", n: "=SUM(B2:B2)" }, // agent-added after the person's edit
-      ],
-      sheet: [
-        {
-          name: "S",
-          celldata: [
-            { r: 1, c: 0, v: { v: "Jan" } },
-            { r: 1, c: 1, v: { v: 100, bl: 1 } }, // person's bold
-          ],
-        },
-      ],
-    } as TableData;
-    const xlsx = dataExporters.table.find((e) => e.extension === "xlsx")!;
-    const buffer = (await xlsx.build({ id: "t", type: "table", title: "t", version: 1, status: "complete", data })) as ArrayBuffer;
-    const workbook = new Workbook();
-    await workbook.xlsx.load(buffer);
-    const ws = workbook.worksheets[0];
-    expect(ws.getCell(2, 2).font?.bold).toBe(true); // person's bold survives
-    expect(ws.getCell(3, 2).formula).toBe("SUM(B2:B2)"); // agent row exported
   });
 
   it("exports a table to CSV", async () => {
