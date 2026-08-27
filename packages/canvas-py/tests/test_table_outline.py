@@ -89,3 +89,9 @@ def test_content_that_is_not_a_table_asks_to_be_read_the_ordinary_way() -> None:
     assert table_view("{not json") is None
     assert table_view(json.dumps({"type": "table"})) is None
     assert table_view(json.dumps(["a list"])) is None
+    # An envelope of another type saved under a table's name is the same
+    # case. Calling it an empty table would hide a whole deck, and an agent
+    # that believed the map would write over it.
+    deck = json.dumps({"type": "slides", "data": {"slides": [{"title": "T"}]}})
+    assert table_view(deck) is None
+    assert table_view(deck, "rows") is None

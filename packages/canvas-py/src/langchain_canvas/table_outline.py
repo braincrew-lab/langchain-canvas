@@ -87,15 +87,19 @@ def table_view(content: str, sheet: str | None = None) -> str | None:
 
     ``None`` means the content is not a table envelope, so the caller reads
     it the ordinary way — a file broken enough to miss its own shape has to
-    stay visible to be fixable. An unknown address raises ``ValueError``
-    naming the addresses that exist, which is the only guidance a caller
-    needs to correct itself.
+    stay visible to be fixable. That includes an envelope of the wrong type
+    saved under a table's name: calling it an empty table would hide what is
+    really in there, and an agent that believes it would overwrite it. An
+    unknown address raises ``ValueError`` naming the addresses that exist,
+    which is the only guidance a caller needs to correct itself.
     """
     try:
         envelope = json.loads(content)
     except json.JSONDecodeError:
         return None
-    if not isinstance(envelope, dict) or not isinstance(envelope.get("data"), dict):
+    if not isinstance(envelope, dict) or envelope.get("type") != "table":
+        return None
+    if not isinstance(envelope.get("data"), dict):
         return None
     data = envelope["data"]
     columns = [c for c in (data.get("columns") or []) if isinstance(c, dict)]
