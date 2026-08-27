@@ -78,7 +78,7 @@
     "react-dom": "^18 || ^19"
   },
   "dependencies": {
-    "@fortune-sheet/react": "^1.0.4",
+    "@braincrew-lab/fortune-sheet-react": "^1.0.4",
     "@ungap/structured-clone": "1.3.0",
     "echarts": "^6.0.0",
     "react-markdown": "^10.1.0",
@@ -103,8 +103,5 @@
     "@langchain/langgraph-sdk": {
       "optional": true
     }
-  },
-  "engines": {
-    "node": ">=20.19"
   }
 }

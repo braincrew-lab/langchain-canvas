@@ -177,53 +177,29 @@ Agent output and imported files are treated as untrusted:
 
 ### Dependency advisories
 
-`pnpm audit` and `npm audit` report nothing against this package. Two of its
-dependencies still resolve old transitive packages that carry advisories, and
-neither publishes a release that lifts them, so pin them in **your** app — a
-lockfile override only applies to the project that declares it, never to a
-library you install.
+`npm audit` and `pnpm audit` report nothing on a fresh install of this package,
+with no overrides on your side. Getting there took removing what could not be
+pinned:
 
-npm / yarn:
-
-```json
-"overrides": {
-  "uuid": "14.0.1",
-  "brace-expansion": "^2.1.4",
-  "@ungap/structured-clone": "1.3.0"
-}
-```
-
-pnpm:
-
-```json
-"pnpm": { "overrides": {
-  "uuid@<14.0.1": "14.0.1",
-  "brace-expansion@<1.1.17": "^1.1.17",
-  "brace-expansion@>=2.0.0 <2.1.4": "^2.1.4",
-  "@ungap/structured-clone": "1.3.0"
-} }
-```
-
-`uuid` is ESM-only from v12 on, and `@fortune-sheet/core` still reaches it
-through a CommonJS entry. Node resolves that with `require(esm)`,
-which landed in **20.19**, so pinning `uuid` past v11 raises this package's floor
-to that release — hence the `engines` field. Bundlers take the ESM entry and are
-unaffected; it is plain `node` that needs the newer runtime. On Node 20.18 the
-grid fails to load at all, so the floor is not advisory.
-
-With those in place `npm audit` and `pnpm audit` both report nothing on a fresh
-install of this package. The same overrides run in this repository's own
-lockfile, against its full test suite.
+- **`exceljs`** reached `archiver@5` → `glob@7` → `inflight` and `unzipper@0.10`
+  → `binary` → `buffers`, all abandoned, `buffers` publishing no license at all.
+  Reading a workbook moved to the Python side, where `xlsx_import` produces the
+  same result — proven byte for byte against a golden fixture.
+- **`pptxgenjs`** reached `image-size`, whose every release carries an open
+  advisory with no fix. Deck export moved to `SlidesPptxExporter`, which keeps the
+  template skin and its fonts.
+- **`@fortune-sheet/core`** depends on `uuid@^8.3.2`, and the fix for that
+  advisory landed in 11.1.1 — outside the range it asks for. The grid now comes
+  from [`@braincrew-lab/fortune-sheet-react`](https://github.com/braincrew-lab/fortune-sheet),
+  a fork whose only change is a twenty-two line sheet-id helper in place of that
+  dependency. Its `FORK.md` records what was measured.
+- **`@ungap/structured-clone`** cannot be removed — `react-markdown` reaches it
+  through `mdast-util-to-hast`. It is declared directly at 1.3.0 instead, which
+  deduplicates rather than adding a second copy, and unlike a lockfile override a
+  dependency declaration travels with this package to whoever installs it.
 
 Advisory feeds disagree, and a private one may flag a version the public feed
-calls clean — pin to whatever your own review has cleared. The versions above are
-the ones this repository tests against.
-
-`@ungap/structured-clone` cannot be removed — `react-markdown` reaches it through
-`mdast-util-to-hast`, whose current release still depends on it. It is **ISC** and
-carries no advisory, so any 1.x is fine; the entry above pins the exact version in
-case your review clears versions one at a time. Markdown, GFM tables and links all
-render against the pinned one.
+calls clean. If yours does, the fork above is where a pin belongs.
 
 ## License
 
