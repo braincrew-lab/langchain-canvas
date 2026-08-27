@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langchain_canvas import InMemoryCanvasStore, hydrate_events
+from langchain_canvas.replay import display_title
 
 
 def test_empty_canvas_replays_nothing() -> None:
@@ -223,13 +224,32 @@ def test_markdown_file_replays_as_document_with_heading_title() -> None:
     assert patch["patch"] == {"content": "# Renewable Energy\n\nBody text, edited."}
 
 
-def test_markdown_without_heading_falls_back_to_host_title() -> None:
+def test_markdown_without_heading_is_named_after_its_file() -> None:
     store = InMemoryCanvasStore()
     store.write("t", "notes.md", "just prose, no heading", "Write notes")
 
     events = hydrate_events(store, "t")
     create = next(e for e in events if e["type"] == "canvas.create")
-    assert create["artifact"]["title"] == "notes.md"
+    assert create["artifact"]["title"] == "notes"
+
+
+def test_a_tab_is_named_without_the_suffix_that_says_what_the_file_is() -> None:
+    """The suffix is for the store and the exporters, not for the person.
+
+    A tab reading ``deck.slides.json`` tells someone editing their
+    presentation that they are editing a JSON file.
+    """
+    assert display_title("reports/q3.slides.json") == "q3"
+    assert display_title("inventory.table.json") == "inventory"
+    assert display_title("01-hello.html") == "01-hello"
+    # An upload is the person's own file — its name is already the right one.
+    assert display_title("sources/memo.txt") == "memo.txt"
+
+    store = InMemoryCanvasStore()
+    store.write("t", "reports/page.html", "<p>hi</p>", "Write page")
+    create = next(e for e in hydrate_events(store, "t") if e["type"] == "canvas.create")
+    assert create["artifact"]["id"] == "reports/page.html"
+    assert create["artifact"]["title"] == "page"
 
 
 def test_malformed_chart_envelope_is_skipped() -> None:

@@ -83,6 +83,7 @@ from .layout_lint import format_layout_warnings, lint_slides_data
 from .replay import (
     ARTIFACT_SUFFIXES,
     SLIDES_SUFFIX,
+    display_title,
     encode_slides,
     events_for_commit,
     source_preview_events,
@@ -1790,7 +1791,7 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
                 # Through the envelope encoder, never json.dumps: a .slides.json
                 # without {"type","title","data"} parses as no artifact at all
                 # and the canvas falls back to showing the JSON as a document.
-                encode_slides(target.rsplit("/", 1)[-1], deck),
+                encode_slides(display_title(target), deck),
                 f"Copy {source} for editing",
                 actor="agent",
             )
