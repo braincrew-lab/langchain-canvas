@@ -1386,3 +1386,61 @@ def test_the_picture_tool_only_takes_images_from_the_canvas() -> None:
         revision=revision,
     )
     assert "not a canvas image path" in reply
+
+
+# --- a file the document operations cannot open says what does work -------------
+
+
+class _DeckPages(_FakePages):
+    """A renderer that covers decks, the way a host's office converter does."""
+
+    suffixes = (".pptx",)
+
+
+def test_a_deck_is_told_the_reads_that_work() -> None:
+    """There is no .pptx import yet; the reply has to name what is possible.
+
+    Told only "this opens .docx", an agent invents a summary of the deck and
+    calls that opening it. Naming the page read keeps the answer a next step.
+    """
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/deck.pptx", b"PK-deck", "Upload", actor="human")
+    tools = _document_tools(store, converters=[_DeckPages(), *default_converters()])
+
+    reply = _invoke(
+        tools["open_document_for_editing"], _runtime(thread_id="t1"), source="sources/deck.pptx"
+    )
+    assert reply.startswith("Error: this opens")
+    assert "`pages`" in reply, reply
+    assert "sources/deck.pptx" in reply
+
+
+def test_a_format_no_renderer_covers_is_not_promised_pages() -> None:
+    """The opposite guard: never point at a read the host cannot perform."""
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/archive.zip", b"PK", "Upload", actor="human")
+    tools = _document_tools(store, converters=[_DeckPages(), *default_converters()])
+
+    reply = _invoke(
+        tools["open_document_for_editing"], _runtime(thread_id="t1"), source="sources/archive.zip"
+    )
+    assert reply.startswith("Error: this opens")
+    assert "`pages`" not in reply, reply
+
+
+def test_the_editing_operations_answer_a_deck_the_same_way() -> None:
+    """Both doors report the same thing, so the agent gets one answer."""
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "deck.pptx", b"PK-deck", "Upload", actor="human")
+    tools = _document_tools(store, converters=[_DeckPages(), *default_converters()])
+
+    reply = _invoke(
+        tools["insert_document_paragraph"],
+        _runtime(thread_id="t1"),
+        path="deck.pptx",
+        anchor="p0",
+        text="Hello",
+        description="Add it",
+        revision="r1",
+    )
+    assert "`pages`" in reply, reply
