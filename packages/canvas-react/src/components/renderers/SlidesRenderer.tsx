@@ -14,7 +14,7 @@ import { resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
-import { FreeSlide, shapeStyle } from "./FreeSlide";
+import { FreeSlide, shapeStyle, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 
 /** Track a slide box's width and derive the display font scale for `page`.
@@ -210,12 +210,12 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s, page).map((el) =>
                   el.type === "text" ? (
-                    <span
+                    <div
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, fontSize: (el.fontSize ?? 24) * thumbBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color ?? s.textColor, overflow: "hidden", whiteSpace: "pre-wrap", ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}), ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}), ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor }) }}
                     >
                       {el.text}
-                    </span>
+                    </div>
                   ) : el.type === "shape" ? (
                     <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el, thumbBox.scale) }} />
                   ) : (
@@ -303,7 +303,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
-                    <div className="cv-free__text" style={{ fontSize: (el.fontSize ?? 24) * presentBox.scale, fontWeight: el.bold ? 700 : 400, color: el.color, textAlign: el.align ?? "left", whiteSpace: "pre-wrap", ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}), ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}), ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}) }}>
+                    <div className="cv-free__text" style={textStyle(el, presentBox.scale)}>
                       {el.text}
                     </div>
                   </div>

@@ -27,6 +27,41 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
   return { width: "100%", height: "100%", background: fill, borderRadius: 8, ...border };
 }
 
+/** CSS for a text element's body — shared by the editor, thumbnails and the
+ *  present view. Every length the model stores in px (the font, the space
+ *  above and below) is drawn at the same `scale` as the box it sits in, so a
+ *  thumbnail is the slide made smaller rather than the slide with its
+ *  paragraph spacing left at full size. */
+export function textStyle(el: SlideElement, scale = 1): CSSProperties {
+  return {
+    fontSize: (el.fontSize ?? 24) * scale,
+    fontWeight: el.bold ? 700 : 400,
+    color: el.color,
+    textAlign: el.align ?? "left",
+    whiteSpace: "pre-wrap",
+    ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
+    ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
+    ...(el.highlight
+      ? {
+          background: el.highlight,
+          boxDecorationBreak: "clone" as const,
+          WebkitBoxDecorationBreak: "clone" as const,
+        }
+      : {}),
+    ...(el.spaceBefore ? { paddingTop: el.spaceBefore * scale } : {}),
+    ...(el.spaceAfter ? { paddingBottom: el.spaceAfter * scale } : {}),
+    ...(el.verticalAlign
+      ? {
+          display: "flex",
+          flexDirection: "column" as const,
+          justifyContent:
+            el.verticalAlign === "middle" ? "center" : el.verticalAlign === "bottom" ? "flex-end" : "flex-start",
+          height: "100%",
+        }
+      : {}),
+  };
+}
+
 interface FreeSlideProps {
   elements: SlideElement[];
   onChange: (elements: SlideElement[]) => void;
@@ -227,28 +262,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               className="cv-free__text"
               contentEditable={editingId === el.id}
               suppressContentEditableWarning
-              style={{
-                fontSize: (el.fontSize ?? 24) * fontScale,
-                fontWeight: el.bold ? 700 : 400,
-                color: el.color,
-                textAlign: el.align ?? "left",
-                ...(el.highlight ? { background: el.highlight, boxDecorationBreak: "clone" as const, WebkitBoxDecorationBreak: "clone" as const } : {}), ...(el.spaceBefore ? { paddingTop: el.spaceBefore } : {}), ...(el.spaceAfter ? { paddingBottom: el.spaceAfter } : {}),
-                ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
-                ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
-                ...(el.verticalAlign
-                  ? {
-                      display: "flex",
-                      flexDirection: "column" as const,
-                      justifyContent:
-                        el.verticalAlign === "middle"
-                          ? "center"
-                          : el.verticalAlign === "bottom"
-                            ? "flex-end"
-                            : "flex-start",
-                      height: "100%",
-                    }
-                  : {}),
-              }}
+              style={textStyle(el, fontScale)}
               onBlur={(e) => {
                 setEditingId(null);
                 updateEl(el.id, { text: e.currentTarget.textContent ?? "" });

@@ -631,7 +631,11 @@ class SlidesPptxExporter:
                 MSO_CONNECTOR,
                 MSO_SHAPE,
             )
-            from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN  # type: ignore[import-untyped]
+            from pptx.enum.text import (  # type: ignore[import-untyped]
+                MSO_ANCHOR,
+                MSO_AUTO_SIZE,
+                PP_ALIGN,
+            )
             from pptx.oxml.ns import qn  # type: ignore[import-untyped]
             from pptx.util import Emu, Inches, Pt  # type: ignore[import-untyped]
         except ImportError as exc:
@@ -667,6 +671,12 @@ class SlidesPptxExporter:
             "left": PP_ALIGN.LEFT,
             "center": PP_ALIGN.CENTER,
             "right": PP_ALIGN.RIGHT,
+        }
+
+        anchors = {
+            "top": MSO_ANCHOR.TOP,
+            "middle": MSO_ANCHOR.MIDDLE,
+            "bottom": MSO_ANCHOR.BOTTOM,
         }
         # The deck's own page is the coordinate space its percent geometry
         # refers to; absent means the classic 16:9 canvas.
@@ -725,6 +735,10 @@ class SlidesPptxExporter:
                     frame.auto_size = MSO_AUTO_SIZE.NONE
                     frame.margin_left = frame.margin_right = Emu(0)
                     frame.margin_top = frame.margin_bottom = Emu(0)
+                    # Where the text sits inside its box. Left unset, a box
+                    # measured for centred text draws it against the top edge.
+                    if element.vertical_align:
+                        frame.vertical_anchor = anchors[element.vertical_align]
                     color = _hex_rgb(element.color) or _hex_rgb(slide_model.text_color)
                     alignment = alignments.get(element.align or "left")
                     # Text rides the same scale as the geometry, so type and
