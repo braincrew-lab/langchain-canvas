@@ -141,6 +141,17 @@ def test_a_table_address_reads_one_rectangle_through_the_usual_window() -> None:
     assert grid.endswith("### sheet: S1\n   1\tsheet 1")
 
 
+def test_a_file_that_is_not_really_a_table_is_still_read_as_itself() -> None:
+    # The route is the suffix, so an envelope of another type can arrive
+    # here. Reporting it as an empty table would hide the deck inside it.
+    store = InMemoryCanvasStore()
+    deck = json.dumps({"type": "slides", "data": {"slides": [{"title": "T"}]}})
+    store.write("t1", "oops.table.json", deck, "create")
+    out = _invoke(_tools(store)["read_canvas"], _runtime(thread_id="t1"), path="oops.table.json")
+    assert "[rows]" not in out
+    assert '"type": "slides"' in out
+
+
 def test_a_table_address_that_does_not_exist_names_the_ones_that_do() -> None:
     store = InMemoryCanvasStore()
     store.write("t1", "ledger.table.json", _wide_table(sheets=2, rows=2), "create")
