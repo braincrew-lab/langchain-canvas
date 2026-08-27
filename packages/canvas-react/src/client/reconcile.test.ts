@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Artifact } from "../protocol/artifacts";
-import { emptyCanvasState, mergePatch, reduceCanvas } from "./reconcile";
+import { emptyCanvasState, mergePatch, reduceCanvas, versionRail } from "./reconcile";
 
 const doc = (over: Partial<Artifact> = {}): Artifact => ({
   id: "a1",
@@ -179,5 +179,42 @@ describe("mergePatch (RFC 7386)", () => {
   it("replaces arrays and scalars wholesale", () => {
     expect(mergePatch({ a: [1, 2] }, { a: [3] })).toEqual({ a: [3] });
     expect(mergePatch(5, "x")).toBe("x");
+  });
+});
+
+
+describe("the version rail", () => {
+  const deck = (): Artifact =>
+    ({ id: "d", type: "slides", title: "d", version: 1, status: "complete", data: { slides: [] } }) as Artifact;
+
+  /** What the rail counts must never shrink: a number that goes backwards
+   *  reads as work being lost, and editing never loses a version. */
+  it("never goes backwards across an edit-and-save burst", () => {
+    let state = emptyCanvasState();
+    const counts: number[] = [];
+    const record = () => counts.push(versionRail(state.history.d ?? []).length);
+
+    state = reduceCanvas(state, { type: "canvas.create", artifact: deck() } as never);
+    record();
+    state = reduceCanvas(state, { type: "canvas.commit", id: "d", description: "Opened", revision: "r1" } as never);
+    record();
+    for (const [from, to] of [["r1", "r2"], ["r2", "r3"], ["r3", "r4"]]) {
+      state = reduceCanvas(state, { type: "canvas.patch", id: "d", patch: { slides: [] } } as never);
+      record();
+      state = reduceCanvas(state, { type: "canvas.commit", id: "d", description: "Edit", revision: to, amends: from } as never);
+      record();
+    }
+    // "Leave a version" — a commit that continues nothing opens a new one.
+    state = reduceCanvas(state, { type: "canvas.patch", id: "d", patch: { slides: [] } } as never);
+    record();
+    state = reduceCanvas(state, { type: "canvas.commit", id: "d", description: "Named", revision: "r5" } as never);
+    record();
+
+    expect(counts).toEqual([...counts].sort((a, b) => a - b));
+    expect(counts.at(-1)).toBe(2);
+  });
+
+  it("shows the live artifact before anything has been committed", () => {
+    expect(versionRail([deck()])).toHaveLength(1);
   });
 });

@@ -99,6 +99,20 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
   }
 }
 
+/**
+ * The snapshots the version rail counts: the described ones.
+ *
+ * The history also holds the *working* entry an edit opens, which the next
+ * commit folds into the version it continues. Counting that entry made the
+ * rail read v2/2 while typing and v1/1 the moment it saved — a number that
+ * goes backwards reads as work being lost. A version is something that was
+ * committed; what is being typed is the current state of one, not another one.
+ */
+export function versionRail(snapshots: Artifact[]): Artifact[] {
+  const described = snapshots.filter((s) => typeof s.meta?.commitDescription === "string");
+  return described.length ? described : snapshots;
+}
+
 // --- state transitions ----------------------------------------------------------
 
 function create(state: CanvasState, artifact: Artifact): CanvasState {
