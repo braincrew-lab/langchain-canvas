@@ -4,6 +4,45 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.25] — 2026-08-28
+
+### Added
+- **A PowerPoint deck can be imported and edited.** An uploaded `.pptx` is read
+  into slide elements — shapes, text, position and colour — instead of staying a
+  file you can only look at. `create_deck_tools` copies a deck out of `sources/`,
+  where nothing is editable and no exporter matches the name, into a place where
+  both work.
+- **A slide element holds what a deck actually uses.** `stroke`, `strokeWidth`,
+  `fontFamily`, `lineHeight`, `verticalAlign`, `highlight`, `spaceBefore` and
+  `spaceAfter` are new fields on the slide protocol. Counted against one sample
+  deck, the old model could not hold the font of 117 runs, the line spacing of 26
+  paragraphs, the outline of 9 shapes or the vertical anchor of 9 frames. A shape
+  with an outline and no fill had nothing to draw at all and came out invisible.
+
+### Fixed
+- **Print matches the screen.** The print page was built at 128 px per inch, so a
+  10-inch deck printed as if it were 13.33 inches, and font size was written in
+  `vw` — a share of the print frame — so the same deck printed at a different
+  size depending on the frame. The page is now `widthIn * PAGE_DPI` with absolute
+  px, the same numbers the screen uses. The print path also wrote none of the
+  eight properties above; it writes all of them.
+- **A slide is drawn the same way everywhere.** `textStyle(el, scale)` is shared
+  by the editor, the thumbnail and the presenter view. Two bugs fell out of the
+  merge: px properties were not multiplied by the view scale, so paragraph
+  spacing opened at full size inside a thumbnail; and thumbnail text had a width
+  but no height, so `overflow: hidden` had nothing to clip against and text ran
+  over the slide below.
+- **A slide wears the background it inherits.** PowerPoint resolves a background
+  through slide, then layout, then master. Reading only the slide left 2 of 6
+  sample slides white where the master says `#151515`. The chain is followed now,
+  and all three colour notations are read (`srgbClr`, `schemeClr` with
+  `lumMod`/`lumOff`, `prstClr`), along with gradients and picture fills.
+- **A version number stops going backwards.** The version rail counted saved
+  versions and the in-progress tail together, so it could read `v2 of 2` and then
+  `v1 of 1`.
+- **A tab is named after the file, not after what the file is.** A tab reads
+  `Q3 review`, not `Q3 review.slides.json`.
+
 ## [0.7.24] — 2026-08-27
 
 ### Added
