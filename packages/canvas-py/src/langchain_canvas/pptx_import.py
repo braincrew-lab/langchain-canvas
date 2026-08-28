@@ -139,7 +139,7 @@ def _background_picture(slide: Any, scheme: dict[str, str]) -> str | None:
         return None
     try:
         image = Image.open(BytesIO(blob))
-        image.thumbnail((_BACKGROUND_MAX_PX, _BACKGROUND_MAX_PX), Image.LANCZOS)
+        image.thumbnail((_BACKGROUND_MAX_PX, _BACKGROUND_MAX_PX), Image.Resampling.LANCZOS)
         buffer = BytesIO()
         image.convert("RGB").save(buffer, "JPEG", quality=82, optimize=True)
     except Exception:  # noqa: BLE001 — an unreadable background drops out

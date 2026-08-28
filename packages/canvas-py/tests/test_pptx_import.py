@@ -189,8 +189,9 @@ def test_bytes_that_are_not_a_deck_raise_rather_than_return_an_empty_one() -> No
 def test_a_deck_read_and_written_keeps_its_shapes_and_page() -> None:
     """Not byte equality — that was withdrawn as a requirement. What has to
     hold is that nothing silently disappears across one trip."""
-    from langchain_canvas.exporters import SlidesPptxExporter
     import json
+
+    from langchain_canvas.exporters import SlidesPptxExporter
 
     def build(slide: Any) -> None:
         _textbox(slide, "One")
@@ -222,7 +223,12 @@ def test_an_upload_stays_a_file_until_it_is_copied_out() -> None:
         "t1", "sources/deck.pptx", _deck(lambda s: _textbox(s, "Hi")), "Upload", actor="human"
     )
     events = source_preview_events(
-        store, "t1", "sources/deck.pptx", is_new=True, revision=commit.revision, description="Upload"
+        store,
+        "t1",
+        "sources/deck.pptx",
+        is_new=True,
+        revision=commit.revision,
+        description="Upload",
     )
     created = next(e for e in events if e["type"] == "canvas.create")
     assert created["artifact"]["type"] == "file"
@@ -236,7 +242,12 @@ def test_an_unreadable_deck_still_gets_a_file_card() -> None:
     store = InMemoryCanvasStore()
     commit = store.write_bytes("t1", "sources/broken.pptx", b"PK-nope", "Upload", actor="human")
     events = source_preview_events(
-        store, "t1", "sources/broken.pptx", is_new=True, revision=commit.revision, description="Upload"
+        store,
+        "t1",
+        "sources/broken.pptx",
+        is_new=True,
+        revision=commit.revision,
+        description="Upload",
     )
     created = next(e for e in events if e["type"] == "canvas.create")
     assert created["artifact"]["type"] == "file"
@@ -250,7 +261,11 @@ def _store_with_deck(deck: bytes = b"") -> Any:
 
     store = InMemoryCanvasStore()
     store.write_bytes(
-        "t1", "sources/deck.pptx", deck or _deck(lambda s: _textbox(s, "Hi")), "Upload", actor="human"
+        "t1",
+        "sources/deck.pptx",
+        deck or _deck(lambda s: _textbox(s, "Hi")),
+        "Upload",
+        actor="human",
     )
     return store
 
@@ -304,7 +319,11 @@ def test_copying_the_same_deck_twice_is_refused_rather_than_overwriting() -> Non
 def test_the_copy_cannot_be_written_back_into_sources() -> None:
     """The uploads folder stays the user's, whatever destination is passed."""
     store = _store_with_deck()
-    reply = _run(_copy_tool(store), source="sources/deck.pptx", destination="sources/copy.slides.json")
+    reply = _run(
+        _copy_tool(store),
+        source="sources/deck.pptx",
+        destination="sources/copy.slides.json",
+    )
     assert reply.startswith("Error:")
     assert "sources/" in reply
 
@@ -410,7 +429,6 @@ def test_a_flat_connector_gets_its_stroke_as_thickness() -> None:
     """A horizontal connector is zero tall in the file — PowerPoint draws it
     from the line weight. The deck model paints shapes as boxes, so a zero
     box is an invisible line."""
-    from pptx.util import Emu
 
     def build(slide: Any) -> None:
         slide.shapes.add_connector(1, Inches(1), Inches(2), Inches(5), Inches(2))
@@ -428,12 +446,14 @@ def test_a_box_drawn_by_its_outline_alone_survives() -> None:
     """The common annotation in a real deck is an empty rectangle around
     content: no fill, a coloured border. With only a `fill` field it rendered
     as nothing, which is why red boxes went missing from an imported deck."""
-    from pptx.enum.shapes import MSO_SHAPE
     from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
     from pptx.util import Pt as _Pt
 
     def build(slide: Any) -> None:
-        box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(3), Inches(2))
+        box = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(3), Inches(2)
+        )
         box.fill.background()  # no fill at all
         box.line.color.rgb = RGBColor(0xFF, 0x00, 0x00)
         box.line.width = _Pt(3)
@@ -461,14 +481,16 @@ def test_outline_and_face_survive_the_round_trip() -> None:
     """The fields are only real if the export writes them back."""
     import json
 
-    from pptx.enum.shapes import MSO_SHAPE
     from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
     from pptx.util import Pt as _Pt
 
     from langchain_canvas.exporters import SlidesPptxExporter
 
     def build(slide: Any) -> None:
-        box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(3), Inches(2))
+        box = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(3), Inches(2)
+        )
         box.fill.background()
         box.line.color.rgb = RGBColor(0xFF, 0x00, 0x00)
         box.line.width = _Pt(3)
@@ -579,9 +601,9 @@ def test_background_is_inherited_from_the_layout_and_the_master():
     Reading only the slide's own element turns an inherited dark deck white.
     """
     pytest.importorskip("pptx")
+    from lxml import etree
     from pptx import Presentation
     from pptx.oxml.ns import qn
-    from lxml import etree
 
     presentation = Presentation()
     master = presentation.slide_masters[0]
@@ -605,9 +627,9 @@ def test_background_is_inherited_from_the_layout_and_the_master():
 def test_a_theme_coloured_background_resolves_through_the_scheme():
     """``schemeClr`` names a colour the theme holds; the name is not a colour."""
     pytest.importorskip("pptx")
+    from lxml import etree
     from pptx import Presentation
     from pptx.oxml.ns import qn
-    from lxml import etree
 
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
