@@ -19,7 +19,7 @@
 
 import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
 import { resolveElements } from "../client/slideElements";
-import { deckPage } from "../client/slidePage";
+import { deckPage, PAGE_DPI } from "../client/slidePage";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -120,15 +120,18 @@ async function documentToDocx(data: DocumentData): Promise<BlobPart> {
  * A print-ready HTML document with one landscape page per slide — fed to the
  * browser's print pipeline to produce a multi-page PDF. Elements keep their
  * percentage geometry, so pages match the on-canvas layout exactly.
+ *
+ * The page is the deck's own page at `PAGE_DPI`, which is the density
+ * `fontSize` is stored at — so stored px are CSS px here and text needs no
+ * scaling at all. Viewport units would resolve against whatever box the
+ * printing frame happens to have, which is how the same document came out
+ * one size in the print preview and another in the saved file.
  */
 export function slidesToPrintHtml(data: SlidesData, title: string): string {
   const slides = data.slides.length ? data.slides : [{ title: "Empty deck" }];
-  // Print pages follow the deck page at 128px/in — the classic canvas keeps
-  // its long-standing 1280x720; a 4:3 deck prints 1280x960. Font sizes are
-  // vw-based below, so they scale with the page width on their own.
   const page = deckPage(data);
-  const pw = Math.round(page.widthIn * 128);
-  const ph = Math.round(page.heightIn * 128);
+  const pw = Math.round(page.widthIn * PAGE_DPI);
+  const ph = Math.round(page.heightIn * PAGE_DPI);
   const pages = slides
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
@@ -137,15 +140,41 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
         .map((el) => {
           const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
           if (el.type === "text") {
-            // box is numeric; color/align are escaped individually — the composed
-            // style string is then safe to place in the attribute as-is.
-            const style = `${box};font-size:${(el.fontSize ?? 24) / 7.2}vw;font-weight:${el.bold ? 700 : 400};color:${escapeAttr(el.color ?? fg)};text-align:${escapeAttr(el.align ?? "left")};white-space:pre-wrap`;
+            // box is numeric; colours and the face are escaped individually — the
+            // composed style string is then safe to place in the attribute as-is.
+            const style = [
+              box,
+              `font-size:${el.fontSize ?? 24}px`,
+              `font-weight:${el.bold ? 700 : 400}`,
+              `color:${escapeAttr(el.color ?? fg)}`,
+              `text-align:${escapeAttr(el.align ?? "left")}`,
+              "white-space:pre-wrap",
+              el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
+              el.lineHeight ? `line-height:${el.lineHeight}` : "",
+              el.highlight ? `background:${escapeAttr(el.highlight)}` : "",
+              el.spaceBefore ? `padding-top:${el.spaceBefore}px` : "",
+              el.spaceAfter ? `padding-bottom:${el.spaceAfter}px` : "",
+              // The box is the text's frame, so sitting text in the middle or at
+              // the foot of it is a column laid out along the box height.
+              el.verticalAlign
+                ? `display:flex;flex-direction:column;justify-content:${
+                    el.verticalAlign === "middle" ? "center" : el.verticalAlign === "bottom" ? "flex-end" : "flex-start"
+                  }`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(";");
             return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
           }
           if (el.type === "shape") {
-            const fill = escapeAttr(el.fill ?? fg);
+            // A box drawn by its outline alone carries no fill — painting one
+            // would hide whatever the border is meant to frame.
+            const fill = escapeAttr(el.fill ?? (el.stroke ? "transparent" : fg));
             const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
-            return `<div class="el" style="${box};background:${fill};border-radius:${radius}"></div>`;
+            const outline = el.stroke
+              ? `;border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}`
+              : "";
+            return `<div class="el" style="${box};background:${fill};border-radius:${radius}${outline}"></div>`;
           }
           const src = safeSrc(el.src);
           return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
