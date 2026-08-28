@@ -65,6 +65,21 @@ _ENVELOPE_SUFFIX_FOR: dict[str, str] = {
     "slides": SLIDES_SUFFIX,
 }
 
+def display_title(path: str) -> str:
+    """What a person should read on the tab for a canvas file at ``path``.
+
+    ``.slides.json`` says "this is a deck the canvas owns" to the store and
+    the exporters; to the person looking at their presentation it says they
+    are editing a JSON file. The machine keeps the path; the tab gets the
+    name the file was given.
+    """
+    name = path.rsplit("/", 1)[-1]
+    for suffix in ARTIFACT_SUFFIXES:
+        if name.lower().endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 SOURCES_PREFIX = "sources/"
 """Store prefix for uploaded source files (the user's original material)."""
 
@@ -246,7 +261,7 @@ def events_for_commit(
                 artifact=Artifact(
                     id=path,
                     type=artifact_type,
-                    title=title or path,
+                    title=title or display_title(path),
                     data=artifact_data,
                     meta=meta,
                 )

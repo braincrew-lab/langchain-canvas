@@ -14,11 +14,52 @@ import { useAssetUrl } from "../../hooks/useAssetUrl";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
-export function shapeStyle(el: SlideElement): CSSProperties {
-  const fill = el.fill ?? "currentColor";
-  if (el.shape === "ellipse") return { width: "100%", height: "100%", background: fill, borderRadius: "50%" };
+export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
+  // A box drawn by its outline alone carries no fill: painting `currentColor`
+  // in that case would hide what the border is meant to frame.
+  const fill = el.fill ?? (el.stroke ? "transparent" : "currentColor");
+  const border = el.stroke
+    ? { border: `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px solid ${el.stroke}`, boxSizing: "border-box" as const }
+    : {};
+  if (el.shape === "ellipse")
+    return { width: "100%", height: "100%", background: fill, borderRadius: "50%", ...border };
   if (el.shape === "line") return { width: "100%", height: "100%", background: fill, borderRadius: 2 };
-  return { width: "100%", height: "100%", background: fill, borderRadius: 8 };
+  return { width: "100%", height: "100%", background: fill, borderRadius: 8, ...border };
+}
+
+/** CSS for a text element's body — shared by the editor, thumbnails and the
+ *  present view. Every length the model stores in px (the font, the space
+ *  above and below) is drawn at the same `scale` as the box it sits in, so a
+ *  thumbnail is the slide made smaller rather than the slide with its
+ *  paragraph spacing left at full size. */
+export function textStyle(el: SlideElement, scale = 1): CSSProperties {
+  return {
+    fontSize: (el.fontSize ?? 24) * scale,
+    fontWeight: el.bold ? 700 : 400,
+    color: el.color,
+    textAlign: el.align ?? "left",
+    whiteSpace: "pre-wrap",
+    ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
+    ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
+    ...(el.highlight
+      ? {
+          background: el.highlight,
+          boxDecorationBreak: "clone" as const,
+          WebkitBoxDecorationBreak: "clone" as const,
+        }
+      : {}),
+    ...(el.spaceBefore ? { paddingTop: el.spaceBefore * scale } : {}),
+    ...(el.spaceAfter ? { paddingBottom: el.spaceAfter * scale } : {}),
+    ...(el.verticalAlign
+      ? {
+          display: "flex",
+          flexDirection: "column" as const,
+          justifyContent:
+            el.verticalAlign === "middle" ? "center" : el.verticalAlign === "bottom" ? "flex-end" : "flex-start",
+          height: "100%",
+        }
+      : {}),
+  };
 }
 
 interface FreeSlideProps {
@@ -221,12 +262,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               className="cv-free__text"
               contentEditable={editingId === el.id}
               suppressContentEditableWarning
-              style={{
-                fontSize: (el.fontSize ?? 24) * fontScale,
-                fontWeight: el.bold ? 700 : 400,
-                color: el.color,
-                textAlign: el.align ?? "left",
-              }}
+              style={textStyle(el, fontScale)}
               onBlur={(e) => {
                 setEditingId(null);
                 updateEl(el.id, { text: e.currentTarget.textContent ?? "" });
@@ -235,7 +271,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               {el.text}
             </div>
           ) : el.type === "shape" ? (
-            <div style={shapeStyle(el)} />
+            <div style={shapeStyle(el, fontScale)} />
           ) : (
             <img className="cv-free__img" src={assetUrl(el.src)} alt="" draggable={false} />
           )}

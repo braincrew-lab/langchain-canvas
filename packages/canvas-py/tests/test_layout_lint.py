@@ -151,11 +151,11 @@ def test_the_same_mistake_across_many_elements_is_summarized() -> None:
 
 
 def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
-    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", stroke="#333"))
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", rotation=45))
     warnings = lint_slides_data(deck)
     assert len(warnings) == 1
     assert "the canvas and the export both ignore them" in warnings[0]
-    assert 'slide 1, element "box": "stroke"' in warnings[0]
+    assert 'slide 1, element "box": "rotation"' in warnings[0]
 
 
 def test_unknown_fields_are_caught_at_every_level() -> None:
@@ -403,7 +403,7 @@ def test_write_canvas_carries_the_schema_and_shadow_findings() -> None:
         "bullets": ["매출 128억", "신규 고객 24곳"],
         "elements": [
             {"type": "text", "x": 60, "y": 20, "w": 35, "h": 12,
-             "text": "128억", "fontSize": 40, "stroke": "#333"}
+             "text": "128억", "fontSize": 40, "rotation": 45}
         ],
     }]})
     assert result.startswith("Wrote deck.slides.json")  # the save still lands
@@ -411,7 +411,7 @@ def test_write_canvas_carries_the_schema_and_shadow_findings() -> None:
     assert "exporting it fails" in result
     assert '"id" is required' in result
     assert "'title', 'content', 'section'" in result
-    assert '"stroke"' in result
+    assert '"rotation"' in result
     assert '"title", "bullets" are set next to "elements"' in result
 
 

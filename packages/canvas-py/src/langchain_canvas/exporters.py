@@ -631,7 +631,11 @@ class SlidesPptxExporter:
                 MSO_CONNECTOR,
                 MSO_SHAPE,
             )
-            from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN  # type: ignore[import-untyped]
+            from pptx.enum.text import (  # type: ignore[import-untyped]
+                MSO_ANCHOR,
+                MSO_AUTO_SIZE,
+                PP_ALIGN,
+            )
             from pptx.oxml.ns import qn  # type: ignore[import-untyped]
             from pptx.util import Emu, Inches, Pt  # type: ignore[import-untyped]
         except ImportError as exc:
@@ -667,6 +671,12 @@ class SlidesPptxExporter:
             "left": PP_ALIGN.LEFT,
             "center": PP_ALIGN.CENTER,
             "right": PP_ALIGN.RIGHT,
+        }
+
+        anchors = {
+            "top": MSO_ANCHOR.TOP,
+            "middle": MSO_ANCHOR.MIDDLE,
+            "bottom": MSO_ANCHOR.BOTTOM,
         }
         # The deck's own page is the coordinate space its percent geometry
         # refers to; absent means the classic 16:9 canvas.
@@ -725,6 +735,10 @@ class SlidesPptxExporter:
                     frame.auto_size = MSO_AUTO_SIZE.NONE
                     frame.margin_left = frame.margin_right = Emu(0)
                     frame.margin_top = frame.margin_bottom = Emu(0)
+                    # Where the text sits inside its box. Left unset, a box
+                    # measured for centred text draws it against the top edge.
+                    if element.vertical_align:
+                        frame.vertical_anchor = anchors[element.vertical_align]
                     color = _hex_rgb(element.color) or _hex_rgb(slide_model.text_color)
                     alignment = alignments.get(element.align or "left")
                     # Text rides the same scale as the geometry, so type and
@@ -733,6 +747,12 @@ class SlidesPptxExporter:
                     for index, line in enumerate((element.text or "").split("\n")):
                         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
                         paragraph.alignment = alignment
+                        if element.line_height:
+                            paragraph.line_spacing = element.line_height
+                        if element.space_before is not None:
+                            paragraph.space_before = Pt(element.space_before * _PX_TO_PT)
+                        if element.space_after is not None:
+                            paragraph.space_after = Pt(element.space_after * _PX_TO_PT)
                         if line.startswith(BULLET_PREFIX):
                             line = line[len(BULLET_PREFIX):]
                             # A literal bullet inside the run is drawn by
@@ -755,9 +775,19 @@ class SlidesPptxExporter:
                         run.text = line
                         run.font.size = Pt(size_pt)
                         run.font.bold = bool(element.bold)
+                        band = _hex_rgb(element.highlight)
+                        if band:
+                            # python-pptx exposes no highlight accessor; the
+                            # element goes straight into the run properties.
+                            properties = run.font._rPr
+                            mark = properties.makeelement(qn("a:highlight"), {})
+                            colour = mark.makeelement(qn("a:srgbClr"), {"val": band})
+                            mark.append(colour)
+                            properties.append(mark)
                         if color is not None:
                             run.font.color.rgb = RGBColor.from_string(color)
-                        if skin_face:
+                        face = element.font_family or skin_face
+                        if face:
                             # `a:latin` covers Latin script only — Korean and
                             # the rest of CJK read `a:ea`, and complex scripts
                             # read `a:cs`. A theme's east-asian entry is often
@@ -765,23 +795,37 @@ class SlidesPptxExporter:
                             # Hangul with nowhere to go. python-pptx stops at
                             # `a:latin`; the schema fixes the sibling order.
                             latin = run.font._rPr.get_or_add_latin()
-                            latin.set("typeface", skin_face)
-                            latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": skin_face}))
-                            latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": skin_face}))
+                            latin.set("typeface", face)
+                            latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": face}))
+                            latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": face}))
                 elif element.type == "shape":
-                    fill_color = _hex_rgb(element.fill) or _DEFAULT_SHAPE_FILL
+                    outline = _hex_rgb(element.stroke)
+                    # A shape may be drawn by its outline alone. Defaulting the
+                    # fill in that case would paint over what the border frames.
+                    fill_color = _hex_rgb(element.fill) or (
+                        None if outline else _DEFAULT_SHAPE_FILL
+                    )
                     if element.shape == "line":
                         connector = slide.shapes.add_connector(
                             MSO_CONNECTOR.STRAIGHT, left, top, Emu(int(left) + int(width)), Emu(int(top) + int(height))
                         )
-                        connector.line.color.rgb = RGBColor.from_string(fill_color)
-                        connector.line.width = Pt(2)
+                        connector.line.color.rgb = RGBColor.from_string(
+                            outline or fill_color or _DEFAULT_SHAPE_FILL
+                        )
+                        connector.line.width = Pt((element.stroke_width or 2) * _PX_TO_PT)
                     else:
                         shape_type = MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
                         shape = slide.shapes.add_shape(shape_type, left, top, width, height)
-                        shape.fill.solid()
-                        shape.fill.fore_color.rgb = RGBColor.from_string(fill_color)
-                        shape.line.fill.background()
+                        if fill_color:
+                            shape.fill.solid()
+                            shape.fill.fore_color.rgb = RGBColor.from_string(fill_color)
+                        else:
+                            shape.fill.background()
+                        if outline:
+                            shape.line.color.rgb = RGBColor.from_string(outline)
+                            shape.line.width = Pt((element.stroke_width or 1) * _PX_TO_PT)
+                        else:
+                            shape.line.fill.background()
                 elif element.src:
                     data = _data_uri_bytes(element.src)
                     if data is None:

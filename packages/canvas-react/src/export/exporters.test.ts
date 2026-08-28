@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SlidesData, TableData } from "../protocol/artifacts";
 import { dataExporters, slidesToPrintHtml, toStandaloneHtml } from "./exporters";
+import { DEFAULT_SLIDE_PAGE_IN, PAGE_DPI } from "../client/slidePage";
 
 describe("slidesToPrintHtml (safe export)", () => {
   it("renders one page per slide", () => {
@@ -10,16 +11,57 @@ describe("slidesToPrintHtml (safe export)", () => {
     expect(html.match(/class="slide"/g)).toHaveLength(3);
   });
 
-  it("keeps the classic 1280x720 page when the deck has no page", () => {
-    const html = slidesToPrintHtml({ slides: [{ title: "A" }] }, "Deck");
-    expect(html).toContain("@page { size: 1280px 720px; margin: 0; }");
+  // The page is the deck's own page at the density fontSize is stored at, so a
+  // stored px is a CSS px on the printed page and text needs no scaling.
+  it.each([
+    ["the classic page when the deck has no page", undefined, DEFAULT_SLIDE_PAGE_IN],
+    ["the deck page when one is set (4:3 skin)", { widthIn: 10, heightIn: 7.5 }, { widthIn: 10, heightIn: 7.5 }],
+    ["a wide 16:9 deck page", { widthIn: 13.333, heightIn: 7.5 }, { widthIn: 13.333, heightIn: 7.5 }],
+  ])("prints on %s", (_label, page, expected) => {
+    const html = slidesToPrintHtml({ slides: [{ title: "A" }], ...(page ? { page } : {}) }, "Deck");
+    const w = Math.round(expected.widthIn * PAGE_DPI);
+    const h = Math.round(expected.heightIn * PAGE_DPI);
+    expect(html).toContain(`@page { size: ${w}px ${h}px; margin: 0; }`);
+    expect(html).toContain(`width: ${w}px; height: ${h}px;`);
   });
 
-  it("prints on the deck page when one is set (4:3 skin)", () => {
-    const deck: SlidesData = { slides: [{ title: "A" }], page: { widthIn: 10, heightIn: 7.5 } };
+  it("prints stored font px unscaled — no viewport units, which resolve against the printing frame", () => {
+    const deck: SlidesData = {
+      slides: [{ elements: [{ id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "A", fontSize: 18.7 }] }],
+    };
     const html = slidesToPrintHtml(deck, "Deck");
-    expect(html).toContain("@page { size: 1280px 960px; margin: 0; }");
-    expect(html).toContain("width: 1280px; height: 960px;");
+    expect(html).toContain("font-size:18.7px");
+    expect(html).not.toMatch(/font-size:[^;"]*vw/);
+  });
+
+  it("writes the text metrics the model carries", () => {
+    const deck: SlidesData = {
+      slides: [{
+        elements: [{
+          id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "A",
+          fontFamily: "Pretendard", lineHeight: 1.4, highlight: "#ff0000",
+          spaceBefore: 6, spaceAfter: 4, verticalAlign: "middle",
+        }],
+      }],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toContain("font-family:Pretendard");
+    expect(html).toContain("line-height:1.4");
+    expect(html).toContain("background:#ff0000");
+    expect(html).toContain("padding-top:6px");
+    expect(html).toContain("padding-bottom:4px");
+    expect(html).toContain("justify-content:center");
+  });
+
+  it("draws a shape that has only an outline as an outline, with no fill", () => {
+    const deck: SlidesData = {
+      slides: [{
+        elements: [{ id: "s", type: "shape", shape: "rect", x: 0, y: 0, w: 50, h: 10, stroke: "#c00000", strokeWidth: 3 }],
+      }],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toContain("border:3px solid #c00000");
+    expect(html).toContain("background:transparent");
   });
 
   it("escapes text so an artifact can't inject markup", () => {

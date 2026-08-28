@@ -108,6 +108,22 @@ export interface SlideElement {
   shape?: "rect" | "ellipse" | "line";
   /** Fill (rect/ellipse) or stroke (line) color for a shape. */
   fill?: string;
+  /** Outline color, independent of fill — a box drawn by its border alone. */
+  stroke?: string;
+  /** Outline weight in px, like `fontSize`. */
+  strokeWidth?: number;
+  /** Type face; without it line breaks land elsewhere than in the source file. */
+  fontFamily?: string;
+  /** Line box as a multiple of the font size. */
+  lineHeight?: number;
+  /** Where text sits in its box. */
+  verticalAlign?: "top" | "middle" | "bottom";
+  /** Colour band behind the words, the way a highlighter marks a heading. */
+  highlight?: string;
+  /** Space above the text, in px. */
+  spaceBefore?: number;
+  /** Space below the text, in px. */
+  spaceAfter?: number;
 }
 
 export interface Slide {

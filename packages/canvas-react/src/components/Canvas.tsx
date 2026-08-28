@@ -11,6 +11,7 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Artifact } from "../protocol/artifacts";
+import { versionRail } from "../client/reconcile";
 import { CanvasRegistryProvider, useRenderer, type ArtifactRegistry } from "../registry/registry";
 import { IMPORTABLE_EXTENSIONS } from "../io/importers";
 import { builtinRenderers } from "./renderers";
@@ -190,7 +191,7 @@ function CanvasPanel({
     );
   }
 
-  const versions = history[active.id] ?? [active];
+  const versions = versionRail(history[active.id] ?? [active]);
   const showSelection = Boolean(onEditElement) && selections.length > 0 && selections[0].artifactId === active.id;
 
   return (
