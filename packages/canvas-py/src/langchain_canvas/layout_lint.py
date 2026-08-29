@@ -49,6 +49,7 @@ there means the layout is wrong, not the deck.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -61,8 +62,10 @@ from langchain_canvas.protocol.artifacts import (
     SlideElement,
     SlidePage,
     SlidesData,
+    SlideTableCell,
 )
 from langchain_canvas.slide_layout import BULLET_PREFIX, DerivedLayout, derive_layout
+from langchain_canvas.slide_table import table_grid
 
 # Percent-point slack so the 4-decimal rounding the re-fit writes can never
 # trip the boundary checks.
@@ -118,14 +121,22 @@ def lint_slides_data(
     data: dict[str, Any],
     *,
     ref_exists: Callable[[str], bool] | None = None,
+    min_text_px: float | None = None,
+    max_overhang: float = 0.0,
 ) -> list[str]:
     """Certain-only warnings for one deck's ``data`` dict, or ``[]``.
 
     ``ref_exists`` answers whether a canvas-root-relative reference (from
     ``normalize_asset_reference``) is present on the canvas; omit it to
     skip the broken-reference check (for callers without store access).
+    ``min_text_px`` replaces the default readability floor — a deck copied
+    from an upload is judged by the sizes its author actually used, so the
+    original's footnotes pass and only text set smaller than anything in it
+    is called out.
     """
     warnings: list[str] = []
+    floor = MIN_TEXT_PX if min_text_px is None else min_text_px
+    edge = _EDGE_TOLERANCE + max(0.0, max_overhang)
     _check_schema(data, warnings)
     _check_unknown_fields(data, warnings)
     slides = data.get("slides")
@@ -141,7 +152,7 @@ def lint_slides_data(
         own = own if isinstance(own, list) and own else None
         if own is not None:
             elements = [element for element in own if isinstance(element, dict)]
-            _check_small_text(elements, number, warnings)
+            _check_small_text(elements, number, warnings, floor)
         else:
             # A structured slide is drawn from boxes the layout derives, so
             # that is what the coordinate checks have to look at. Skipping
@@ -168,11 +179,54 @@ def lint_slides_data(
                     " (zero or negative size renders nothing)"
                 )
                 continue
-            _check_off_page(number, label, x, y, w, h, warnings)
+            _check_off_page(number, label, x, y, w, h, warnings, edge)
             _check_empty_text(element, number, label, warnings)
+            _check_text_fit(element, number, label, w, h, warnings)
             _check_broken_reference(element, number, label, ref_exists, warnings)
             _check_full_cover(number, index, label, box, boxed, warnings)
     return _capped(warnings)
+
+
+# The keys a stored ``.slides.json`` envelope carries. The deck itself —
+# ``slides``, ``page``, ``template`` — lives one level down, under ``data``.
+_ENVELOPE_SHAPE = '{"type": "slides", "title": "...", "data": {"slides": [...]}}'
+
+
+def blocking_deck_findings(envelope: Any, path: str = "the deck") -> list[str]:
+    """Findings that stop a save, or ``[]`` when the deck may land.
+
+    The layout warnings are advice: a footnote at 9pt or a box near the edge
+    is the author's call, so they follow a save. These are not calls. A deck
+    key written outside ``data`` (the export silently loses the template and
+    the canvas ignores the rest), a deck that does not parse as ``SlidesData``
+    (no exporter can run it), and structured text beside ``elements`` (stored
+    and never drawn) each put a broken file in front of the person while the
+    tool reports success. So the save is refused with the fix named, and
+    nothing lands.
+    """
+    if not isinstance(envelope, dict):
+        return [f"{path} is not a JSON object of the form {_ENVELOPE_SHAPE}"]
+    findings: list[str] = []
+    misplaced = [key for key in envelope if isinstance(key, str) and key in _DECK_KEYS]
+    if misplaced:
+        named = ", ".join(f'"{key}"' for key in misplaced)
+        verb = "is" if len(misplaced) == 1 else "are"
+        findings.append(
+            f"{named} {verb} written at the top level, where the canvas ignores it; "
+            'deck keys go inside "data" — {"type": "slides", "title": "...", '
+            '"data": {"template": "sources/brand.pptx", "slides": [...]}}'
+        )
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        findings.append(f'"data" is missing or not an object; a deck is {_ENVELOPE_SHAPE}')
+        return findings
+    _check_schema(data, findings)
+    slides = data.get("slides")
+    if isinstance(slides, list):
+        for number, slide in enumerate(slides, start=1):
+            if isinstance(slide, dict):
+                _check_shadowed_content(slide, number, findings)
+    return findings
 
 
 def _derived(slide: dict[str, Any], page: dict[str, Any] | None) -> DerivedLayout | None:
@@ -221,7 +275,10 @@ def _report_overfull(slide: dict[str, Any], number: int, warnings: list[str]) ->
 
 
 def _check_small_text(
-    elements: list[dict[str, Any]], number: int, warnings: list[str]
+    elements: list[dict[str, Any]],
+    number: int,
+    warnings: list[str],
+    floor: float = MIN_TEXT_PX,
 ) -> None:
     """Text an author sized smaller than the slide can show.
 
@@ -231,18 +288,22 @@ def _check_small_text(
     sizes = sorted(
         float(size)
         for element in elements
-        if element.get("type") == "text"
+        if element.get("type") in ("text", "table")
         and isinstance(size := element.get("fontSize"), (int, float))
         and not isinstance(size, bool)
-        and 0 < float(size) < MIN_TEXT_PX
+        and 0 < float(size) < floor
     )
     if not sizes:
         return
     listed = ", ".join(f"{_fmt(size)}px" for size in sizes)
+    basis = (
+        "too small to read on the canvas or a projector. The layout's own sizes "
+        "are 48 / 38 / 30 / 24 / 19."
+        if floor == MIN_TEXT_PX
+        else f"smaller than anything the original deck uses ({_fmt(floor)}px is its smallest)."
+    )
     warnings.append(
-        f"slide {number}: {len(sizes)} text element(s) below {_fmt(MIN_TEXT_PX)}px "
-        f"({listed}) — too small to read on the canvas or a projector. The "
-        "layout's own sizes are 48 / 38 / 30 / 24 / 19."
+        f"slide {number}: {len(sizes)} text element(s) below {_fmt(floor)}px ({listed}) — {basis}"
     )
 
 
@@ -380,12 +441,11 @@ def _check_unknown_fields(data: dict[str, Any], warnings: list[str]) -> None:
                 continue
             for index, element in enumerate(elements):
                 if isinstance(element, dict):
-                    _collect_unknown(
-                        element,
-                        _ELEMENT_KEYS,
-                        f"slide {number}, element {_label(element, index)}",
-                        found,
-                    )
+                    where = f"slide {number}, element {_label(element, index)}"
+                    _collect_unknown(element, _ELEMENT_KEYS, where, found)
+                    for cell in element.get("cells") or []:
+                        if isinstance(cell, dict):
+                            _collect_unknown(cell, _CELL_KEYS, f"{where}, cell", found)
     page = data.get("page")
     if isinstance(page, dict):
         _collect_unknown(page, _PAGE_KEYS, "the deck page", found)
@@ -423,6 +483,7 @@ def _allowed_keys(model: type[Any]) -> frozenset[str]:
 _DECK_KEYS = _allowed_keys(SlidesData)
 _SLIDE_KEYS = _allowed_keys(Slide)
 _ELEMENT_KEYS = _allowed_keys(SlideElement)
+_CELL_KEYS = _allowed_keys(SlideTableCell)
 _PAGE_KEYS = _allowed_keys(SlidePage)
 
 
@@ -470,20 +531,159 @@ def _check_off_page(
     w: float,
     h: float,
     warnings: list[str],
+    edge: float = _EDGE_TOLERANCE,
 ) -> None:
+    """``edge`` is how far past 0/100 a box may reach before it is a finding —
+    the rounding slack alone, or that plus what the deck's own skin does."""
     findings = []
-    if x < -_EDGE_TOLERANCE:
+    if x < -edge:
         findings.append(f"x = {_fmt(x)}")
-    if y < -_EDGE_TOLERANCE:
+    if y < -edge:
         findings.append(f"y = {_fmt(y)}")
-    if x + w > 100.0 + _EDGE_TOLERANCE:
+    if x + w > 100.0 + edge:
         findings.append(f"x + w = {_fmt(x + w)}")
-    if y + h > 100.0 + _EDGE_TOLERANCE:
+    if y + h > 100.0 + edge:
         findings.append(f"y + h = {_fmt(y + h)}")
     if findings:
         warnings.append(
             f"slide {number}, element {label}: {', '.join(findings)} "
             "(off the page — the page runs 0 to 100)"
+        )
+
+
+# The px canvas the deck model measures type on (see write_canvas): a 1280 x
+# 720 page, so a box of w% x h% is (w * 12.8) by (h * 7.2) px.
+_PAGE_W_PX, _PAGE_H_PX = 1280.0, 720.0
+# Rough glyph widths as a fraction of the font size. Only ever used with a
+# wide margin, so the estimate errs toward silence.
+_WIDE_GLYPH = 1.0  # CJK, full-width
+_NARROW_GLYPH = 0.55  # Latin, digits, punctuation
+_SPACE_GLYPH = 0.3
+_FIT_SLACK = 1.25  # the box may be up to a quarter too small before we say so
+
+
+def _glyph_width(char: str) -> float:
+    if char.isspace():
+        return _SPACE_GLYPH
+    return _WIDE_GLYPH if ord(char) > 0x2E7F else _NARROW_GLYPH
+
+
+def _check_text_fit(
+    element: dict[str, Any],
+    number: int,
+    label: str,
+    w: float,
+    h: float,
+    warnings: list[str],
+) -> None:
+    """Text that needs clearly more height than its box has.
+
+    A title rewritten at the same size as before but twice as long wraps to
+    a second line the box has no room for, and the canvas draws the overflow
+    on top of whatever sits below — or clips it. Neither is visible in the
+    JSON, and neither is caught by the page-edge check. The estimate is
+    coarse (glyph widths by script, no kerning) and runs with a quarter of
+    slack, so a box that is merely snug stays quiet.
+    """
+    if element.get("type") == "table":
+        _check_table_fit(element, number, label, w, h, warnings)
+        return
+    if element.get("type") != "text":
+        return
+    text = element.get("text")
+    size = element.get("fontSize")
+    if not isinstance(text, str) or not text.strip():
+        return
+    if not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
+        return
+    box_w = w / 100.0 * _PAGE_W_PX
+    box_h = h / 100.0 * _PAGE_H_PX
+    if box_w <= 0 or box_h <= 0:
+        return
+    line_height = element.get("lineHeight")
+    leading = (
+        float(line_height)
+        if isinstance(line_height, (int, float)) and line_height > 0
+        else 1.2
+    )
+    lines = _wrapped_lines(text, float(size), box_w)
+    needed = lines * float(size) * leading
+    # One line in a short box is the importer's rounding or PowerPoint's own
+    # autofit, not an overflow the canvas will draw wrong; the finding is for
+    # text that wraps past what the box can show.
+    if lines >= 2 and needed > box_h * _FIT_SLACK:
+        warnings.append(
+            f"slide {number}, element {label}: the text needs about {lines} line(s) "
+            f"(~{_fmt(needed)}px) but the box is {_fmt(box_h)}px tall — it will run "
+            "past the box. Shorten the text, lower fontSize, or make the box taller."
+        )
+
+
+def _wrapped_lines(text: str, size: float, box_w: float) -> int:
+    """How many lines ``text`` takes at ``size`` px in a box ``box_w`` px wide."""
+    lines = 0
+    for paragraph in text.split("\n"):
+        width = sum(_glyph_width(ch) for ch in paragraph) * size
+        lines += max(1, math.ceil(width / box_w)) if paragraph else 1
+    return lines
+
+
+# The cell inset PowerPoint applies (0.1in sides, 0.05in top and bottom at
+# 96dpi); the canvas draws the same, so the rows the check counts are the
+# rows the person sees.
+_CELL_PAD_X, _CELL_PAD_Y = 9.6, 4.8
+_TABLE_FONT_PX = 24.0
+
+
+def _font_px(value: Any, fallback: float) -> float:
+    """A positive font size in px, or ``fallback``."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return fallback
+
+
+def _check_table_fit(
+    element: dict[str, Any],
+    number: int,
+    label: str,
+    w: float,
+    h: float,
+    warnings: list[str],
+) -> None:
+    """A table whose rows need clearly more height than its box has.
+
+    Rows are as tall as their tallest cell's wrapped text; a table given a
+    box for four short rows and written with eight long ones runs past it
+    on the canvas and in the exported file alike. Same estimate and slack
+    as the text check.
+    """
+    grid = table_grid(element)
+    if grid is None:
+        return
+    box_w = w / 100.0 * _PAGE_W_PX
+    box_h = h / 100.0 * _PAGE_H_PX
+    if box_w <= 0 or box_h <= 0:
+        return
+    table_size = _font_px(element.get("fontSize"), _TABLE_FONT_PX)
+    row_needed = [0.0] * grid.n_rows
+    for r, row in enumerate(grid.rows):
+        for c, text in enumerate(row):
+            if (r, c) in grid.covered:
+                continue
+            row_span, col_span = grid.spans.get((r, c), (1, 1))
+            if row_span > 1:
+                continue  # a tall merged cell spreads over rows it does not size
+            own = grid.styles.get((r, c), {})
+            size = _font_px(own.get("fontSize"), table_size)
+            cell_w = sum(grid.col_widths[c : c + col_span]) / 100.0 * box_w - 2 * _CELL_PAD_X
+            lines = _wrapped_lines(text, size, max(cell_w, size)) if text.strip() else 1
+            row_needed[r] = max(row_needed[r], lines * size * 1.2 + 2 * _CELL_PAD_Y)
+    needed = sum(row_needed)
+    if needed > box_h * _FIT_SLACK:
+        warnings.append(
+            f"slide {number}, element {label}: the table's {grid.n_rows} row(s) need about "
+            f"{_fmt(round(needed))}px but the box is {_fmt(box_h)}px tall — it will run past "
+            "the box. Make the box taller, lower fontSize, or shorten the cells."
         )
 
 

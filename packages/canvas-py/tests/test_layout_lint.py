@@ -394,8 +394,10 @@ def test_write_canvas_stays_silent_for_a_clean_deck() -> None:
     assert "Deck check" not in result
 
 
-def test_write_canvas_carries_the_schema_and_shadow_findings() -> None:
-    """What an agent actually wrote in a run, checked at the save that made it."""
+def test_write_canvas_refuses_the_schema_and_shadow_findings() -> None:
+    """What an agent actually wrote in a run. A deck the export cannot run,
+    with text that would never be drawn, does not land — the reply names
+    every fix and the canvas keeps what it had."""
     store = InMemoryCanvasStore()
     result = _write(store, {"slides": [{
         "layout": "title+bullets",
@@ -406,13 +408,102 @@ def test_write_canvas_carries_the_schema_and_shadow_findings() -> None:
              "text": "128억", "fontSize": 40, "rotation": 45}
         ],
     }]})
-    assert result.startswith("Wrote deck.slides.json")  # the save still lands
-    assert "Deck check:" in result
+    assert result.startswith("Error: deck.slides.json was not saved")
     assert "exporting it fails" in result
     assert '"id" is required' in result
     assert "'title', 'content', 'section'" in result
-    assert '"rotation"' in result
     assert '"title", "bullets" are set next to "elements"' in result
+    assert "deck.slides.json" not in {f.path for f in store.list_files("t1")}
+
+
+def test_an_unknown_field_alone_still_lands_with_a_warning() -> None:
+    """A field the schema ignores loses that field, nothing more — advice,
+    not a refusal, the same as before."""
+    store = InMemoryCanvasStore()
+    result = _write(store, {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 10, "y": 10, "w": 50, "h": 10,
+         "text": "Hi", "rotation": 45}
+    ]}]})
+    assert result.startswith("Wrote deck.slides.json")
+    assert '"rotation"' in result
+
+
+def test_a_deck_key_outside_data_is_refused_with_its_place() -> None:
+    """The failure seen in a run: `template` at the top level, saved without
+    complaint, and an export with no skin. The reply now shows the shape."""
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    content = json.dumps({
+        "type": "slides", "title": "Deck", "template": "sources/brand.pptx",
+        "data": {"slides": [{"title": "Hi", "layout": "title"}]},
+    })
+    result = tools["write_canvas"].func(
+        path="deck.slides.json", content=content, description="save", runtime=_runtime()
+    )
+    assert result.startswith("Error: deck.slides.json was not saved")
+    assert '"template" is written at the top level' in result
+    assert '"data": {"template": "sources/brand.pptx", "slides": [...]}' in result
+    assert store.list_files("t1") == []
+
+
+def test_a_deck_that_is_not_json_is_refused() -> None:
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    result = tools["write_canvas"].func(
+        path="deck.slides.json", content="# not a deck", description="save", runtime=_runtime()
+    )
+    assert result.startswith("Error: deck.slides.json was not saved")
+    assert "not valid JSON" in result
+
+
+def _store_with_upload(*names: str) -> InMemoryCanvasStore:
+    store = InMemoryCanvasStore()
+    for name in names:
+        store.write_bytes("t1", f"sources/{name}", b"PK-stub", "Upload", actor="human")
+    return store
+
+
+def test_a_new_deck_takes_the_only_pptx_upload_as_its_template() -> None:
+    """A model composing a deck in an upload's style forgets the pointer more
+    often than it writes it; with one upload there is nothing to choose."""
+    store = _store_with_upload("brand.pptx")
+    result = _write(store, {"slides": [{"title": "Hi", "layout": "title"}]})
+    assert result.startswith("Wrote deck.slides.json")
+    assert "template set to sources/brand.pptx" in result
+    saved = json.loads(store.read("t1", "deck.slides.json").content)
+    assert saved["data"]["template"] == "sources/brand.pptx"
+
+
+def test_two_uploads_leave_the_template_to_the_model() -> None:
+    store = _store_with_upload("a.pptx", "b.pptx")
+    result = _write(store, {"slides": [{"title": "Hi", "layout": "title"}]})
+    assert "template set to" not in result
+    assert "template" not in json.loads(store.read("t1", "deck.slides.json").content)["data"]
+
+
+def test_a_null_template_opts_out_of_the_default() -> None:
+    store = _store_with_upload("brand.pptx")
+    result = _write(store, {"template": None, "slides": [{"title": "Hi", "layout": "title"}]})
+    assert "template set to" not in result
+    assert json.loads(store.read("t1", "deck.slides.json").content)["data"]["template"] is None
+
+
+def test_a_rewrite_never_adds_a_template_behind_the_model() -> None:
+    """The default is for a brand-new deck only; replacing one keeps its choice."""
+    store = InMemoryCanvasStore()
+    _write(store, {"slides": [{"title": "Hi", "layout": "title"}]})
+    store.write_bytes("t1", "sources/brand.pptx", b"PK-stub", "Upload", actor="human")
+    tools = _tools(store)
+    revision = store.read("t1", "deck.slides.json").revision
+    result = tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=encode_slides("Deck", {"slides": [{"title": "Hello", "layout": "title"}]}),
+        description="rewrite",
+        revision=revision,
+        runtime=_runtime(),
+    )
+    assert result.startswith("Wrote deck.slides.json")
+    assert "template" not in json.loads(store.read("t1", "deck.slides.json").content)["data"]
 
 
 def test_edit_canvas_lints_the_edited_deck() -> None:
@@ -578,3 +669,127 @@ def test_the_pitch_this_replaced_would_be_caught_now() -> None:
     ]}]}
     warnings = lint_slides_data(data)
     assert any("off the page" in warning and "108" in warning for warning in warnings)
+
+
+# --- the floor comes from the deck's own skin ----------------------------------------
+
+
+def test_the_floor_can_be_the_decks_own_smallest_size() -> None:
+    """An uploaded deck's 12px footnotes are the author's; only text set
+    smaller than anything in the original is called out."""
+    deck = {"slides": [{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 5, "w": 50, "h": 8,
+         "text": "footnote", "fontSize": 12},
+        {"id": "b", "type": "text", "x": 5, "y": 20, "w": 50, "h": 8,
+         "text": "tiny", "fontSize": 9},
+    ]}]}
+    default = lint_slides_data(deck)
+    assert any("2 text element(s) below 14px" in w for w in default)
+    own = lint_slides_data(deck, min_text_px=12)
+    assert len([w for w in own if "below 12px" in w]) == 1
+    assert "9px" in next(w for w in own if "below 12px" in w)
+    assert "smallest" in next(w for w in own if "below 12px" in w)
+
+
+def test_write_canvas_reads_the_floor_from_the_template_skin() -> None:
+    """The skin's smallest run size is the floor for the copy made from it."""
+    import io as _io
+
+    pptx = pytest.importorskip("pptx")
+    from pptx.util import Inches, Pt
+
+    skin = pptx.Presentation()
+    skin.slide_width, skin.slide_height = Inches(10), Inches(5.625)
+    slide = skin.slides.add_slide(skin.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    box.text_frame.text = "footnote"
+    box.text_frame.paragraphs[0].runs[0].font.size = Pt(9)  # 12px
+    buf = _io.BytesIO()
+    skin.save(buf)
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/brand.pptx", buf.getvalue(), "skin")
+    result = _write(store, {"template": "sources/brand.pptx", "slides": [{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 5, "w": 50, "h": 8,
+         "text": "note", "fontSize": 12},
+    ]}]})
+    assert "below" not in result, result
+    result = _write(store, {"template": "sources/brand.pptx", "slides": [{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 5, "w": 50, "h": 8, "text": "note", "fontSize": 8},
+    ]}]}, path="deck2.slides.json")
+    assert "below 12px" in result and "smallest" in result
+
+
+# --- text that wraps past its box ------------------------------------------------------
+
+
+def test_a_title_that_wraps_past_its_box_is_called_out() -> None:
+    """Seen in a run: a 88px title rewritten twice as long in a box one line
+    tall. The JSON looked fine; the slide showed a cut-off second line."""
+    data = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 12,
+         "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
+    ]}]}
+    found = [w for w in lint_slides_data(data) if "run past the box" in w]
+    assert len(found) == 1 and "line(s)" in found[0] and "86.4px tall" in found[0]
+
+
+def test_one_line_in_a_snug_box_stays_silent() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 5,
+         "text": "Short", "fontSize": 48}
+    ]}]}
+    assert not [w for w in lint_slides_data(data) if "run past" in w]
+
+
+def test_the_skins_own_overhang_is_allowed() -> None:
+    """The original's bleed box at 101 and footer at 105 are the author's."""
+    data = {"slides": [{"elements": [
+        {"id": "a", "type": "shape", "shape": "rect", "x": 0, "y": 0, "w": 101.1, "h": 10},
+        {"id": "b", "type": "text", "x": 0, "y": 95, "w": 50, "h": 10.2,
+         "text": "footer", "fontSize": 20},
+    ]}]}
+    assert len([w for w in lint_slides_data(data) if "off the page" in w]) == 2
+    assert [w for w in lint_slides_data(data, max_overhang=5.2) if "off the page" in w] == []
+    over = {"slides": [{"elements": [
+        {"id": "c", "type": "shape", "shape": "rect", "x": 0, "y": 0, "w": 110, "h": 10},
+    ]}]}
+    assert len([w for w in lint_slides_data(over, max_overhang=5.2) if "off the page" in w]) == 1
+
+
+def test_a_table_whose_rows_outgrow_its_box_is_reported() -> None:
+    from langchain_canvas.layout_lint import lint_slides_data
+
+    rows = [[f"row {i}", "a long cell of text that wraps in a narrow column"] for i in range(8)]
+    tall = {
+        "id": "t", "type": "table", "x": 5, "y": 10, "w": 50, "h": 10, "rows": rows, "fontSize": 18,
+    }
+    (warning,) = [w for w in lint_slides_data({"slides": [{"elements": [tall]}]}) if "table" in w]
+    assert warning.startswith('slide 1, element "t": the table\'s 8 row(s) need about')
+    assert "the box is 72px tall" in warning
+
+    roomy = {**tall, "h": 90}
+    assert [w for w in lint_slides_data({"slides": [{"elements": [roomy]}]}) if "table" in w] == []
+
+
+def test_a_tables_small_font_counts_as_small_text() -> None:
+    from langchain_canvas.layout_lint import lint_slides_data
+
+    tiny = {
+        "id": "t", "type": "table", "x": 5, "y": 10, "w": 50, "h": 50,
+        "rows": [["a"]], "fontSize": 8,
+    }
+    (warning,) = lint_slides_data({"slides": [{"elements": [tiny]}]})
+    assert "below" in warning and "8px" in warning
+
+
+def test_a_table_without_rows_is_refused_and_a_cells_unknown_key_is_named() -> None:
+    from langchain_canvas.layout_lint import blocking_deck_findings, lint_slides_data
+
+    bare = {"id": "t", "type": "table", "x": 5, "y": 10, "w": 50, "h": 50}
+    envelope = {"type": "slides", "data": {"slides": [{"elements": [bare]}]}}
+    (finding,) = blocking_deck_findings(envelope)
+    assert '"rows"' in finding
+
+    odd = {**bare, "rows": [["a"]], "cells": [{"r": 0, "c": 0, "colour": "#fff"}]}
+    warnings = lint_slides_data({"slides": [{"elements": [odd]}]})
+    assert any('cell: "colour"' in w for w in warnings)

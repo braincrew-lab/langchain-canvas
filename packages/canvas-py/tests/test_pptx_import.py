@@ -127,17 +127,14 @@ def test_speaker_notes_survive() -> None:
 # --- what does not, and says so -------------------------------------------------
 
 
-def test_a_table_is_dropped_rather_than_guessed_at() -> None:
-    """There is no table element; inventing text boxes from cells would lie
-    about what the person can edit. The original still holds it."""
-
+def test_a_table_keeps_its_place_among_the_other_shapes() -> None:
     def build(slide: Any) -> None:
         slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
         _textbox(slide, "Kept")
 
     elements = _elements(pptx_to_slides(_deck(build)))
-    assert [e["type"] for e in elements] == ["text"]
-    assert elements[0]["text"].strip() == "Kept"
+    assert [e["type"] for e in elements] == ["table", "text"]
+    assert elements[1]["text"].strip() == "Kept"
 
 
 def test_a_group_is_dropped_rather_than_flattened() -> None:
@@ -648,3 +645,355 @@ def test_a_theme_coloured_background_resolves_through_the_scheme():
     background = pptx_to_slides(buffer.getvalue())["slides"][0]["background"]
     assert background is not None and background.startswith("#")
     assert background.lower() != "#accent1"
+
+
+# --- pictures leave the copy for assets/ ------------------------------------------
+
+
+def _deck_with_pictures(count: int = 2, *, same: bool = False) -> bytes:
+    """A one-slide deck carrying ``count`` pictures (identical when ``same``)."""
+    from PIL import Image
+
+    def build(slide: Any) -> None:
+        for index in range(count):
+            buffer = io.BytesIO()
+            colour = (200, 30, 30) if same else (200, 30 + index * 60, 30)
+            Image.new("RGB", (4, 4), colour).save(buffer, format="PNG")
+            buffer.seek(0)
+            slide.shapes.add_picture(buffer, Inches(1 + index), Inches(1), Inches(1), Inches(1))
+
+    return _deck(build)
+
+
+def test_the_copy_stores_its_pictures_under_assets_and_references_them() -> None:
+    """A deck with photos stored as data URIs is a megabyte of base64 the
+    model reads the first page of and nothing after. The copy has to be the
+    text it is, with the pictures where every canvas file finds them."""
+    import json
+
+    store = _store_with_deck(_deck_with_pictures(2))
+    reply = _run(_copy_tool(store), source="sources/deck.pptx")
+    assert "2 picture(s) under assets/deck/" in reply, reply
+
+    content = store.read("t1", "deck.slides.json").content
+    assert "data:image" not in content
+    sources = [el["src"] for el in _elements(json.loads(content)["data"]) if el["type"] == "image"]
+    assert len(sources) == 2
+    assert all(src.startswith("assets/deck/") and src.endswith(".png") for src in sources)
+    on_canvas = {f.path for f in store.list_files("t1")}
+    assert set(sources) <= on_canvas
+    # The bytes stored are the picture's own bytes, not a re-encoding.
+    from PIL import Image
+
+    stored = store.read_bytes("t1", sources[0]).data
+    assert Image.open(io.BytesIO(stored)).size == (4, 4)
+
+
+def test_a_picture_repeated_across_the_deck_is_stored_once() -> None:
+    """A logo on every slide is one file, referenced from each slide."""
+    import json
+
+    store = _store_with_deck(_deck_with_pictures(3, same=True))
+    reply = _run(_copy_tool(store), source="sources/deck.pptx")
+    assert "1 picture(s)" in reply, reply
+    sources = {
+        el["src"]
+        for el in _elements(json.loads(store.read("t1", "deck.slides.json").content)["data"])
+        if el["type"] == "image"
+    }
+    assert len(sources) == 1
+
+
+def test_the_copy_tells_the_model_to_edit_it_rather_than_start_over() -> None:
+    """The reply is the one place the model learns the way to revise a deck."""
+    store = _store_with_deck()
+    reply = _run(_copy_tool(store), source="sources/deck.pptx")
+    assert "edit_canvas" in reply
+    assert "keeps the look" in reply
+
+
+# --- the third way a file names a colour, and WordArt's size --------------------------
+
+
+def _with_run_xml(deck_bytes: bytes, mutate: Any) -> bytes:
+    """Re-open a deck and let ``mutate(run)`` edit the first run's XML."""
+    from pptx.oxml.ns import qn
+
+    deck = Presentation(io.BytesIO(deck_bytes))
+    run = deck.slides[0].shapes[0].text_frame.paragraphs[0].runs[0]
+    mutate(run, qn)
+    out = io.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def test_a_preset_colour_name_comes_across_as_hex() -> None:
+    """Seen in a run: a 66pt title in prstClr white on a dark slide, read as
+    no colour, drawn dark — the slide looked empty."""
+    from lxml import etree
+
+    def paint_white(run: Any, qn: Any) -> None:
+        rpr = run._r.get_or_add_rPr()
+        fill = etree.SubElement(rpr, qn("a:solidFill"))
+        etree.SubElement(fill, qn("a:prstClr")).set("val", "white")
+
+    data = pptx_to_slides(_with_run_xml(_deck(lambda s: _textbox(s, "Title")), paint_white))
+    assert _elements(data)[0]["color"] == "#FFFFFF"
+
+
+def test_preset_names_use_the_standard_table() -> None:
+    from langchain_canvas.preset_colours import preset_colour
+
+    assert preset_colour("white") == "FFFFFF"
+    assert preset_colour("Black") == "000000"
+    assert preset_colour("dkBlue") == "00008B"
+    assert preset_colour("ltGray") == "D3D3D3"
+    assert preset_colour("notacolour") is None
+
+
+def test_word_art_takes_its_size_from_the_box() -> None:
+    """WordArt warps text to fill its shape; a run with no size is not body
+    text, it is a headline the height of the box."""
+    from lxml import etree
+    from pptx.util import Inches
+
+    def warp(run: Any, qn: Any) -> None:
+        body = run._r.getparent().getparent()  # a:r -> a:p -> p:txBody
+        body_pr = body.find(qn("a:bodyPr"))
+        etree.SubElement(body_pr, qn("a:prstTxWarp")).set("prst", "textArchUp")
+
+    plain = pptx_to_slides(_deck(lambda s: _textbox(s, "BIG", height=Inches(1.5))))
+    assert "fontSize" not in _elements(plain)[0]
+    tall = _deck(lambda s: _textbox(s, "BIG", height=Inches(1.5)))
+    warped = pptx_to_slides(_with_run_xml(tall, warp))
+    assert _elements(warped)[0]["fontSize"] == round(1.5 * 72 * 4 / 3 * 0.8, 1)
+
+
+# --- tables as cell boxes, charts as pictures ---------------------------------------
+
+
+def _deck_with_table() -> bytes:
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        frame = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
+        table = frame.table
+        table.cell(0, 0).merge(table.cell(0, 1))
+        table.cell(0, 0).text = "Header"
+        table.cell(1, 0).text = "a"
+        table.cell(1, 1).text = "b"
+
+    return _deck(build)
+
+
+def test_a_table_arrives_as_one_table_element_on_its_own_grid() -> None:
+    """Dropping a table left a slide saying nothing where the original said
+    the most; sixteen boxes said it but could not be widened by the column.
+    The words go in rows, the grid in colWidths / rowHeights, a merge in cells."""
+    data = pptx_to_slides(_deck_with_table())
+    (table,) = [e for e in _elements(data) if e["type"] == "table"]
+    assert table["id"] == "t0"
+    assert table["rows"] == [["Header", ""], ["a", "b"]]
+    assert table["colWidths"] == [50.0, 50.0] and table["rowHeights"] == [50.0, 50.0]
+    assert table["header"] is True
+    assert table["cells"] == [{"r": 0, "c": 0, "colSpan": 2}]
+    assert abs(table["w"] / table["x"] - 4) < 0.01  # 1in in, 4in wide
+    assert "stroke" not in table  # a built-in style names no line the sheet defines
+    assert SlidesData.model_validate(data)
+
+
+def test_a_chart_leaves_its_box_for_the_tool_and_the_tool_pictures_it() -> None:
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    from langchain_canvas.converters import ConvertedSource
+    from langchain_canvas.store import InMemoryCanvasStore
+    from langchain_canvas.tools import create_deck_tools
+
+    PIL = pytest.importorskip("PIL")
+
+    def build(slide: Any) -> None:
+        chart_data = CategoryChartData()
+        chart_data.categories = ["a", "b"]
+        chart_data.add_series("s", (1, 2))
+        slide.shapes.add_chart(
+            XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(5), Inches(3), chart_data
+        )
+
+    deck = _deck(build)
+    data = pptx_to_slides(deck)
+    assert data["slides"][0]["elements"] == []
+    assert len(data["slides"][0]["charts"]) == 1
+
+    class _Page:
+        suffixes = (".pptx",)
+
+        def convert(self, data: bytes, *, path: str) -> Any:
+            return ConvertedSource(blocks=[{"type": "text", "text": "x"}], metadata={})
+
+        def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> Any:
+            image = PIL.Image.new("RGB", (400, 225), (255, 255, 255))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            block = {
+                "type": "image", "source_type": "base64", "data": encoded, "mime_type": "image/png",
+            }
+            return ConvertedSource(blocks=[block], metadata={})
+
+        def render_grid(self, data: bytes, *, path: str) -> Any:
+            return self.render_pages(data, path=path, pages=[1])
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/deck.pptx", deck, "Upload", actor="human")
+    tool = create_deck_tools(store, converters=[_Page()])[0]
+    reply = _run(tool, source="sources/deck.pptx")
+    assert "1 chart(s) as pictures" in reply, reply
+    import json
+
+    saved = json.loads(store.read("t1", "deck.slides.json").content)
+    elements = saved["data"]["slides"][0]["elements"]
+    assert "charts" not in saved["data"]["slides"][0]
+    assert elements[-1]["type"] == "image"
+    assert elements[-1]["src"].startswith("assets/deck/chart-s1-")
+    assert any(f.path == elements[-1]["src"] for f in store.list_files("t1"))
+
+    plain = InMemoryCanvasStore()
+    plain.write_bytes("t1", "sources/deck.pptx", deck, "Upload", actor="human")
+    reply = _run(create_deck_tools(plain)[0], source="sources/deck.pptx")
+    assert "1 chart(s) dropped" in reply
+
+
+def test_a_slide_carries_the_themes_text_colour_as_its_default() -> None:
+    """Table cells and WordArt with no run colour were drawn in the screen's
+    own theme colour — light grey on a white slide. The file does say what
+    colourless text is: the theme's text slot through the colour map."""
+    data = pptx_to_slides(_deck(lambda s: _textbox(s, "Hi")))
+    slide = data["slides"][0]
+    assert slide["textColor"].startswith("#") and len(slide["textColor"]) == 7
+    assert slide["textColor"].upper() == "#000000"  # python-pptx's default theme: dk1 black
+    assert SlidesData.model_validate(data)
+
+
+# --- the table style sheet, and a text outline ---------------------------------------
+
+
+_STYLE_SHEET = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<a:tblStyleLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    'def="{838324F5-92EC-4F16-B9E8-4A18B4BBC7FD}">'
+    '<a:tblStyle styleId="{838324F5-92EC-4F16-B9E8-4A18B4BBC7FD}" styleName="Table_0">'
+    '<a:wholeTbl><a:tcTxStyle><a:font><a:latin typeface="Arial"/></a:font>'
+    '<a:srgbClr val="000000"/></a:tcTxStyle><a:tcStyle><a:tcBdr><a:insideH>'
+    '<a:ln w="9525"><a:solidFill><a:srgbClr val="9E9E9E"/></a:solidFill></a:ln>'
+    "</a:insideH></a:tcBdr></a:tcStyle></a:wholeTbl></a:tblStyle></a:tblStyleLst>"
+)
+
+
+def _with_style_sheet(deck_bytes: bytes, style_id: str) -> bytes:
+    from pptx.oxml.ns import qn
+
+    deck = Presentation(io.BytesIO(deck_bytes))
+    parts = deck.part.package.iter_parts()
+    part = next(p for p in parts if str(p.partname).endswith("tableStyles.xml"))
+    part._blob = _STYLE_SHEET.encode("utf-8")
+    table = next(s for s in deck.slides[0].shapes if s.has_table).table
+    ref = table._tbl.tblPr.find(qn("a:tableStyleId"))
+    if ref is None:
+        ref = table._tbl.tblPr.makeelement(qn("a:tableStyleId"), {})
+        table._tbl.tblPr.append(ref)
+    ref.text = style_id
+    out = io.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def test_a_table_is_as_big_as_its_grid_not_its_frame() -> None:
+    """PowerPoint draws a table from its columns and rows; the frame around
+    it is advisory, and one file declared a square frame around a wide strip."""
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        frame = slide.shapes.add_table(2, 4, Inches(1), Inches(1), Inches(3), Inches(3))
+        for column in frame.table.columns:
+            column.width = Inches(2)
+        for row in frame.table.rows:
+            row.height = Inches(0.5)
+
+    (table,) = [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "table"]
+    assert abs(table["w"] / table["x"] - 8) < 0.01  # 8in wide, 1in in
+    assert abs(table["h"] / table["y"] - 1) < 0.01  # 1in tall, 1in down
+
+
+def test_a_tables_style_sheet_gives_its_cells_borders_colour_and_face() -> None:
+    """A styled table with no cell borders is not an unbordered table — the
+    borders live in the deck's style sheet when the file carries it."""
+    styled = _with_style_sheet(_deck_with_table(), "{838324F5-92EC-4F16-B9E8-4A18B4BBC7FD}")
+    data = pptx_to_slides(styled)
+    (table,) = [e for e in _elements(data) if e["type"] == "table"]
+    assert table["stroke"] == "#9E9E9E" and table["strokeWidth"] == 1.0
+    assert table["color"] == "#000000" and table["fontFamily"] == "Arial"
+
+
+def test_a_style_the_sheet_does_not_define_leaves_the_table_bare() -> None:
+    unknown = _with_style_sheet(_deck_with_table(), "{00000000-0000-0000-0000-000000000000}")
+    (table,) = [e for e in _elements(pptx_to_slides(unknown)) if e["type"] == "table"]
+    assert "stroke" not in table and "color" not in table
+
+
+def test_what_one_cell_does_differently_is_its_own() -> None:
+    """A header fill and a bold total are the cells' — the rest of the table
+    stays a grid of plain strings."""
+    from pptx.dml.color import RGBColor
+    from pptx.util import Inches, Pt
+
+    def build(slide: Any) -> None:
+        frame = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
+        table = frame.table
+        for r in range(2):
+            for c in range(2):
+                cell = table.cell(r, c)
+                cell.text = f"{r}{c}"
+                run = cell.text_frame.paragraphs[0].runs[0]
+                run.font.size = Pt(12)
+                run.font.color.rgb = RGBColor(0x11, 0x22, 0x33)
+        table.cell(0, 0).fill.solid()
+        table.cell(0, 0).fill.fore_color.rgb = RGBColor(0xDD, 0xEE, 0xFF)
+        table.cell(1, 1).text_frame.paragraphs[0].runs[0].font.bold = True
+
+    (table,) = [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "table"]
+    assert table["fontSize"] == 16.0 and table["color"] == "#112233"
+    assert "fill" not in table and "bold" not in table
+    assert table["cells"] == [
+        {"r": 0, "c": 0, "fill": "#DDEEFF"},
+        {"r": 1, "c": 1, "bold": True},
+    ]
+
+
+def test_a_text_outline_comes_across_as_stroke_and_goes_back_out() -> None:
+    """WordArt: a light fill drawn legible by a dark outline. Only the fill
+    came across and the word faded into the page."""
+    from lxml import etree
+
+    from langchain_canvas.exporters import SlidesPptxExporter
+    from langchain_canvas.replay import encode_slides
+
+    def outline(run: Any, qn: Any) -> None:
+        rpr = run._r.get_or_add_rPr()
+        line = etree.SubElement(rpr, qn("a:ln"))
+        line.set("w", "19050")
+        fill = etree.SubElement(line, qn("a:solidFill"))
+        etree.SubElement(fill, qn("a:srgbClr")).set("val", "595959")
+        rpr.insert(0, line)
+
+    data = pptx_to_slides(_with_run_xml(_deck(lambda s: _textbox(s, "BIG")), outline))
+    element = _elements(data)[0]
+    assert element["stroke"] == "#595959" and element["strokeWidth"] == 2.0
+
+    exported = SlidesPptxExporter().export(encode_slides("D", data), path="d.slides.json")
+    back = Presentation(io.BytesIO(exported.data))
+    box = next(s for s in back.slides[0].shapes if s.has_text_frame)
+    run = box.text_frame.paragraphs[0].runs[0]
+    line = run.font._rPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}ln")
+    assert line is not None and line.get("w") == "19050"

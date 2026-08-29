@@ -32,10 +32,13 @@ export type CanvasSaveHandler = (payload: CanvasSavePayload) => void | Promise<v
 
 const DEFAULT_DEBOUNCE_MS = 800;
 
+/** The per-edit callback, with `flush` to hand every pending save through now. */
+export type CanvasSaver = ((artifact: Artifact) => void) & { flush: () => Promise<void> };
+
 export function useCanvasSave(
   onSave: CanvasSaveHandler | undefined,
   debounceMs = DEFAULT_DEBOUNCE_MS,
-): ((artifact: Artifact) => void) | null {
+): CanvasSaver | null {
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const latest = useRef<Map<string, Artifact>>(new Map());
   const handler = useRef(onSave);
@@ -49,23 +52,32 @@ export function useCanvasSave(
 
   return useMemo(() => {
     if (!enabled) return null;
-    return (artifact: Artifact) => {
+    const fire = (id: string): Promise<void> | undefined => {
+      timers.current.delete(id);
+      const current = latest.current.get(id);
+      if (!current || !handler.current) return undefined;
+      latest.current.delete(id);
+      return Promise.resolve(
+        handler.current({
+          artifactId: current.id,
+          artifact: current,
+          baseRevision: typeof current.meta?.revision === "string" ? current.meta.revision : null,
+        }),
+      );
+    };
+    const save = (artifact: Artifact) => {
       latest.current.set(artifact.id, artifact);
       const existing = timers.current.get(artifact.id);
       if (existing) clearTimeout(existing);
-      timers.current.set(
-        artifact.id,
-        setTimeout(() => {
-          timers.current.delete(artifact.id);
-          const current = latest.current.get(artifact.id);
-          if (!current || !handler.current) return;
-          void handler.current({
-            artifactId: current.id,
-            artifact: current,
-            baseRevision: typeof current.meta?.revision === "string" ? current.meta.revision : null,
-          });
-        }, debounceMs),
-      );
+      timers.current.set(artifact.id, setTimeout(() => void fire(artifact.id), debounceMs));
     };
+    // Everything still waiting goes now — before a message starts a run
+    // that may write the same files, and before a version is named.
+    const flush = async () => {
+      const pending = Array.from(timers.current.keys());
+      pending.forEach((id) => clearTimeout(timers.current.get(id)));
+      await Promise.all(pending.map((id) => fire(id) ?? Promise.resolve()));
+    };
+    return Object.assign(save, { flush });
   }, [enabled, debounceMs]);
 }

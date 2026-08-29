@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 ArtifactStatus = Literal["streaming", "complete", "error"]
@@ -99,9 +99,28 @@ class TableData(_CamelModel):
     sheet: list[dict[str, object]] | None = None
 
 
+class SlideTableCell(_CamelModel):
+    """One table cell's own look, where it differs from the table's.
+
+    The cell's text lives in the table element's ``rows``; this carries only
+    what that cell does differently — a header fill, a bold total, a span —
+    so a table of forty plain cells stays forty strings.
+    """
+
+    r: int = Field(ge=0)
+    c: int = Field(ge=0)
+    fill: str | None = None
+    color: str | None = None
+    bold: bool | None = None
+    align: Literal["left", "center", "right"] | None = None
+    font_size: float | None = Field(default=None, gt=0)
+    col_span: int | None = Field(default=None, ge=1)
+    row_span: int | None = Field(default=None, ge=1)
+
+
 class SlideElement(_CamelModel):
     id: str
-    type: Literal["text", "image", "shape"]
+    type: Literal["text", "image", "shape", "table"]
     x: float
     y: float
     w: float
@@ -128,6 +147,30 @@ class SlideElement(_CamelModel):
     highlight: str | None = None
     space_before: float | None = Field(default=None, ge=0)  # px above the text
     space_after: float | None = Field(default=None, ge=0)  # px below the text
+    # A table (`type: "table"`): the words as a grid of strings, row-major,
+    # and the table's look in the fields above (`stroke` draws the grid,
+    # `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the
+    # cells' defaults). Column widths and row heights are percent of the
+    # table's own box; absent means equal shares. `cells` holds what single
+    # cells do differently. Sixteen boxes stood in for a table before, and a
+    # column could not be widened without moving eight of them.
+    rows: list[list[str]] | None = None
+    header: bool | None = None  # the first row is a header row
+    col_widths: list[float] | None = None
+    row_heights: list[float] | None = None
+    cells: list[SlideTableCell] | None = None
+
+    @model_validator(mode="after")
+    def _table_has_a_grid(self) -> SlideElement:
+        if self.type != "table":
+            return self
+        rows = self.rows or []
+        if not rows or not rows[0]:
+            raise ValueError('a "table" element needs "rows": a non-empty list of rows of strings')
+        width = len(rows[0])
+        if any(len(row) != width for row in rows):
+            raise ValueError('every row of a "table" element needs the same number of cells')
+        return self
 
 
 class Slide(_CamelModel):

@@ -31,8 +31,12 @@ one stays visible in the original and in the exported file through the skin:
 from __future__ import annotations
 
 import base64
+import json
+from collections import Counter
 from io import BytesIO
 from typing import Any
+
+from .preset_colours import preset_colour
 
 # Pixels per inch used to turn point sizes into the canvas' font scale.
 _EMU_PER_INCH = 914400
@@ -61,6 +65,108 @@ class PptxImportError(ValueError):
     """The bytes are not a presentation this reader can open."""
 
 
+class DeckBaseline:
+    """What the original deck already does, as the floor the copy is judged by.
+
+    ``smallest_text_px`` — the smallest run size the author printed; a check
+    that calls the original's 9pt footnotes an error is one the model learns
+    to ignore along with the findings that matter. ``max_overhang`` — how far
+    past the page edge (in percent points) the original's own shapes reach;
+    decks routinely carry a bleed box at 101 or a footer at 105, and flagging
+    those on every save buried the one real overflow among them.
+    """
+
+    def __init__(self, smallest_text_px: float | None, max_overhang: float) -> None:
+        self.smallest_text_px = smallest_text_px
+        self.max_overhang = max_overhang
+
+
+def deck_baseline(data: bytes) -> DeckBaseline | None:
+    """The original's own floor, from a light pass over its shapes (no pictures)."""
+    from pptx import Presentation  # type: ignore[import-untyped]
+
+    try:
+        deck = Presentation(BytesIO(data))
+    except Exception:  # noqa: BLE001 - an unreadable skin has no floor to offer
+        return None
+    width, height = int(deck.slide_width or 0), int(deck.slide_height or 0)
+    smallest: float | None = None
+    overhang = 0.0
+    for slide in deck.slides:
+        for shape in slide.shapes:
+            geometry = (shape.left, shape.top, shape.width, shape.height)
+            if width and height and None not in geometry:
+                left, top, w, h = (int(v) for v in geometry)
+                right = (left + w) / width * 100 - 100
+                bottom = (top + h) / height * 100 - 100
+                overhang = max(overhang, right, bottom, -left / width * 100, -top / height * 100)
+            if getattr(shape, "has_table", False):
+                frames = [cell.text_frame for row in shape.table.rows for cell in row.cells]
+            elif getattr(shape, "has_text_frame", False):
+                frames = [shape.text_frame]
+            else:
+                continue
+            for paragraph in (p for frame in frames for p in frame.paragraphs):
+                for run in paragraph.runs:
+                    size = getattr(run.font, "size", None)
+                    if size is None or not (run.text or "").strip():
+                        continue
+                    px = round(size.pt * _PT_TO_PX, 1)
+                    if px > 0 and (smallest is None or px < smallest):
+                        smallest = px
+    return DeckBaseline(smallest, round(overhang, 3))
+
+
+def smallest_text_px(data: bytes) -> float | None:
+    """The smallest explicit run size in the deck, in the model's px, or ``None``."""
+    baseline = deck_baseline(data)
+    return baseline.smallest_text_px if baseline else None
+
+
+def _table_styles(deck: Any) -> dict[str, dict[str, Any]]:
+    """The deck's table style sheet, by style id: what a cell looks like when
+    its own XML says nothing.
+
+    A table that names a style and no cell borders is not an unbordered
+    table — its borders live in ``ppt/tableStyles.xml``. PowerPoint's
+    built-in styles are not written there (only their id), so those still
+    come across bare; a deck that carries its definitions (Google Slides
+    exports do) gets its whole-table border, text colour and face back.
+    """
+    from lxml import etree  # type: ignore[import-untyped]
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    styles: dict[str, dict[str, Any]] = {}
+    for part in deck.part.package.iter_parts():
+        if not str(part.partname).endswith("tableStyles.xml"):
+            continue
+        try:
+            root = etree.fromstring(part.blob)
+        except etree.XMLSyntaxError:
+            continue
+        for style in root.iter(qn("a:tblStyle")):
+            style_id = style.get("styleId")
+            whole = style.find(qn("a:wholeTbl"))
+            if not style_id or whole is None:
+                continue
+            entry: dict[str, Any] = {}
+            text_style = whole.find(qn("a:tcTxStyle"))
+            if text_style is not None:
+                entry["text"] = text_style  # colour child resolved per slide (scheme)
+                face = text_style.find(".//" + qn("a:latin"))
+                if face is not None and face.get("typeface"):
+                    entry["font"] = face.get("typeface")
+            borders = whole.find(qn("a:tcStyle") + "/" + qn("a:tcBdr"))
+            if borders is not None:
+                for side in ("a:insideH", "a:insideV", "a:left", "a:top", "a:bottom", "a:right"):
+                    line = borders.find(qn(side) + "/" + qn("a:ln"))
+                    if line is not None and line.find(qn("a:solidFill")) is not None:
+                        entry["border"] = line
+                        break
+            styles[style_id] = entry
+    return styles
+
+
 def pptx_to_slides(data: bytes) -> dict[str, Any]:
     """Parse presentation bytes into ``SlidesData``-shaped dict.
 
@@ -84,7 +190,8 @@ def pptx_to_slides(data: bytes) -> dict[str, Any]:
     if not width or not height:
         raise PptxImportError("the presentation declares no slide size")
 
-    slides = [_slide(slide, width, height) for slide in deck.slides]
+    styles = _table_styles(deck)
+    slides = [_slide(slide, width, height, styles) for slide in deck.slides]
     return {
         "slides": slides,
         "page": {
@@ -94,11 +201,26 @@ def pptx_to_slides(data: bytes) -> dict[str, Any]:
     }
 
 
-def _slide(slide: Any, width: int, height: int) -> dict[str, Any]:
+def _slide(
+    slide: Any, width: int, height: int, table_styles: dict[str, dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """One slide's elements, in the order they stack on the page."""
     scheme = _scheme(slide)
     elements: list[dict[str, Any]] = []
+    charts: list[dict[str, Any]] = []
     for index, shape in enumerate(slide.shapes):
+        if getattr(shape, "has_table", False):
+            elements.extend(
+                _table_elements(shape, index, width, height, scheme, table_styles or {})
+            )
+            continue
+        if getattr(shape, "has_chart", False):
+            # A chart is a picture of data the deck model cannot hold; the
+            # caller with a page renderer turns this box into that picture.
+            frame = _frame(shape, index, width, height)
+            if frame is not None:
+                charts.append(frame)
+            continue
         element = _element(shape, index, width, height, scheme)
         if element is not None:
             elements.append(element)
@@ -106,8 +228,19 @@ def _slide(slide: Any, width: int, height: int) -> dict[str, Any]:
     if picture is not None:
         # Behind everything else, filling the page — a background is what the
         # rest sits on, and the element model has no field for one.
-        elements.insert(0, {"id": "bg", "type": "image", "x": 0, "y": 0, "w": 100, "h": 100, "src": picture})
+        elements.insert(
+            0, {"id": "bg", "type": "image", "x": 0, "y": 0, "w": 100, "h": 100, "src": picture}
+        )
     out: dict[str, Any] = {"elements": elements}
+    if charts:
+        out["charts"] = charts  # not a deck field: the copying tool consumes it
+    # Text that names no colour takes the theme's text slot through the colour
+    # map — dark on a light master, light on a dark one. That is the slide's
+    # default text colour, and without it a table's cells and a WordArt with
+    # no run colour were drawn in whatever the screen's own theme used.
+    default_text = scheme.get("tx1")
+    if default_text:
+        out["textColor"] = f"#{default_text}"
     background = _background(slide, scheme)
     if background:
         out["background"] = background
@@ -243,6 +376,11 @@ def _fill_colour(holder: Any, scheme: dict[str, str], qn: Any) -> str | None:
         value = scheme.get(themed.get("val", ""))
         if value:
             return f"#{_with_brightness(themed, value, qn)}"
+    preset = holder.find(qn("a:prstClr"))
+    if preset is not None:
+        value = preset_colour(preset.get("val"))
+        if value:
+            return f"#{_with_brightness(preset, value, qn)}"
     return None
 
 
@@ -394,6 +532,156 @@ def _element(
     return None
 
 
+class _CellText:
+    """A table cell dressed as the text shape :func:`_text` reads."""
+
+    has_text_frame = True
+
+    def __init__(self, cell: Any) -> None:
+        self.text_frame = cell.text_frame
+        self._element = cell._tc
+        self.height = None
+
+
+def _table_elements(
+    shape: Any,
+    index: int,
+    width: int,
+    height: int,
+    scheme: dict[str, str],
+    table_styles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """A table as one ``table`` element on the table's own grid.
+
+    The words go in ``rows``; the column widths and row heights come from
+    the file; a merged cell keeps its span. The look the cells share — the
+    grid line, the face, the colour, the size — becomes the element's own,
+    from the cells' XML where they say it and from the deck's table style
+    sheet where they do not (PowerPoint's built-in styles are not written
+    to the sheet, so a deck that only names one comes across with no
+    line). What single cells do differently — a header fill, a bold total —
+    goes in ``cells``. A cell's own edge colours beyond the first are not
+    carried; the original keeps them.
+    """
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    frame = _frame(shape, index, width, height)
+    if frame is None:
+        return []
+    table = shape.table
+    properties = table._tbl.tblPr
+    style_ref = properties.find(qn("a:tableStyleId")) if properties is not None else None
+    style_id = style_ref.text.strip() if style_ref is not None and style_ref.text else ""
+    style = table_styles.get(style_id, {})
+    style_border = style.get("border")
+    style_stroke: tuple[str, float] | None = None
+    if style_border is not None:
+        colour = _fill_colour(style_border.find(qn("a:solidFill")), scheme, qn)
+        if colour:
+            style_stroke = (colour, _line_px(style_border))
+    style_text = style.get("text")
+    style_colour = None
+    if style_text is not None:
+        holder = style_text.find(qn("a:solidFill"))
+        style_colour = _fill_colour(holder if holder is not None else style_text, scheme, qn)
+
+    widths = [int(column.width or 0) for column in table.columns]
+    heights = [int(row.height or 0) for row in table.rows]
+    rows: list[list[str]] = []
+    looks: dict[tuple[int, int], dict[str, Any]] = {}
+    strokes: list[tuple[str, float]] = []
+    for r in range(len(heights)):
+        row: list[str] = []
+        for c in range(len(widths)):
+            cell = table.cell(r, c)
+            if cell.is_spanned:
+                row.append("")
+                continue
+            row.append(cell.text_frame.text or "")
+            own: dict[str, Any] = {}
+            if cell.is_merge_origin:
+                if cell.span_width > 1:
+                    own["colSpan"] = cell.span_width
+                if cell.span_height > 1:
+                    own["rowSpan"] = cell.span_height
+            tc_pr = cell._tc.tcPr
+            if tc_pr is not None:
+                solid = tc_pr.find(qn("a:solidFill"))
+                if solid is not None:
+                    fill = _fill_colour(solid, scheme, qn)
+                    if fill:
+                        own["fill"] = fill
+                for side in ("a:lnB", "a:lnT", "a:lnL", "a:lnR"):
+                    line = tc_pr.find(qn(side))
+                    if line is None or line.find(qn("a:solidFill")) is None:
+                        continue
+                    colour = _fill_colour(line.find(qn("a:solidFill")), scheme, qn)
+                    if colour:
+                        strokes.append((colour, _line_px(line)))
+                        break
+            text = _text(_CellText(cell), scheme)
+            if text is not None:
+                for key in ("fontSize", "bold", "color", "align", "fontFamily"):
+                    if key in text:
+                        own[key] = text[key]
+            looks[(r, c)] = own
+        rows.append(row)
+    if not rows or not rows[0]:
+        return []
+
+    element: dict[str, Any] = {**frame, "id": f"t{index}", "type": "table", "rows": rows}
+    total_w, total_h = sum(widths), sum(heights)
+    # PowerPoint draws a table from its column widths and row heights; the
+    # frame around it is advisory and some writers leave it stale. One deck
+    # declared a 3.3in square frame around a 7.9 x 1.7in grid, and the copy
+    # showed a square table over the WordArt below it.
+    if total_w > 0 and width:
+        element["w"] = round(100 * total_w / width, 3)
+    if total_h > 0 and height:
+        element["h"] = round(100 * total_h / height, 3)
+    if total_w > 0:
+        element["colWidths"] = [round(100 * w / total_w, 3) for w in widths]
+    if total_h > 0:
+        element["rowHeights"] = [round(100 * h / total_h, 3) for h in heights]
+    if table.first_row:
+        element["header"] = True
+
+    # What most cells do is the table's; the rest is each cell's own.
+    shared: dict[str, Any] = {}
+    for key in ("fontSize", "color", "align", "fontFamily", "fill", "bold"):
+        values = [own[key] for own in looks.values() if key in own]
+        if not values:
+            continue
+        common = Counter(json.dumps(v) for v in values).most_common(1)[0][0]
+        if key in ("fill", "bold") and len(values) < len(looks):
+            continue  # a fill or weight some cells lack is not the table's
+        shared[key] = json.loads(common)
+    if "color" not in shared and style_colour:
+        shared["color"] = style_colour
+    if "fontFamily" not in shared and style.get("font"):
+        shared["fontFamily"] = style["font"]
+    stroke = Counter(strokes).most_common(1)[0][0] if strokes else style_stroke
+    if stroke:
+        element["stroke"], element["strokeWidth"] = stroke
+    element.update(shared)
+    cells: list[dict[str, Any]] = []
+    for (r, c), own in looks.items():
+        entry = {"r": r, "c": c}
+        for key, value in own.items():
+            if key in ("colSpan", "rowSpan") or shared.get(key) != value:
+                entry[key] = value
+        if len(entry) > 2:
+            cells.append(entry)
+    if cells:
+        element["cells"] = cells
+    return [element]
+
+
+def _line_px(line: Any) -> float:
+    """A drawing line's weight in the model's px (PowerPoint's default when unset)."""
+    return round(int(line.get("w") or 12700) / 12700 * _PT_TO_PX, 2)
+
+
 def _with_stroke(
     frame: dict[str, Any], shape: Any, width: int, height: int
 ) -> dict[str, Any]:
@@ -456,6 +744,42 @@ def _picture(shape: Any) -> str | None:
     return f"data:image/{kind};base64,{base64.b64encode(blob).decode('ascii')}"
 
 
+#: How much of a WordArt box the glyphs fill vertically (cap height over
+#: box height for the common warps).
+_WORD_ART_FILL = 0.8
+
+
+def _text_outline(font: Any, scheme: dict[str, str]) -> tuple[str, float] | None:
+    """``(colour, px)`` of the run's text outline, or ``None`` when it has none.
+
+    WordArt is usually a light fill drawn legible by a dark outline; with
+    only the fill it faded into the page. The outline rides the element's
+    ``stroke`` fields, the same ones a shape uses for its border.
+    """
+    rpr = getattr(font, "_rPr", None)
+    if rpr is None:
+        return None
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    line = rpr.find(qn("a:ln"))
+    if line is None or line.find(qn("a:solidFill")) is None:
+        return None
+    colour = _fill_colour(line.find(qn("a:solidFill")), scheme, qn)
+    if not colour:
+        return None
+    return colour, round(int(line.get("w") or 12700) / 12700 * _PT_TO_PX, 2)
+
+
+def _is_word_art(shape: Any) -> bool:
+    """A text shape whose body is warped — WordArt, in PowerPoint's own name."""
+    element = getattr(shape, "_element", None)
+    if element is None:
+        return False
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    return element.find(".//" + qn("a:prstTxWarp")) is not None
+
+
 def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
     """Text plus the first run's formatting, or ``None`` when there is none.
 
@@ -474,8 +798,18 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
     runs = [run for paragraph in paragraphs for run in paragraph.runs]
     if runs:
         font = runs[0].font
+        outline = _text_outline(font, scheme)
+        if outline is not None:
+            out["stroke"], out["strokeWidth"] = outline
         if font.size is not None:
             out["fontSize"] = round(font.size.pt * _PT_TO_PX, 1)
+        elif _is_word_art(shape):
+            # WordArt warps its text to fill the shape, whatever the run says
+            # (usually nothing). The box height is the size the person sees;
+            # without this a headline-sized word came across at body size.
+            height = getattr(shape, "height", None)
+            if height:
+                out["fontSize"] = round(int(height) / 12700 * _PT_TO_PX * _WORD_ART_FILL, 1)
         if font.bold is not None:
             out["bold"] = bool(font.bold)
         colour = _colour(font, scheme)
@@ -579,6 +913,18 @@ def _colour(font: Any, scheme: dict[str, str]) -> str | None:
             return f"#{rgb}"
     except (AttributeError, ValueError):
         pass
+    # The third way a run names a colour: a preset name, which python-pptx
+    # exposes as a type with no value — so the value is read from the XML.
+    rpr = getattr(font, "_rPr", None)
+    if rpr is not None:
+        from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+        fill = rpr.find(qn("a:solidFill"))
+        preset = fill.find(qn("a:prstClr")) if fill is not None else None
+        if preset is not None:
+            value = preset_colour(preset.get("val"))
+            if value:
+                return f"#{_with_brightness(preset, value, qn)}"
     try:
         name = _THEME_KEYS.get(str(getattr(colour.theme_color, "name", "")))
     except (AttributeError, ValueError):
