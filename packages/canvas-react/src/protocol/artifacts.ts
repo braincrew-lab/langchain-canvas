@@ -91,9 +91,23 @@ export interface TableData {
 }
 
 /** A freely-positioned element on a "blank" slide (percent geometry, 0–100). */
+/** One table cell's own look, where it differs from the table's. The cell's
+ *  text lives in the table element's `rows`. */
+export interface SlideTableCell {
+  r: number;
+  c: number;
+  fill?: string;
+  color?: string;
+  bold?: boolean;
+  align?: "left" | "center" | "right";
+  fontSize?: number;
+  colSpan?: number;
+  rowSpan?: number;
+}
+
 export interface SlideElement {
   id: string;
-  type: "text" | "image" | "shape";
+  type: "text" | "image" | "shape" | "table";
   x: number;
   y: number;
   w: number;
@@ -124,6 +138,18 @@ export interface SlideElement {
   spaceBefore?: number;
   /** Space below the text, in px. */
   spaceAfter?: number;
+  /** A table's words: a grid of strings, row-major. `stroke` draws the grid;
+   *  `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the
+   *  cells' defaults. */
+  rows?: string[][];
+  /** The first row is a header row. */
+  header?: boolean;
+  /** Column widths as percent of the table's box; absent means equal shares. */
+  colWidths?: number[];
+  /** Row heights as percent of the table's box; absent means equal shares. */
+  rowHeights?: number[];
+  /** What single cells do differently. */
+  cells?: SlideTableCell[];
 }
 
 export interface Slide {

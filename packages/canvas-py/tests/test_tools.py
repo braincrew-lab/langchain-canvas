@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from langchain_canvas import InMemoryCanvasStore, create_canvas_tools
 from langchain_canvas.converters import default_converters
 
@@ -1260,11 +1262,14 @@ def test_descriptions_only_name_tools_that_exist() -> None:
         create_document_tools,
         create_export_tool,
     )
+    from langchain_canvas.tools import create_deck_tools, create_table_tools
 
     store = InMemoryCanvasStore()
     built = [
         *create_canvas_tools(store),
         *create_document_tools(store),
+        *create_deck_tools(store),
+        *create_table_tools(store),
         create_export_tool(store),
         create_asset_tool(store),
         create_check_table_tool(store),
@@ -1444,3 +1449,132 @@ def test_the_editing_operations_answer_a_deck_the_same_way() -> None:
         revision="r1",
     )
     assert "`pages`" in reply, reply
+
+
+# --- nothing to change, nothing saved ------------------------------------------------
+
+
+def test_an_edit_whose_old_equals_new_saves_nothing() -> None:
+    store = InMemoryCanvasStore()
+    runtime = _runtime(thread_id="t1")
+    _invoke(_tools(store)["write_canvas"], runtime, path="a.md", content="hello", description="c")
+    before = len(store.history("t1"))
+    revision = store.read("t1", "a.md").revision
+    reply = _invoke(
+        _tools(store)["edit_canvas"], runtime,
+        path="a.md", old="hello", new="hello", description="noop", revision=revision,
+    )
+    assert reply.startswith("Error:") and "nothing to change" in reply
+    assert len(store.history("t1")) == before
+
+
+# --- the eye opens on its own --------------------------------------------------------
+
+
+class _PptxEye:
+    """A page renderer for .pptx that answers with one image block per page."""
+
+    suffixes = (".pptx",)
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[int] | str]] = []
+
+    def convert(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        return ConvertedSource(blocks=[{"type": "text", "text": "deck"}], metadata={})
+
+    def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        self.calls.append((path, pages))
+        return ConvertedSource(
+            blocks=[
+                {"type": "image", "source_type": "base64", "data": "AA==", "mime_type": "image/png"}
+                for _ in pages
+            ],
+            metadata={"pages": ",".join(map(str, pages))},
+        )
+
+    def render_grid(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        self.calls.append((path, "grid"))
+        return ConvertedSource(
+            blocks=[
+                {"type": "image", "source_type": "base64", "data": "AA==", "mime_type": "image/png"}
+            ],
+            metadata={},
+        )
+
+
+def _deck_with_overflow() -> str:
+    from langchain_canvas import encode_slides
+
+    return encode_slides("Deck", {"slides": [
+        {"elements": [
+            {"id": "ok", "type": "text", "x": 5, "y": 5, "w": 50, "h": 10, "text": "fine"}
+        ]},
+        {"elements": [
+            {"id": "e0", "type": "text", "x": 60, "y": 10, "w": 58, "h": 10, "text": "off"}
+        ]},
+    ]})
+
+
+def test_a_save_with_a_finding_arrives_with_that_slide_rendered() -> None:
+    """Measured: told to look 14 times, looked once. So the slide the check
+    named comes with the finding when a renderer is mounted."""
+    pytest.importorskip("pptx")
+    eye = _PptxEye()
+    store = InMemoryCanvasStore()
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[eye])}
+    reply = tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=_deck_with_overflow(),
+        description="c",
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert isinstance(reply, list), reply
+    assert reply[0]["text"].startswith("Wrote deck.slides.json")
+    assert "Deck check" in reply[0]["text"]
+    assert [b["type"] for b in reply[1:]] == ["image"]
+    assert eye.calls == [("deck.pptx", [2])]  # only the slide the check named
+
+
+def test_a_clean_save_stays_text_even_with_a_renderer() -> None:
+    from langchain_canvas import encode_slides
+
+    store = InMemoryCanvasStore()
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[_PptxEye()])}
+    reply = tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=encode_slides("Deck", {"slides": [{"elements": [
+            {"id": "t", "type": "text", "x": 10, "y": 10, "w": 50, "h": 10, "text": "Hi"}
+        ]}]}),
+        description="c",
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert isinstance(reply, str) and reply.startswith("Wrote deck.slides.json")
+
+
+def test_an_export_comes_back_with_its_pages_when_a_renderer_is_mounted() -> None:
+    from langchain_canvas import create_export_tool, encode_slides
+
+    pytest.importorskip("pptx")
+    eye = _PptxEye()
+    store = InMemoryCanvasStore()
+    runtime = _runtime(thread_id="t1")
+    _invoke(
+        _tools(store)["write_canvas"], runtime, path="deck.slides.json",
+        content=encode_slides("Deck", {"slides": [{"title": "Hi", "layout": "title"}]}),
+        description="c",
+    )
+    exporter = create_export_tool(store, converters=[eye])
+    reply = exporter.func(path="deck.slides.json", target="pptx", runtime=runtime)
+    assert isinstance(reply, list), reply
+    assert reply[0]["text"].startswith("Exported deck.slides.json to exports/")
+    assert "check them" in reply[0]["text"]
+    assert reply[1]["type"] == "image"
+    assert eye.calls and eye.calls[-1][1] == "grid"
+    plain = create_export_tool(store).func(path="deck.slides.json", target="pptx", runtime=runtime)
+    assert isinstance(plain, str)  # no renderer mounted: text as before

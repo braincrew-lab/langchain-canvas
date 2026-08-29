@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import io
 import json
 import re
 import subprocess
@@ -54,6 +56,7 @@ from .converters import (
     default_converters,
     ensure_archive_within_limits,
 )
+from .deck_outline import deck_outline
 from .document_lint import (
     format_document_warnings,
     is_document_path,
@@ -79,15 +82,24 @@ from .exporters import (
     pptx_page_size_inches,
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
-from .layout_lint import format_layout_warnings, lint_slides_data
+from .layout_lint import (
+    blocking_deck_findings,
+    format_layout_warnings,
+    lint_slides_data,
+)
+from .protocol.artifacts import TableData
 from .replay import (
     ARTIFACT_SUFFIXES,
     SLIDES_SUFFIX,
+    TABLE_SUFFIX,
     display_title,
+    encode_artifact,
     encode_slides,
     events_for_commit,
     source_preview_events,
+    working_copy_path,
 )
+from .state import last_change_line
 from .store import (
     BinaryContentError,
     CanvasFileNotFoundError,
@@ -112,7 +124,27 @@ _SOURCES_READONLY_DOCUMENT = (
     "Error: {path} is the user's original upload and is read-only. Call "
     "open_document_for_editing on it first, then edit the copy it makes."
 )
+_SOURCES_READONLY_DECK = (
+    "Error: {path} is the user's original upload and is read-only. Call "
+    "open_deck_for_editing on it first, then edit the copy it makes."
+)
+_SOURCES_READONLY_WORKBOOK = (
+    "Error: {path} is the user's original upload and is read-only. Its editable "
+    'working copy is {copy} — read that with sheet="s0", then change cells with '
+    "write_table_cells. Do not rebuild it with write_canvas."
+)
 _DEFAULT_READ_LIMIT = 400
+#: Slides rendered alongside a save-time finding — enough to see the problem,
+#: few enough that a deck with findings on every slide does not become a
+#: slideshow in the tool result.
+_EYE_MAX_SLIDES = 2
+
+
+def _with_eye(text: str, images: list[dict]) -> str | list[dict]:
+    """The tool reply as text, or text followed by page images when there are any."""
+    if not images:
+        return text
+    return [{"type": "text", "text": text}, *images]
 _DOCUMENT_FORMATS = ", ".join(DOCUMENT_OP_SUFFIXES)
 
 
@@ -171,6 +203,36 @@ def _working_copy_name(source: str) -> str:
     return name if name.startswith(_WORKING_COPY_MARKER) else _WORKING_COPY_MARKER + name
 
 
+# An inline picture the deck reader hands over, by the four types it emits.
+_IMAGE_DATA_URI = re.compile(r"^data:(image/(?:png|jpeg|gif|webp));base64,(.+)$", re.DOTALL)
+_SUFFIX_FOR_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _decode_image_data_uri(src: Any) -> tuple[str, bytes] | None:
+    """(file suffix, bytes) for an inline image; ``None`` for anything else."""
+    if not isinstance(src, str):
+        return None
+    match = _IMAGE_DATA_URI.match(src)
+    if match is None:
+        return None
+    try:
+        blob = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return _SUFFIX_FOR_MIME[match.group(1)], blob
+
+
+def _deck_stem(target: str) -> str:
+    """The deck's own name, without folder or the ``.slides.json`` suffix."""
+    name = target.rsplit("/", 1)[-1]
+    return name[: -len(SLIDES_SUFFIX)] if name.endswith(SLIDES_SUFFIX) else name
+
+
 def _deck_copy_name(source: str) -> str:
     """Canvas-root name for the editable deck made from ``source``.
 
@@ -191,6 +253,10 @@ def _sources_readonly(path: str) -> str:
     """
     if _is_document_file(path):
         return _SOURCES_READONLY_DOCUMENT.format(path=path)
+    if path.lower().endswith(".pptx"):
+        return _SOURCES_READONLY_DECK.format(path=path)
+    if path.lower().endswith(".xlsx"):
+        return _SOURCES_READONLY_WORKBOOK.format(path=path, copy=working_copy_path(path))
     return _SOURCES_READONLY
 
 
@@ -546,6 +612,16 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
+    def _revision_header(canvas_id: str, path: str, revision: str) -> str:
+        """``revision: v4`` plus who last changed the file and when.
+
+        The revision alone says nothing about whether the person has been
+        here; the actor and the age do, and they come from the log the store
+        already keeps.
+        """
+        last = last_change_line(store, canvas_id, path)
+        return f"revision: {revision}" + (f"\n{last}" if last else "")
+
     def _edit_document(
         runtime: ToolRuntime,
         canvas_id: str,
@@ -618,6 +694,147 @@ def create_canvas_tools(
             )
         return ""
 
+    def _deck_refusal(path: str, content: str) -> str | None:
+        """The refusal for a deck save that must not land, or ``None``.
+
+        A deck that is not JSON, or that :func:`blocking_deck_findings`
+        objects to, would sit on the canvas broken while this tool reported
+        success. Nothing is written; the reply carries the fix.
+        """
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError as exc:
+            return (
+                f"Error: {path} was not saved — it is not valid JSON ({exc.msg} at "
+                f"line {exc.lineno}). A deck is "
+                '{"type": "slides", "title": "...", "data": {"slides": [...]}}.'
+            )
+        findings = blocking_deck_findings(envelope, path)
+        if not findings:
+            return None
+        lines = "\n".join(f"  - {finding}" for finding in findings)
+        return f"Error: {path} was not saved — fix these and write it again:\n{lines}"
+
+    def _with_default_template(canvas_id: str, content: str) -> tuple[str, str]:
+        """A new deck with no ``template`` takes the one PowerPoint upload.
+
+        A person who uploads a deck and asks for a new one in its style
+        expects its masters back on export, and a model composing the deck
+        forgets the pointer more often than it writes it. With exactly one
+        ``.pptx`` under ``sources/`` there is nothing to choose, so the tool
+        chooses it and says so; ``"template": null`` written on purpose
+        opts out. Returns ``(content, note)``.
+        """
+        envelope = json.loads(content)
+        data = envelope.get("data")
+        if not isinstance(data, dict) or "template" in data:
+            return content, ""
+        on_canvas = _canvas_paths(canvas_id) or set()
+        decks = sorted(
+            item
+            for item in on_canvas
+            if item.startswith(_SOURCES_PREFIX) and item.lower().endswith(".pptx")
+        )
+        if len(decks) != 1:
+            return content, ""
+        data["template"] = decks[0]
+        note = (
+            f" Note: template set to {decks[0]} (the only PowerPoint upload), so the "
+            'export builds on its masters; write "template": null to build on a blank page.'
+        )
+        return json.dumps(envelope, ensure_ascii=False), note
+
+    def _table_refusal(
+        canvas_id: str, path: str, content: str, *, is_new: bool
+    ) -> tuple[str | None, str]:
+        """``(refusal, content)`` for a table save: refuse, or normalise.
+
+        Three things put a broken grid in front of the person: a file that is
+        not the envelope, keys written outside ``data``, and a rewrite of a
+        table the person has formatted (its ``sheet``) that drops that state.
+        Everything else is normalised through the schema, so ``columns`` and
+        ``rows`` are always present for the renderer.
+        """
+        shape = (
+            '{"type": "table", "title": "...", "data": {"columns": [...], "rows": [...]}}'
+        )
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError as exc:
+            return (
+                f"Error: {path} was not saved — it is not valid JSON ({exc.msg} at line "
+                f"{exc.lineno}). A table is {shape}."
+            ), content
+        if not isinstance(envelope, dict):
+            return f"Error: {path} was not saved — a table is {shape}.", content
+        misplaced = [k for k in ("columns", "rows", "sheet") if k in envelope]
+        if misplaced:
+            named = ", ".join(f'"{k}"' for k in misplaced)
+            return (
+                f"Error: {path} was not saved — {named} must sit inside \"data\", not at "
+                f"the top level: {shape}."
+            ), content
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            return f"Error: {path} was not saved — \"data\" is missing: {shape}.", content
+        try:
+            model = TableData.model_validate(data)
+        except Exception as exc:  # noqa: BLE001 - pydantic's message is the fix
+            return f"Error: {path} was not saved — {exc}", content
+        if not is_new:
+            try:
+                current = json.loads(store.read(canvas_id, path).content)
+            except (CanvasStoreError, ValueError):
+                current = None
+            has_sheet = isinstance(current, dict) and bool(
+                (current.get("data") or {}).get("sheet")
+            )
+            if has_sheet and not model.sheet:
+                return (
+                    f"Error: {path} was not saved — it holds the person's grid state "
+                    "(formatting, merges, formulas), which this rewrite would erase. "
+                    "Change cells with write_table_cells instead."
+                ), content
+        normalised = model.model_dump(by_alias=True, exclude_none=True)
+        title = envelope.get("title")
+        try:
+            content = encode_artifact(
+                {
+                    "type": "table",
+                    "title": title if isinstance(title, str) else display_title(path),
+                    "data": normalised,
+                },
+                path,
+            )
+        except ValueError as exc:
+            return f"Error: {path} was not saved — {exc}", content
+        return None, content
+
+    def _baseline(canvas_id: str, data: dict[str, Any]) -> tuple[float | None, float]:
+        """``(min font px, max overhang)`` from the deck's skin, if it has one.
+
+        A deck copied from an upload is judged by what its author did: the
+        smallest size they printed is the readability floor, and how far their
+        own shapes reach past the page is the overflow allowance. Without a
+        skin the defaults apply.
+        """
+        template = data.get("template")
+        if not isinstance(template, str) or not template.lower().endswith(".pptx"):
+            return None, 0.0
+        ref = normalize_asset_reference(template)
+        if ref is None:
+            return None, 0.0
+        try:
+            raw = store.read_bytes(canvas_id, ref).data
+        except CanvasStoreError:
+            return None, 0.0
+        from .pptx_import import deck_baseline
+
+        baseline = deck_baseline(raw)
+        if baseline is None:
+            return None, 0.0
+        return baseline.smallest_text_px, baseline.max_overhang
+
     def _deck_note(canvas_id: str, path: str, content: str) -> str:
         """The deck check, over the envelope's ``data`` ('' when unreadable)."""
         try:
@@ -628,11 +845,43 @@ def create_canvas_tools(
         if not isinstance(data, dict):
             return ""
         on_canvas = _canvas_paths(canvas_id)
+        floor, overhang = _baseline(canvas_id, data)
         warnings = lint_slides_data(
             data,
             ref_exists=None if on_canvas is None else on_canvas.__contains__,
+            min_text_px=floor,
+            max_overhang=overhang,
         )
         return format_layout_warnings(warnings)
+
+    def _deck_eye(canvas_id: str, path: str, content: str, save_note: str) -> list[dict]:
+        """Page images of the slides the check named, or ``[]``.
+
+        Telling the model to look was measured at 14 asks, 1 look. So when
+        a save leaves a finding on a slide and a page renderer is mounted,
+        the slide arrives with the finding — rendered from the deck as the
+        exporter would print it. Quiet saves, decks without a renderer, and
+        any render failure add nothing.
+        """
+        if not path.lower().endswith(".slides.json") or "Deck check" not in save_note:
+            return []
+        numbers = sorted({int(n) for n in re.findall(r"slide (\d+)", save_note)})[:_EYE_MAX_SLIDES]
+        if not numbers:
+            return []
+        stem = _deck_stem(path)
+        renderer = _renderer_for(f"{stem}.pptx", active_converters)
+        if renderer is None:
+            return []
+        try:
+            from .exporters import SlidesPptxExporter
+
+            printed = SlidesPptxExporter().export(
+                inline_slides_assets(content, store, canvas_id), path=path
+            )
+            converted = renderer.render_pages(printed.data, path=f"{stem}.pptx", pages=numbers)
+        except Exception:  # noqa: BLE001 - the eye is a bonus, never a failure
+            return []
+        return [block for block in converted.blocks if block.get("type") == "image"]
 
     def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
         """Rendered page images (or the grid overview) for one paged source.
@@ -702,14 +951,47 @@ def create_canvas_tools(
         )
         sliced, note = _sliced(text, offset, limit)
         meta = ", ".join(f"{k}: {v}" for k, v in converted.metadata.items())
-        header = f"revision: {got.revision}\nconverted view of {path}" + (
+        header = f"{_revision_header(canvas_id, path, got.revision)}\nconverted view of {path}" + (
             f" ({meta})" if meta else ""
         )
+        way_in = _way_to_edit(canvas_id, path)
+        if way_in:
+            header += f"\n{way_in}"
         body = f"{header}\n{sliced}" + (f"\n{note}" if note else "")
         images = [block for block in converted.blocks if block.get("type") == "image"]
         if images:
             return [{"type": "text", "text": body}, *images]
         return body
+
+    def _way_to_edit(canvas_id: str, path: str) -> str:
+        """One line under an upload's read: the file it is edited through.
+
+        A read that shows the words but not the door leaves the model to
+        guess, and the guess was a fresh file with none of the original's
+        formatting. Empty for files that are not uploads.
+        """
+        if not path.startswith(_SOURCES_PREFIX):
+            return ""
+        lowered = path.lower()
+        if lowered.endswith(".xlsx"):
+            copy = working_copy_path(path)
+            if _has_file(canvas_id, copy):
+                return (
+                    f'Editable working copy: {copy} — read it with sheet="s0" and change '
+                    "cells with write_table_cells (this upload is read-only)."
+                )
+            return "This upload is read-only; there is no editable copy on the canvas yet."
+        if lowered.endswith(".pptx"):
+            return (
+                "To edit: open_deck_for_editing makes an editable copy "
+                "(this upload is read-only)."
+            )
+        if lowered.endswith(DOCUMENT_OP_SUFFIXES):
+            return (
+                "To edit: open_document_for_editing makes an editable copy "
+                "(this upload is read-only)."
+            )
+        return ""
 
     @tool
     def read_canvas(
@@ -771,16 +1053,21 @@ def create_canvas_tools(
             except ValueError as exc:
                 return f"Error: {exc}."
             if view is not None and sheet is None:
-                return f"revision: {got.revision}\n{view}"
+                return f"{_revision_header(canvas_id, path, got.revision)}\n{view}"
             if view is not None:
                 header, _, body = view.partition("\n")
                 sliced, note = _sliced(body, offset, limit)
                 return (
-                    f"revision: {got.revision}\n{header}\n{sliced}"
+                    f"{_revision_header(canvas_id, path, got.revision)}\n{header}\n{sliced}"
                     + (f"\n{note}" if note else "")
                 )
         sliced, note = _sliced(got.content, offset, limit)
-        return f"revision: {got.revision}\n{sliced}" + (f"\n{note}" if note else "")
+        header = _revision_header(canvas_id, path, got.revision)
+        if path.lower().endswith(".slides.json") and offset == 0:
+            outline = deck_outline(got.content)
+            if outline:
+                header += f"\n{outline}"
+        return f"{header}\n{sliced}" + (f"\n{note}" if note else "")
 
     @tool
     def write_canvas(
@@ -789,7 +1076,7 @@ def create_canvas_tools(
         description: str,
         runtime: ToolRuntime,
         revision: str | None = None,
-    ) -> str:
+    ) -> str | list[dict]:
         """Create a new canvas file, or fully replace an existing one.
 
         `description` becomes the version-history entry — one short sentence
@@ -822,30 +1109,67 @@ def create_canvas_tools(
           chosen from the content, so do not add coordinates here.
         - Free `elements`, for a slide you are composing yourself. Every
           element needs an `id` (a short unique string), a `type` of
-          text|image|shape, and `x`/`y`/`w`/`h` as percent of the slide,
-          0-100. Colors are `#hex`. `fontSize` is px on a 960x540 page —
-          the layout's own scale is 48 (a cover line), 38 (a heading),
-          and 30 / 24 / 19 (body). Picking from it keeps a slide you
-          placed by hand next to the ones you did not, and keeps a deck
-          from carrying eight sizes nobody chose. Nothing under 14px is
-          readable on the canvas or a projector.
+          text|image|shape|table, and `x`/`y`/`w`/`h` as percent of the
+          slide, 0-100. Colors are `#hex`. `fontSize` is px on a 960x540
+          page — the layout's own scale is 48 (a cover line), 38 (a
+          heading), and 30 / 24 / 19 (body). Picking from it keeps a
+          slide you placed by hand next to the ones you did not, and
+          keeps a deck from carrying eight sizes nobody chose. Nothing
+          under 14px is readable on the canvas or a projector.
+          A `table` is `{"id": "t1", "type": "table", "x": 10, "y": 25,
+          "w": 80, "h": 40, "rows": [["Item", "Q1"], ["Sales", "120"]],
+          "header": true, "stroke": "#9E9E9E", "fontSize": 18}` — the
+          words are `rows` (every row the same length), `stroke` draws
+          the grid, `colWidths` / `rowHeights` are percent of the table's
+          box, and `cells` lists what single cells do differently:
+          `{"r": 0, "c": 0, "fill": "#DDEEFF", "bold": true, "colSpan":
+          2}`. To change a cell, change its string in `rows`.
 
         Optional per slide: `background` (a `#hex` string), `notes`.
-        Optional deck-level `"template": "sources/brand.pptx"` makes the
-        pptx export build on that file's masters and layouts. A
-        `.table.json` sheet is `{"type": "table", "data": {"sheet": {...}}}`.
+        Optional `template`, inside `data` next to `slides` and never at
+        the top level — `{"type": "slides", "title": "...", "data":
+        {"template": "sources/brand.pptx", "slides": [...]}}` — makes the
+        pptx export build on that file's masters and layouts. A new deck
+        with no `template` takes the only `.pptx` under `sources/` when
+        there is exactly one; write `"template": null` to build on a blank
+        page instead.
+
+        A deck is refused, not saved, when a deck key sits outside `data`,
+        when it does not match the schema, or when a slide carries both
+        `elements` and `title`/`bullets` — the reply names what to fix.
+        To revise an uploaded deck, do not write a new one: call
+        open_deck_for_editing and change the copy with `edit_canvas`.
+
+        A `.table.json` table is `{"type": "table", "title": "...", "data":
+        {"columns": [{"key": "name", "label": "Name"}], "rows": [{"name":
+        "Kim"}]}}` — write `columns` and `rows`; `sheet` is the grid editor's
+        own state and is never written here. An uploaded spreadsheet already
+        has its working copy on the canvas (`<name>.table.json`): change its
+        cells with write_table_cells, never rewrite it with this tool — a
+        rewrite that drops `sheet` is refused because it would erase the
+        person's formatting and formulas.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
+        is_new = not _has_file(canvas_id, path)
         page_note = None
+        template_note = ""
         if path.lower().endswith(".slides.json"):
+            refusal = _deck_refusal(path, content)
+            if refusal is not None:
+                return refusal
+            if is_new:
+                content, template_note = _with_default_template(canvas_id, content)
             content, page_error, page_note = _deck_with_skin_page(
                 store, canvas_id, content
             )
             if page_error is not None:
                 return page_error
-        is_new = not _has_file(canvas_id, path)
+        elif path.lower().endswith(TABLE_SUFFIX):
+            refusal, content = _table_refusal(canvas_id, path, content, is_new=is_new)
+            if refusal is not None:
+                return refusal
         try:
             commit = store.write(
                 canvas_id,
@@ -861,7 +1185,11 @@ def create_canvas_tools(
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
         save_note = _save_note(canvas_id, path, content)
-        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}{save_note}"
+        return _with_eye(
+            f"Wrote {path} (revision {commit.revision})."
+            f"{template_note}{page_note or ''}{save_note}",
+            _deck_eye(canvas_id, path, content, save_note),
+        )
 
     @tool
     def edit_canvas(
@@ -871,7 +1199,7 @@ def create_canvas_tools(
         description: str,
         revision: str,
         runtime: ToolRuntime,
-    ) -> str:
+    ) -> str | list[dict]:
         """Replace exactly one occurrence of `old` with `new` in a canvas file.
 
         `revision` must be the value returned by your most recent
@@ -883,12 +1211,18 @@ def create_canvas_tools(
 
         Word files ({document_formats}) are edited the same way: `old` is text
         copied from `read_canvas`, matched across the runs Word split it into,
+        and may lead with the address the read printed — `"[p7] Title"` — to
+        pick that paragraph when the same words appear twice (`"[p7]"` alone
+        means the whole paragraph). `new` is the replacement text only; an
+        address in front of it is dropped, never written into the document.
         and it must still match exactly once in the whole file — body, tables,
         headers and footers included.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
+        if old == new:
+            return "Error: old and new are the same — nothing to change, nothing saved."
         if _is_document_file(path):
             return _edit_document(runtime, canvas_id, path, old, new, description, revision)
         try:
@@ -917,6 +1251,10 @@ def create_canvas_tools(
             # not there. Check the file as the edit left it.
             edited = store.read(canvas_id, path, revision=commit.revision).content
             save_note = _save_note(canvas_id, path, edited)
+            return _with_eye(
+                f"Edited {path} (revision {commit.revision}).{save_note}",
+                _deck_eye(canvas_id, path, edited, save_note),
+            )
         return f"Edited {path} (revision {commit.revision}).{save_note}"
 
     @tool
@@ -1285,6 +1623,12 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
 
     def _load(canvas_id: str, path: str) -> Any:
         if not path.endswith(".table.json"):
+            if path.startswith(_SOURCES_PREFIX) and path.lower().endswith(".xlsx"):
+                raise ValueError(
+                    f"{path} is the uploaded original (read-only); its working copy is "
+                    f"{working_copy_path(path)} — read that with sheet=\"s0\" and write "
+                    "cells there"
+                )
             raise ValueError(f"this works on .table.json tables (got {path})")
         return store.read(canvas_id, path)
 
@@ -1336,6 +1680,12 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
         starting with `=` stays a formula; `""` clears the cell. Styling on a
         cell you overwrite stays.
 
+        To match the sheet's look, write a dict: `{"v": "Notes", "like":
+        "A3"}` copies A3's bold, fill, font and colour onto the cell; explicit
+        keys win over the copy — `{"v": "Total", "bl": 1, "bg": "#DDEBF7",
+        "fc": "#1F4E78", "fs": 11}`. The read's `styles:` lines say where each
+        look lives, so "like the header" is `like` the header's address.
+
         This is how to change a table: rewriting the whole file with
         `write_canvas` replaces every sheet and drops the formatting, merges
         and formulas only the grid holds. `revision` must be the value from
@@ -1383,8 +1733,18 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
     return [write_table_cells, add_table_sheet]
 
 
-def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:
+def create_export_tool(
+    store: CanvasStore,
+    *,
+    exporters: list[Exporter] | None = None,
+    converters: list[SourceConverter] | None = None,
+) -> Any:
     """Build an ``export_canvas`` tool bound to ``store``.
+
+    ``converters`` is the same list ``create_canvas_tools`` takes; when one of
+    them renders pages for the exported format, the reply carries a thumbnail
+    grid of the file that was just written — the export is the moment the
+    result is final, so it is the moment to look.
 
     Kept separate from :func:`create_canvas_tools` so the four standard tools
     stay a stable contract — add this tool when your agent should hand users
@@ -1394,8 +1754,10 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
     """
     active_exporters = default_exporters() if exporters is None else exporters
 
+    active_converters = default_converters() if converters is None else converters
+
     @tool
-    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str:
+    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str | list[dict]:
         """Export canvas work into a downloadable office file.
 
         ``path`` is one canvas file (``report/02-overview.html``,
@@ -1469,9 +1831,24 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
             f"Export {path} -> {exported.filename}",
             actor="agent",
         )
-        return (
+        reply = (
             f"Exported {path} to {out_path} ({len(exported.data)} bytes, revision "
             f"{commit.revision}). The user can download it from the canvas file list."
+        )
+        renderer = _renderer_for(out_path, active_converters)
+        if renderer is None:
+            return reply
+        try:
+            converted = renderer.render_grid(exported.data, path=out_path)
+        except Exception:  # noqa: BLE001 - the look is a bonus; the export already landed
+            return reply + " (The page renderer could not draw it — read it with pages=\"grid\".)"
+        images = [block for block in converted.blocks if block.get("type") == "image"]
+        if not images:
+            return reply
+        return _with_eye(
+            reply + " These are its pages as exported — check them before telling the user "
+            "it is done.",
+            images,
         )
 
     return export_canvas
@@ -1715,7 +2092,9 @@ def create_check_table_tool(
     return check_table
 
 
-def create_deck_tools(store: CanvasStore) -> list[Any]:
+def create_deck_tools(
+    store: CanvasStore, *, converters: list[SourceConverter] | None = None
+) -> list[Any]:
     """Build the tool that makes an uploaded deck editable.
 
     An uploaded ``.pptx`` already shows as slides — the upload path reads it
@@ -1731,7 +2110,10 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
 
     Kept out of :func:`create_canvas_tools` so the four standard tools stay a
     stable contract; mount this when your agent should edit decks people send.
+    ``converters`` is the list ``create_canvas_tools`` takes; a page renderer
+    among them is what lets charts come across as pictures.
     """
+    active_converters = default_converters() if converters is None else converters
 
     @tool
     def open_deck_for_editing(
@@ -1742,14 +2124,20 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
         """Copy an uploaded PowerPoint file into an editable canvas deck.
 
         `source` is the uploaded `.pptx` (usually under `sources/`). The copy
-        lands at the canvas root as a `.slides.json` you can edit with
-        `edit_canvas` and export back to PowerPoint; pass `destination` to
+        lands at the canvas root as a `.slides.json`; pass `destination` to
         name it yourself. The upload stays where it is, unchanged.
 
-        The copy keeps each slide's shapes, text, pictures and speaker notes,
-        and points at the original as its template so an export rebuilds on
-        the original's masters. Tables, charts and grouped shapes do not come
-        across — read the upload itself to see those.
+        The copy keeps each slide's shapes, text, fonts, colours, positions
+        and speaker notes, and points at the original as its template so an
+        export rebuilds on the original's masters. Its pictures are stored
+        under `assets/<deck name>/` and referenced by path, so the copy
+        stays small enough to read whole. Tables, charts and grouped shapes
+        do not come across — read the upload itself to see those.
+
+        This is how an uploaded deck is revised: read the copy, then change
+        its text with `edit_canvas`. Changing the words keeps the look. Do
+        not write a new deck from scratch for a revision — it would carry
+        none of the original's styling.
         """
         canvas_id = _canvas_id(runtime)
         if not source.lower().endswith(".pptx"):
@@ -1785,6 +2173,11 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
             return f"Error: {exc}."
         deck["template"] = source
         try:
+            pictures = _extract_pictures(canvas_id, source, target, deck)
+            charts, charts_dropped = _charts_as_pictures(canvas_id, source, target, deck, got.data)
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
             commit = store.write(
                 canvas_id,
                 target,
@@ -1810,10 +2203,117 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
             ):
                 writer(event)
         count = len(deck.get("slides", []))
-        return (
-            f"Copied {source} to {target} ({count} slide(s), revision "
-            f"{commit.revision}). Edit {target} and export it to pptx; {source} "
-            "keeps the user's original."
+        tables = sum(
+            1
+            for slide in deck.get("slides", [])
+            for element in slide.get("elements", [])
+            if element.get("type") == "table"
         )
+        extras = []
+        if tables:
+            extras.append(f"{tables} table(s) as table elements (rows editable)")
+        if charts:
+            extras.append(f"{charts} chart(s) as pictures (not editable)")
+        if charts_dropped:
+            extras.append(f"{charts_dropped} chart(s) dropped — no page renderer to draw them")
+        carried = f" Also: {'; '.join(extras)}." if extras else ""
+        return (
+            f"Copied {source} to {target} ({count} slide(s), {pictures} picture(s) "
+            f"under {ASSETS_PREFIX}{_deck_stem(target)}/, revision {commit.revision})."
+            f"{carried} Read {target}, then change its text with edit_canvas — the fonts, "
+            "colours and positions came from the original, so changing the words "
+            f"keeps the look. Export it to pptx when done; {source} keeps the "
+            "user's original."
+        )
+
+    def _charts_as_pictures(
+        canvas_id: str, source: str, target: str, deck: dict[str, Any], original: bytes
+    ) -> tuple[int, int]:
+        """Turn each chart's box into a picture of it, from the rendered page.
+
+        The deck model holds no chart, and a chart's data is not the point of
+        a slide someone is revising — its picture is. With a page renderer
+        mounted, the slide is drawn as PowerPoint would print it and the
+        chart's box is cut out of that page into ``assets/``; the deck gets
+        an image element in the same place. Without a renderer (or when the
+        render fails) the chart is dropped as before and the reply says so.
+        Returns ``(pictured, dropped)`` and strips the ``charts`` side list
+        the reader left on each slide, which is not a deck field.
+        """
+        boxes = [
+            (number, box)
+            for number, slide in enumerate(deck.get("slides", []), start=1)
+            for box in (slide.pop("charts", None) or [])
+        ]
+        if not boxes:
+            return 0, 0
+        renderer = _renderer_for(source, active_converters)
+        if renderer is None:
+            return 0, len(boxes)
+        try:
+            from PIL import Image
+        except ImportError:
+            return 0, len(boxes)
+        folder = f"{ASSETS_PREFIX}{_deck_stem(target)}/"
+        pictured = 0
+        pages: dict[int, Any] = {}
+        for number, box in boxes:
+            try:
+                if number not in pages:
+                    converted = renderer.render_pages(original, path=source, pages=[number])
+                    block = next(b for b in converted.blocks if b.get("type") == "image")
+                    pages[number] = Image.open(io.BytesIO(base64.b64decode(block["data"])))
+                page = pages[number]
+                crop = page.crop((
+                    int(page.width * box["x"] / 100),
+                    int(page.height * box["y"] / 100),
+                    int(page.width * (box["x"] + box["w"]) / 100),
+                    int(page.height * (box["y"] + box["h"]) / 100),
+                ))
+                buffer = io.BytesIO()
+                crop.save(buffer, format="PNG")
+            except Exception:  # noqa: BLE001 - one chart's failure drops that chart only
+                continue
+            blob = buffer.getvalue()
+            path = f"{folder}chart-s{number}-{hashlib.sha256(blob).hexdigest()[:8]}.png"
+            store.write_bytes(canvas_id, path, blob, f"Chart picture from {source}", actor="agent")
+            deck["slides"][number - 1].setdefault("elements", []).append(
+                {"id": f"chart{pictured}", "type": "image", **box, "src": path}
+            )
+            pictured += 1
+        return pictured, len(boxes) - pictured
+
+    def _extract_pictures(
+        canvas_id: str, source: str, target: str, deck: dict[str, Any]
+    ) -> int:
+        """Move the copy's inline pictures under ``assets/`` and reference them.
+
+        The reader hands pictures over as data URIs, so a deck is complete
+        on its own. Stored that way, six slides with a few photos are over a
+        megabyte of base64, and a model asked to edit them reads the opening
+        of an encoded JPEG and nothing after — the words it was meant to
+        change never reach it. The bytes go to the store, where every canvas
+        file already references pictures by path, and the deck goes back to
+        being the text it is. A picture repeated across slides (a logo) is
+        stored once. Returns how many pictures were stored.
+        """
+        folder = f"{ASSETS_PREFIX}{_deck_stem(target)}/"
+        stored: dict[str, str] = {}
+        for slide in deck.get("slides", []):
+            for element in slide.get("elements", []):
+                decoded = _decode_image_data_uri(element.get("src"))
+                if decoded is None:
+                    continue
+                suffix, blob = decoded
+                digest = hashlib.sha256(blob).hexdigest()[:12]
+                path = stored.get(digest)
+                if path is None:
+                    path = f"{folder}{digest}{suffix}"
+                    store.write_bytes(
+                        canvas_id, path, blob, f"Picture from {source}", actor="agent"
+                    )
+                    stored[digest] = path
+                element["src"] = path
+        return len(stored)
 
     return [open_deck_for_editing]

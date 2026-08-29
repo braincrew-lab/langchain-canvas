@@ -127,6 +127,18 @@ type Slide = {
   notes?: string;        // speaker notes → exported to the .pptx notes pane
   elements?: SlideElement[]; // free-positioned items for the "blank" layout
 };
+
+type SlideElement = {
+  id: string;
+  type: "text" | "image" | "shape" | "table";
+  x: number; y: number; w: number; h: number;   // percent of the slide
+  // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...
+  // image: src   ·   shape: shape ("rect" | "ellipse" | "line"), fill, stroke, strokeWidth
+  // table: rows (string[][]), header, colWidths, rowHeights, cells (per-cell
+  //        fill / color / bold / align / fontSize / colSpan / rowSpan); the
+  //        table's own stroke, fill, fontSize, fontFamily, color, bold, align
+  //        are the cells' defaults
+};
 ```
 
 New artifact types are added by (1) defining a data shape here, (2) mirroring it

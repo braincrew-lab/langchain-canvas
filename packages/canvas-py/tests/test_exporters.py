@@ -777,3 +777,65 @@ def test_export_tool_inlines_slide_assets_before_pptx():
     ]
     # The stored reference became the stored bytes — the deck is self-contained.
     assert picture.image.blob == PNG_1PX
+
+
+def test_slides_pptx_table_lands_as_a_real_table():
+    """A table element goes out as a PowerPoint table — columns at their
+    widths, the merged header merged, the grid line and fills the element
+    states — not as sixteen boxes a column cannot be dragged across."""
+    content = _deck(
+        [
+            {
+                "elements": [
+                    {
+                        "id": "t", "type": "table", "x": 10, "y": 20, "w": 80, "h": 40,
+                        "rows": [["Header", ""], ["a", "b"]],
+                        "header": True,
+                        "colWidths": [75, 25],
+                        "stroke": "#9E9E9E", "strokeWidth": 2,
+                        "fontSize": 16, "color": "#000000", "fontFamily": "Arial",
+                        "cells": [
+                            {"r": 0, "c": 0, "colSpan": 2, "fill": "#DDEEFF", "align": "center"},
+                            {"r": 1, "c": 1, "bold": True, "color": "#FF0000"},
+                        ],
+                    }
+                ]
+            }
+        ]
+    )
+    result = SlidesPptxExporter().export(content, path="deck.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    (slide,) = deck.slides
+    (frame,) = [s for s in slide.shapes if s.has_table]
+    table = frame.table
+    assert len(table.rows) == 2 and len(table.columns) == 2
+    assert abs(table.columns[0].width / table.columns[1].width - 3.0) < 0.01
+    assert table.cell(0, 0).is_merge_origin and table.cell(0, 1).is_spanned
+    header = table.cell(0, 0)
+    assert header.text_frame.text == "Header"
+    assert header.text_frame.paragraphs[0].alignment == PP_ALIGN.CENTER
+    assert str(header.fill.fore_color.rgb) == "DDEEFF"
+    run = header.text_frame.paragraphs[0].runs[0]
+    assert run.font.bold is True  # the header row
+    assert run.font.size.pt == 12  # 16 px -> 12 pt
+    assert run.font.name == "Arial"
+    b = table.cell(1, 1).text_frame.paragraphs[0].runs[0]
+    assert b.font.bold is True and str(b.font.color.rgb) == "FF0000"
+    a = table.cell(1, 0).text_frame.paragraphs[0].runs[0]
+    assert a.font.bold is False and str(a.font.color.rgb) == "000000"
+    ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    edge = table.cell(1, 0)._tc.tcPr.find(f"{ns}lnL")
+    assert edge is not None and edge.get("w") == str(int(2 * 0.75 * 12700))
+    assert edge.find(f"{ns}solidFill/{ns}srgbClr").get("val") == "9E9E9E"
+    style = table._tbl.tblPr.find(f"{ns}tableStyleId")
+    assert style is not None and style.text == "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"
+
+
+def test_slides_pptx_table_without_a_grid_line_declares_no_lines():
+    content = _deck([{"elements": [{"id": "t", "type": "table", "x": 0, "y": 0, "w": 50, "h": 50,
+                                     "rows": [["x"]]}]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    (frame,) = [s for s in deck.slides[0].shapes if s.has_table]
+    ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    edge = frame.table.cell(0, 0)._tc.tcPr.find(f"{ns}lnT")
+    assert edge is not None and edge.find(f"{ns}noFill") is not None

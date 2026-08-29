@@ -35,6 +35,7 @@ PAIRS: list[tuple[type, str]] = [
     (py.ChartData, "ChartData"),
     (py.TableColumn, "TableColumn"),
     (py.TableData, "TableData"),
+    (py.SlideTableCell, "SlideTableCell"),
     (py.SlideElement, "SlideElement"),
     (py.SlidePage, "SlidePage"),
     (py.Slide, "Slide"),
