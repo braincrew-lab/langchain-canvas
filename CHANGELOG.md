@@ -4,6 +4,97 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.26] — 2026-08-30
+
+### Added
+- **An uploaded workbook gets an editable working copy.** `workbook_working_copy`
+  lands `<name>.table.json` next to a `sources/*.xlsx` upload, with the sheets,
+  fonts, merges and formulas of the original. With the copy on the canvas the
+  upload shows as a file card, so there is one grid — the one that saves.
+- **The eye opens on its own.** `export_canvas` returns the exported file's page
+  grid when a page renderer is mounted (`converters=`), and a deck save whose
+  check names a slide returns that slide rendered. Measured before: told to look
+  14 times, looked once.
+- **Anchors take an address.** A Word edit may lead with the address the read
+  printed — `"[p7] title"` — which picks that paragraph when the same words
+  appear twice; the address alone means the whole paragraph.
+- **A new deck takes the only PowerPoint upload as its template** when
+  `template` is not set; `"template": null` opts out.
+- **An upload being edited shows as its copy alone.** Once `deck.slides.json`,
+  `book.table.json` or `Editing - memo.docx` is on the canvas, the
+  `sources/` upload it came from has no tab of its own (the file list still
+  has it). The copy names are one rule on both sides, parity-pinned.
+- **A table's box grows to its rows.** Rows are as tall as their text needs,
+  the way PowerPoint grows them; the element's box follows, so the selection
+  frame, the deck check and the exported file agree. Cells take a 1.2 leading
+  of their own instead of the host page's.
+- **Undo is an edit.** Undo and redo work per file, reach `onUserEdit` (so
+  what is on screen after undo is what gets saved), are refused while the
+  canvas is busy, and a file's steps are forgotten once the agent writes it —
+  the agent's result is a version on the rail, not a step to undo. A click
+  that moves nothing is no longer recorded as an edit.
+- **Pending saves can be flushed.** `useCanvasSave` returns a saver with
+  `flush()`, and the store's `flushSaves()` blurs an edit in progress and
+  hands every pending save through — for a host to call before a message
+  starts a run, or before a version is named.
+- **The canvas can be frozen while the agent works.** `<Canvas busy busyLabel=…>`
+  shows a banner and the store refuses hand edits until the host thaws it.
+- **A table's look is readable and copyable.** `read_canvas(sheet=…)` ends with
+  `styles:` lines saying where each look lives; `write_table_cells` takes
+  `{"v": …, "like": "A3"}` to copy a cell's style, plus explicit style keys.
+- **The canvas tells the model where it stands.** `canvas_now` (for the system
+  prompt) lists the files and what the person changed since the agent last
+  wrote; `read_canvas` headers carry the file's last change (who, what, when);
+  a deck read opens with a one-line-per-slide outline of every element.
+- **The deck check sees text that wraps past its box**, and judges a deck copied
+  from an upload by the upload's own smallest text size and page overhang.
+- **A slide can hold a table.** A new `table` element type: the words as
+  `rows` (a grid of strings), the grid line in `stroke`, column widths and
+  row heights as percent of its box, and `cells` for what single cells do
+  differently (a header fill, a bold total, a span). The editor draws a real
+  `<table>` — a cell edits on double-click, a column's edge drags its width —
+  and the pptx export writes a real PowerPoint table (merges, fills, grid
+  lines), so the received file's table is still a table. The deck check
+  reports rows that outgrow the box and small table text; the outline names
+  a table by its grid and first row.
+- **Tables and charts come across.** An uploaded deck's table arrives as one
+  `table` element — its widths, merges, the look its cells share (from the
+  cells' XML and the deck's table style sheet), and each cell's own fill or
+  weight. A chart, with a page renderer mounted, is cut from the rendered
+  page into `assets/` and placed as a picture; without one it is dropped and
+  the reply says so.
+- **Colourless text follows the slide, not the app.** An imported slide carries
+  the theme's text colour as its default (`textColor`), and on the canvas and
+  in the HTML export text with no colour of its own contrasts with the slide
+  background instead of inheriting the app theme — a white slide's table cells
+  are dark again.
+- **A preset colour name is a colour.** `<a:prstClr val="white">` — the third
+  way a file names a colour — now resolves through the standard table, so a
+  white title on a dark slide no longer arrives colourless. WordArt takes its
+  size from its box, as PowerPoint draws it.
+- **A line is drawn by its stroke** on the canvas and in the HTML export, and
+  keeps a visible thickness however thin its box.
+- **Pictures leave the deck copy.** `open_deck_for_editing` stores pictures under
+  `assets/<deck>/` and references them by path, so a copy is text the model can
+  read whole (23 KB instead of 1.5 MB).
+
+### Changed
+- `write_canvas` refuses a `.slides.json` whose deck keys sit outside `data`, that
+  does not match the schema, or that carries both `elements` and structured text;
+  and a `.table.json` with keys outside `data`, that does not parse, or that would
+  drop the person's grid state. The reply names the fix; nothing is saved.
+- A table save is normalised so `columns` and `rows` are always present, and the
+  table renderer no longer crashes when they are not.
+- The small-text check judges a deck copied from an upload by the original's own
+  smallest size, so its footnotes pass and only smaller new text is called out.
+- `edit_canvas` with identical `old` and `new` saves nothing.
+- An agent's write to a spreadsheet redraws the grid at once (`meta.remoteSeq`),
+  where before it showed only after a reload.
+- The spreadsheet grid does not persist Fortune's mount-time normalisation as an
+  edit; a change counts once the person has pointed at or typed into the grid.
+- Tool descriptions and `CANVAS_GUIDANCE` say, per office format, which file is
+  edited and how; the refusal for writing into `sources/` names the way in.
+
 ## [0.7.25] — 2026-08-28
 
 ### Added
