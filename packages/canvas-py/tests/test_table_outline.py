@@ -178,3 +178,67 @@ def test_a_new_sheet_goes_last_so_the_addresses_already_given_still_hold() -> No
     assert "s1" in note
     with pytest.raises(ValueError, match="already has a sheet named"):
         add_sheet(out, "Summary")
+
+
+# --- styles: readable in the view, writable by copy --------------------------------
+
+
+def _styled_table() -> str:
+    from langchain_canvas import encode_artifact
+
+    sheet = {
+        "name": "대시보드",
+        "celldata": [
+            {"r": 0, "c": 0, "v": {"v": "KPI 요약", "bl": 1, "fs": 13, "ff": "Cambria"}},
+            {"r": 2, "c": 0, "v": {"v": "항목", "bl": 1, "bg": "#DDEBF7"}},
+            {"r": 2, "c": 1, "v": {"v": "값", "bl": 1, "bg": "#DDEBF7"}},
+            {"r": 3, "c": 0, "v": {"v": "총 매출"}},
+        ],
+    }
+    return encode_artifact(
+        {"type": "table", "title": "t", "data": {"columns": [], "rows": [], "sheet": [sheet]}},
+        "t.table.json",
+    )
+
+
+def test_the_view_says_where_each_look_lives() -> None:
+    from langchain_canvas.table_outline import table_view
+
+    view = table_view(_styled_table(), "s0")
+    assert 'styles (copy one with {"v": ..., "like": "A3"}):' in view
+    assert "bold, size 13, font Cambria @ A1" in view
+    assert "bold, fill #DDEBF7 @ A3, B3" in view
+
+
+def test_a_written_cell_can_copy_a_look_and_override_it() -> None:
+    import json
+
+    from langchain_canvas.table_outline import cell_map, write_cells
+
+    content, _ = write_cells(
+        _styled_table(),
+        "s0",
+        {"A31": {"v": "유의사항", "like": "A3"}, "B31": {"v": "x", "like": "A3", "bg": "#FFF2CC"}},
+    )
+    sheet = json.loads(content)["data"]["sheet"][0]
+    cells = cell_map(sheet)
+    assert cells[(30, 0)] == {"v": "유의사항", "m": "유의사항", "bl": 1, "bg": "#DDEBF7"}
+    assert cells[(30, 1)]["bg"] == "#FFF2CC" and cells[(30, 1)]["bl"] == 1
+
+
+def test_a_plain_value_still_keeps_the_cell_s_old_style() -> None:
+    import json
+
+    from langchain_canvas.table_outline import cell_map, write_cells
+
+    content, _ = write_cells(_styled_table(), "s0", {"A3": "Item"})
+    assert cell_map(json.loads(content)["data"]["sheet"][0])[(2, 0)]["bg"] == "#DDEBF7"
+
+
+def test_an_unknown_style_key_is_refused_with_the_known_ones() -> None:
+    import pytest
+
+    from langchain_canvas.table_outline import write_cells
+
+    with pytest.raises(ValueError, match="unknown cell keys \\['color'\\]"):
+        write_cells(_styled_table(), "s0", {"A5": {"v": "x", "color": "red"}})

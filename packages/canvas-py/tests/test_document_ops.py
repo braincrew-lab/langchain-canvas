@@ -539,3 +539,58 @@ def test_adding_a_picture_leaves_the_look_of_the_document_alone(document: bytes)
     before, now = _entries(document), _entries(after)
     for name in untouched & set(before):
         assert now[name] == before[name], name
+
+
+# --- an address in front of the anchor ---------------------------------------------
+
+
+def _twice() -> bytes:
+    """A title that is its whole paragraph and appears again in the body."""
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("리서치 인텔리전스", style="Title")
+    document.add_paragraph("v2 데이터 반영 계획(안)")
+    document.add_paragraph("리서치 인텔리전스")
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def _texts(data: bytes) -> list[str]:
+    from docx import Document
+
+    return [p.text for p in Document(io.BytesIO(data)).paragraphs]
+
+
+def test_an_address_picks_the_paragraph_when_the_words_appear_twice() -> None:
+    """Seen in a run: the title could not be 'extended with surrounding words'
+    because the title was the whole paragraph. The address is the disambiguator."""
+    after = ops.replace_text(_twice(), "[p0] 리서치 인텔리전스", "뉴스 인텔리전스")
+    assert _texts(after)[0] == "뉴스 인텔리전스"
+    assert _texts(after)[2] == "리서치 인텔리전스"  # the body copy is untouched
+
+
+def test_an_address_alone_means_the_whole_paragraph() -> None:
+    after = ops.replace_text(_twice(), "[p1]", "v3 계획")
+    assert _texts(after)[1] == "v3 계획"
+
+
+def test_an_ambiguous_anchor_now_suggests_the_address() -> None:
+    with pytest.raises(ops.AnchorError) as caught:
+        ops.replace_text(_twice(), "리서치 인텔리전스", "x")
+    assert "[p0]" in str(caught.value) and "put the address in front" in str(caught.value)
+
+
+def test_an_unknown_address_or_mismatched_text_is_refused_loudly() -> None:
+    with pytest.raises(ops.AnchorError, match=r"no paragraph is addressed \[p9\]"):
+        ops.replace_text(_twice(), "[p9] x", "y")
+    with pytest.raises(ops.AnchorError, match=r"\[p0\] does not contain"):
+        ops.replace_text(_twice(), "[p0] 계획", "y")
+
+
+def test_an_address_in_front_of_new_is_never_written_into_the_page() -> None:
+    """Seen in a run: `new` mirrored the anchor's shape and "[p7]" landed on
+    the title. The address points; it is not text."""
+    after = ops.replace_text(_twice(), "[p0] 리서치 인텔리전스", "[p0] 뉴스 인텔리전스")
+    assert _texts(after)[0] == "뉴스 인텔리전스"
