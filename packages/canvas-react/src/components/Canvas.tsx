@@ -12,6 +12,7 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Artifact } from "../protocol/artifacts";
 import { versionRail } from "../client/reconcile";
+import { visibleTabs } from "../client/workingCopies";
 import { CanvasRegistryProvider, useRenderer, type ArtifactRegistry } from "../registry/registry";
 import { IMPORTABLE_EXTENSIONS } from "../io/importers";
 import { builtinRenderers } from "./renderers";
@@ -69,6 +70,10 @@ export interface CanvasProps {
    * references stay unresolved — everything else behaves exactly as before.
    */
   assetBaseUrl?: string;
+  /** The agent is working: hand editing is frozen and a banner says so. */
+  busy?: boolean;
+  /** What the banner reads while `busy` (default "Agent is working…"). */
+  busyLabel?: string;
 }
 
 export function Canvas({
@@ -80,6 +85,8 @@ export function Canvas({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  busy = false,
+  busyLabel = "Agent is working…",
 }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
@@ -91,6 +98,8 @@ export function Canvas({
         onFilesOpened={onFilesOpened}
         onImported={onImported}
         assetBaseUrl={assetBaseUrl}
+        busy={busy}
+        busyLabel={busyLabel}
       />
     </CanvasRegistryProvider>
   );
@@ -104,6 +113,8 @@ function CanvasPanel({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  busy = false,
+  busyLabel = "Agent is working…",
 }: Pick<
   CanvasProps,
   | "emptyState"
@@ -113,14 +124,24 @@ function CanvasPanel({
   | "onFilesOpened"
   | "onImported"
   | "assetBaseUrl"
+  | "busy"
+  | "busyLabel"
 >) {
   const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
+  const setBusy = useCanvasStore((s) => s.setBusy);
+  // The host knows when a run starts and ends; the store is what refuses
+  // hand edits meanwhile. Keep them in step for as long as this Canvas lives.
+  useEffect(() => {
+    setBusy(busy);
+    return () => setBusy(false);
+  }, [busy, setBusy]);
   const selections = useCanvasStore((s) => s.selections);
   const setSelections = useCanvasStore((s) => s.setSelections);
   const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
+  const setSaveFlusher = useCanvasStore((s) => s.setSaveFlusher);
   const setAssetBaseUrl = useCanvasStore((s) => s.setAssetBaseUrl);
   const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
@@ -149,8 +170,12 @@ function CanvasPanel({
       onUserEdit?.(artifact);
       debouncedSave?.(artifact);
     });
-    return () => setOnUserEdit(null);
-  }, [onUserEdit, debouncedSave, setOnUserEdit]);
+    setSaveFlusher(debouncedSave ? debouncedSave.flush : null);
+    return () => {
+      setOnUserEdit(null);
+      setSaveFlusher(null);
+    };
+  }, [onUserEdit, debouncedSave, setOnUserEdit, setSaveFlusher]);
 
   // Escape clears the current selection (closes the style panel / selection bar).
   // The in-iframe highlight is dropped by HtmlRenderer once selections empties.
@@ -192,14 +217,16 @@ function CanvasPanel({
   }
 
   const versions = versionRail(history[active.id] ?? [active]);
+  // An upload being edited through a copy shows as the copy alone.
+  const tabs = visibleTabs(order);
   const showSelection = Boolean(onEditElement) && selections.length > 0 && selections[0].artifactId === active.id;
 
   return (
     <aside className="cv-canvas" {...dropProps}>
       {dropOverlay}
-      {order.length > 1 && (
+      {tabs.length > 1 && (
         <nav className="cv-tabs" role="tablist">
-          {order.map((id) => (
+          {tabs.map((id) => (
             <button
               key={id}
               role="tab"
@@ -214,7 +241,7 @@ function CanvasPanel({
       )}
 
       {/* key by id so per-artifact view state (which version) resets on tab switch */}
-      <ArtifactView key={active.id} artifact={active} versions={versions} />
+      <ArtifactView key={active.id} artifact={active} versions={versions} busyLabel={busyLabel} />
 
       {showSelection && onEditElement && (
         <>
@@ -229,7 +256,18 @@ function CanvasPanel({
 }
 
 /** Header (title + status + version rail) plus the resolved renderer body. */
-function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Artifact[] }) {
+function ArtifactView({
+  artifact,
+  versions,
+  busyLabel,
+}: {
+  artifact: Artifact;
+  versions: Artifact[];
+  busyLabel: string;
+}) {
+  // The freeze lives in the store (it is what refuses hand edits); the view
+  // only reflects it.
+  const busy = useCanvasStore((s) => s.isBusy);
   const [viewIndex, setViewIndex] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const shown = viewIndex === null ? artifact : versions[viewIndex];
@@ -277,10 +315,15 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
           <button onClick={() => setViewIndex(null)}>Back to latest</button>
         </div>
       )}
+      {busy && (
+        <div className="cv-busy-banner" role="status" aria-live="polite">
+          <span className="cv-busy-banner__dot" aria-hidden /> {busyLabel}
+        </div>
+      )}
 
       {/* spreadsheets own their own scroll — give them a flush, non-scrolling body */}
       <div
-        className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}${viewingHistory ? " cv-body--history" : ""}`}
+        className={`cv-body${shown.type === "table" ? " cv-body--flush" : ""}${viewingHistory ? " cv-body--history" : ""}${busy ? " cv-body--busy" : ""}`}
         ref={bodyRef}
       >
         {Renderer ? (
@@ -303,8 +346,8 @@ function ArtifactView({ artifact, versions }: { artifact: Artifact; versions: Ar
 function UndoRedo() {
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
-  const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
-  const canRedo = useCanvasStore((s) => s.redoStack.length > 0);
+  const canUndo = useCanvasStore((s) => !s.isBusy && (s.canvas.activeId ? (s.undoStack[s.canvas.activeId]?.length ?? 0) : 0) > 0);
+  const canRedo = useCanvasStore((s) => !s.isBusy && (s.canvas.activeId ? (s.redoStack[s.canvas.activeId]?.length ?? 0) : 0) > 0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

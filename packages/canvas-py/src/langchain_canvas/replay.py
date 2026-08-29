@@ -357,7 +357,11 @@ def source_preview_events(
     # `xlsx_to_sheets` is the twin of the browser's reader, so the grid a person
     # sees on upload matches an in-app import. A parse failure falls back to the
     # ordinary file preview rather than showing nothing.
-    if path.lower().endswith(".xlsx"):
+    # Once a working copy exists the grid belongs to it — the upload steps
+    # back to a card, or the person sees two grids and edits the one that
+    # cannot save. Without a copy the upload still opens as a grid (hosts
+    # that never call :func:`workbook_working_copy` keep today's behaviour).
+    if path.lower().endswith(".xlsx") and not _has_working_copy(store, canvas_id, path):
         table_events = _table_preview_events(
             store, canvas_id, path, is_new=is_new, revision=revision, description=description
         )
@@ -377,6 +381,69 @@ def source_preview_events(
     return _file_preview_events(
         store, canvas_id, path, is_new=is_new, revision=revision, description=description
     )
+
+
+def working_copy_path(source: str) -> str:
+    """The canvas-root ``.table.json`` an uploaded workbook is edited through.
+
+    ``sources/sales.xlsx`` -> ``sales.table.json``. One rule, spelled out
+    once, so the upload door, the refusal that points at the copy, and the
+    read header all name the same file.
+    """
+    name = source.rsplit("/", 1)[-1]
+    stem = name[: -len(".xlsx")] if name.lower().endswith(".xlsx") else name
+    return f"{stem}{TABLE_SUFFIX}"
+
+
+def _has_working_copy(store: CanvasStore, canvas_id: str, source: str) -> bool:
+    try:
+        return any(info.path == working_copy_path(source) for info in store.list_files(canvas_id))
+    except CanvasStoreError:
+        return False
+
+
+def workbook_working_copy(
+    store: CanvasStore,
+    canvas_id: str,
+    source: str,
+    *,
+    actor: str,
+) -> tuple[str, list[dict]] | None:
+    """Land the editable copy of an uploaded workbook, with its wire events.
+
+    Uploads under ``sources/`` are read-only, and a grid drawn straight from
+    one can be typed into but never saved — the person's edits went to a
+    shadow file with a mangled name, and the agent, refused at the source,
+    rebuilt the table from scratch without its formatting or formulas. The
+    copy is the file both of them work on: same sheets, fonts, fills,
+    merges and formulas as the upload, at ``working_copy_path(source)``.
+
+    Returns ``(path, events)``, or ``None`` when the copy already exists (it
+    is the person's now — never overwritten) or the workbook does not parse
+    (the upload stays a file card). Hosts call this right after landing the
+    upload, so the copy's grid and the source's card arrive together.
+    """
+    from .xlsx_import import xlsx_to_sheets
+
+    path = working_copy_path(source)
+    if _has_working_copy(store, canvas_id, source):
+        return None
+    try:
+        raw = store.read_bytes(canvas_id, source)
+        parsed = xlsx_to_sheets(raw.data)
+    except Exception:  # noqa: BLE001 — an unreadable workbook stays a file card
+        return None
+    data: dict[str, Any] = {
+        "columns": parsed.get("columns", []),
+        "rows": parsed.get("rows", []),
+        "sheet": parsed.get("sheets", []),
+    }
+    content = encode_artifact({"type": "table", "title": display_title(path), "data": data}, path)
+    commit = store.write(canvas_id, path, content, f"Working copy of {source}", actor=actor)
+    events = events_for_commit(
+        path, content, is_new=True, revision=commit.revision, description=commit.description
+    )
+    return path, events
 
 
 def _table_preview_events(

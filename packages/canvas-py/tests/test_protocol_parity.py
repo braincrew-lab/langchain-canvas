@@ -125,6 +125,19 @@ def test_document_file_suffixes_match_ts():
     assert list(DOCUMENT_OP_SUFFIXES) == re.findall(r'"([^"]+)"', match.group(1))
 
 
+def test_working_copy_names_match_ts():
+    # Which tab hides once a copy exists is decided from the copy's name — the
+    # Python tools' rule, read again on the TS side for the tab bar.
+    from langchain_canvas.replay import working_copy_path
+    from langchain_canvas.tools import _deck_copy_name, _working_copy_name
+
+    ts_source = (TS_PATH.parents[1] / "client" / "workingCopies.ts").read_text()
+    marker = re.search(r'WORKING_COPY_MARKER = "([^"]+)"', ts_source)
+    assert marker and _working_copy_name("sources/memo.docx") == marker.group(1) + "memo.docx"
+    assert _deck_copy_name("sources/deck.pptx") == "deck.slides.json"
+    assert working_copy_path("sources/book.xlsx") == "book.table.json"
+
+
 def test_parser_sees_every_interface():
     # A new TS interface must get a pydantic twin and a PAIRS row.
     assert set(_ts_interfaces()) == {ts_name for _, ts_name in PAIRS}
