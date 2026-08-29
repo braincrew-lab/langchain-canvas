@@ -38,6 +38,7 @@ from .replay import (
     hydrate_events,
     source_preview_events,
 )
+from .state import canvas_now, last_change_line
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
 from .tools import (
@@ -51,6 +52,8 @@ from .tools import (
 )
 
 __all__ = [
+    "canvas_now",
+    "last_change_line",
     "ASSET_REFERENCE_PREFIXES",
     "Canvas",
     "SUPPORTED_FORMULA_FUNCTIONS",

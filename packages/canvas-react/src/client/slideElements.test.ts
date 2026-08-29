@@ -193,3 +193,15 @@ describe("the deck page", () => {
     expect(bulletsOf(s, { widthIn: 0, heightIn: 0 })[0].h).toBe(bulletsOf(s)[0].h);
   });
 });
+
+describe("colourless text contrasts with the slide, not with the app theme", () => {
+  it("is dark on light backgrounds and light on dark ones", async () => {
+    const { defaultTextColor } = await import("./slideElements");
+    expect(defaultTextColor("#FFFFFF")).toBe("#1f2328");
+    expect(defaultTextColor("#fff")).toBe("#1f2328");
+    expect(defaultTextColor("#151515")).toBe("#f8f8f8");
+    expect(defaultTextColor("#000 url(\"data:...\") center/cover")).toBe("#f8f8f8");
+    expect(defaultTextColor(undefined)).toBe("#1f2328");
+    expect(defaultTextColor("linear-gradient(#000, #fff)")).toBe("#1f2328");
+  });
+});

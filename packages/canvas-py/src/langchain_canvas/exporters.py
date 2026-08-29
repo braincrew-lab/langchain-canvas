@@ -29,6 +29,7 @@ from typing import Any, Protocol, runtime_checkable
 from .converters import ensure_archive_within_limits
 from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
 from .slide_layout import BULLET_PREFIX, resolve_elements
+from .slide_table import table_grid
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -588,6 +589,120 @@ def _resolved_slide_elements(slide: Slide, page: SlidePage | None = None) -> lis
     return resolve_elements(slide, page)
 
 
+# PowerPoint's "No Style, No Grid" table style: the file then draws only the
+# fills and lines the element states, which is what the canvas draws.
+_TABLE_STYLE_NONE = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"
+
+
+def _name_face(run: Any, face: str | None, qn: Any) -> None:
+    """Name the run's face for every script.
+
+    ``a:latin`` covers Latin script only — Korean and the rest of CJK read
+    ``a:ea``, and complex scripts read ``a:cs``. A theme's east-asian entry
+    is often empty, so a run naming only its Latin face leaves Hangul with
+    nowhere to go. python-pptx stops at ``a:latin``; the schema fixes the
+    sibling order.
+    """
+    if not face:
+        return
+    latin = run.font._rPr.get_or_add_latin()
+    latin.set("typeface", face)
+    latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": face}))
+    latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": face}))
+
+
+def _add_slide_table(
+    slide: Any,
+    element: SlideElement,
+    box: tuple[Any, Any, Any, Any],
+    *,
+    scale: float,
+    text_color: str | None,
+    skin_face: str | None,
+    alignments: dict[str, Any],
+    anchors: dict[str, Any],
+) -> None:
+    """A table element as a real PowerPoint table — columns at their widths,
+    merged cells merged, each cell with the fill, grid line and text the
+    element states — so the received file's table is still a table."""
+    from pptx.dml.color import RGBColor  # type: ignore[import-untyped]
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+    from pptx.util import Emu, Pt  # type: ignore[import-untyped]
+
+    grid = table_grid(element.model_dump(by_alias=True, exclude_none=True))
+    if grid is None:
+        return
+    left, top, width, height = box
+    frame = slide.shapes.add_table(grid.n_rows, grid.n_cols, left, top, width, height)
+    table = frame.table
+    properties = table._tbl.tblPr
+    style_id = properties.find(qn("a:tableStyleId"))
+    if style_id is None:
+        style_id = properties.makeelement(qn("a:tableStyleId"), {})
+        properties.append(style_id)
+    style_id.text = _TABLE_STYLE_NONE
+    table.first_row = bool(element.header)
+    table.horz_banding = False
+    for index, share in enumerate(grid.col_widths):
+        table.columns[index].width = Emu(int(int(width) * share / 100.0))
+    for index, share in enumerate(grid.row_heights):
+        table.rows[index].height = Emu(int(int(height) * share / 100.0))
+    for (r, c), (row_span, col_span) in grid.spans.items():
+        table.cell(r, c).merge(table.cell(r + row_span - 1, c + col_span - 1))
+
+    stroke = _hex_rgb(element.stroke)
+    line_width = str(int((element.stroke_width or 1) * _PX_TO_PT * _EMU_PER_POINT))
+    for r in range(grid.n_rows):
+        for c in range(grid.n_cols):
+            if (r, c) in grid.covered:
+                continue
+            cell = table.cell(r, c)
+            own = grid.styles.get((r, c), {})
+            fill = _hex_rgb(own.get("fill")) or _hex_rgb(element.fill)
+            if fill:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor.from_string(fill)
+            else:
+                cell.fill.background()
+            if element.vertical_align:
+                cell.vertical_anchor = anchors[element.vertical_align]
+            # The grid: every edge of every cell, drawn or declared absent, so
+            # neither the style nor the viewer invents a line. The schema
+            # wants the four edges ahead of the fill.
+            cell_properties = cell._tc.get_or_add_tcPr()
+            for position, side in enumerate(("a:lnL", "a:lnR", "a:lnT", "a:lnB")):
+                line = cell_properties.makeelement(qn(side), {"w": line_width} if stroke else {})
+                if stroke:
+                    solid = line.makeelement(qn("a:solidFill"), {})
+                    solid.append(solid.makeelement(qn("a:srgbClr"), {"val": stroke}))
+                    line.append(solid)
+                else:
+                    line.append(line.makeelement(qn("a:noFill"), {}))
+                cell_properties.insert(position, line)
+
+            text_frame = cell.text_frame
+            text_frame.word_wrap = True
+            size_px = own.get("fontSize") or element.font_size or _DEFAULT_FONT_PX
+            size_pt = float(size_px) * _PX_TO_PT * scale
+            bold = own.get("bold")
+            if bold is None:
+                bold = (
+                    element.bold if element.bold is not None else (bool(element.header) and r == 0)
+                )
+            colour = _hex_rgb(own.get("color")) or _hex_rgb(element.color) or text_color
+            alignment = alignments.get(own.get("align") or element.align or "left")
+            for index, line_text in enumerate(grid.rows[r][c].split("\n")):
+                paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+                paragraph.alignment = alignment
+                run = paragraph.add_run()
+                run.text = line_text
+                run.font.size = Pt(size_pt)
+                run.font.bold = bool(bold)
+                if colour is not None:
+                    run.font.color.rgb = RGBColor.from_string(colour)
+                _name_face(run, element.font_family or skin_face, qn)
+
+
 class SlidesPptxExporter:
     """``.slides.json`` decks as editable PowerPoint files.
 
@@ -775,6 +890,20 @@ class SlidesPptxExporter:
                         run.text = line
                         run.font.size = Pt(size_pt)
                         run.font.bold = bool(element.bold)
+                        edge = _hex_rgb(element.stroke)
+                        if edge:
+                            # A text outline (WordArt): python-pptx has no
+                            # accessor, and the schema wants `a:ln` first
+                            # among the run properties' children.
+                            properties = run.font._rPr
+                            line = properties.makeelement(
+                                qn("a:ln"),
+                                {"w": str(int((element.stroke_width or 1) * _PX_TO_PT * 12700))},
+                            )
+                            fill = line.makeelement(qn("a:solidFill"), {})
+                            fill.append(fill.makeelement(qn("a:srgbClr"), {"val": edge}))
+                            line.append(fill)
+                            properties.insert(0, line)
                         band = _hex_rgb(element.highlight)
                         if band:
                             # python-pptx exposes no highlight accessor; the
@@ -786,18 +915,18 @@ class SlidesPptxExporter:
                             properties.append(mark)
                         if color is not None:
                             run.font.color.rgb = RGBColor.from_string(color)
-                        face = element.font_family or skin_face
-                        if face:
-                            # `a:latin` covers Latin script only — Korean and
-                            # the rest of CJK read `a:ea`, and complex scripts
-                            # read `a:cs`. A theme's east-asian entry is often
-                            # empty, so a run naming only its Latin face leaves
-                            # Hangul with nowhere to go. python-pptx stops at
-                            # `a:latin`; the schema fixes the sibling order.
-                            latin = run.font._rPr.get_or_add_latin()
-                            latin.set("typeface", face)
-                            latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": face}))
-                            latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": face}))
+                        _name_face(run, element.font_family or skin_face, qn)
+                elif element.type == "table":
+                    _add_slide_table(
+                        slide,
+                        element,
+                        (left, top, width, height),
+                        scale=scale,
+                        text_color=_hex_rgb(slide_model.text_color),
+                        skin_face=skin_face,
+                        alignments=alignments,
+                        anchors=anchors,
+                    )
                 elif element.type == "shape":
                     outline = _hex_rgb(element.stroke)
                     # A shape may be drawn by its outline alone. Defaulting the

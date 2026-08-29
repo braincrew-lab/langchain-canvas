@@ -17,9 +17,10 @@
  * carry.
  */
 
-import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
-import { resolveElements } from "../client/slideElements";
+import type { Artifact, DocumentData, SlideElement, SlidesData, TableData } from "../protocol/artifacts";
+import { defaultTextColor, resolveElements } from "../client/slideElements";
 import { deckPage, PAGE_DPI } from "../client/slidePage";
+import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../client/slideTable";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -135,7 +136,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
   const pages = slides
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
-      const fg = slide.textColor ?? "#1f2328";
+      const fg = slide.textColor ?? defaultTextColor(slide.background);
       const els = resolveElements(slide, page)
         .map((el) => {
           const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
@@ -147,6 +148,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
               `font-size:${el.fontSize ?? 24}px`,
               `font-weight:${el.bold ? 700 : 400}`,
               `color:${escapeAttr(el.color ?? fg)}`,
+              el.stroke ? `-webkit-text-stroke:${Math.max(0.5, el.strokeWidth ?? 1)}px ${escapeAttr(el.stroke)}` : "",
               `text-align:${escapeAttr(el.align ?? "left")}`,
               "white-space:pre-wrap",
               el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
@@ -169,13 +171,21 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           if (el.type === "shape") {
             // A box drawn by its outline alone carries no fill — painting one
             // would hide whatever the border is meant to frame.
-            const fill = escapeAttr(el.fill ?? (el.stroke ? "transparent" : fg));
-            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
-            const outline = el.stroke
-              ? `;border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}`
-              : "";
+            const isLine = el.shape === "line";
+            // A line is its stroke (see shapeStyle); a box may be outline-only.
+            const fill = escapeAttr(
+              isLine ? (el.fill ?? el.stroke ?? fg) : (el.fill ?? (el.stroke ? "transparent" : fg)),
+            );
+            const radius = el.shape === "ellipse" ? "50%" : isLine ? "2px" : "8px";
+            const outline =
+              el.stroke && !isLine
+                ? `;border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}`
+                : isLine
+                  ? `;min-height:${Math.max(1, el.strokeWidth ?? 1)}px`
+                  : "";
             return `<div class="el" style="${box};background:${fill};border-radius:${radius}${outline}"></div>`;
           }
+          if (el.type === "table") return tableHtml(el, box, fg);
           const src = safeSrc(el.src);
           return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
         })
@@ -216,6 +226,51 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
     `page-break-after:avoid}</style>`;
   const i = html.toLowerCase().lastIndexOf("</head>");
   return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
+}
+
+/** A table element as a real `<table>` in the print sheet — the grid the
+ *  editor draws, with the same line, fills and text. */
+function tableHtml(el: SlideElement, box: string, fg: string): string {
+  const grid = tableGrid(el);
+  if (!grid) return "";
+  const border = el.stroke ? `border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}` : "border:none";
+  const vAlign = el.verticalAlign === "middle" ? "middle" : el.verticalAlign === "bottom" ? "bottom" : "top";
+  const cols = grid.colWidths.map((w) => `<col style="width:${w}%">`).join("");
+  const rows = grid.rows
+    .map((row, r) => {
+      const cells = row
+        .map((text, c) => {
+          const key = cellKey(r, c);
+          if (grid.covered.has(key)) return "";
+          const span = grid.spans.get(key);
+          const look = cellLook(el, r, grid.styles.get(key));
+          const style = [
+            border,
+            `padding:${CELL_PAD_Y}px ${CELL_PAD_X}px`,
+            `vertical-align:${vAlign}`,
+            "overflow:hidden",
+            "white-space:pre-wrap",
+            `font-size:${look.fontSize}px`,
+            `font-weight:${look.bold ? 700 : 400}`,
+            `color:${escapeAttr(look.color ?? fg)}`,
+            `text-align:${look.align}`,
+            look.fill ? `background:${escapeAttr(look.fill)}` : "",
+            el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
+            el.lineHeight ? `line-height:${el.lineHeight}` : "",
+          ]
+            .filter(Boolean)
+            .join(";");
+          const spans = span ? ` rowspan="${span[0]}" colspan="${span[1]}"` : "";
+          return `<td${spans} style="${style}">${escapeXml(text)}</td>`;
+        })
+        .join("");
+      return `<tr style="height:${grid.rowHeights[r]}%">${cells}</tr>`;
+    })
+    .join("");
+  return (
+    `<div class="el" style="${box}"><table style="width:100%;height:100%;table-layout:fixed;border-collapse:collapse">` +
+    `<colgroup>${cols}</colgroup><tbody>${rows}</tbody></table></div>`
+  );
 }
 
 // --- helpers --------------------------------------------------------------------

@@ -154,7 +154,10 @@ def table_view(content: str, sheet: str | None = None) -> str | None:
             raise ValueError(f"sheet must be one of: {addresses} (got {sheet!r})")
         picked = sheets[index]
         columns_note, body = _sheet_csv(picked)
-        return f"### sheet: {picked.get('name') or sheet}{columns_note}\n{body}"
+        styles = _style_lines(picked)
+        return f"### sheet: {picked.get('name') or sheet}{columns_note}\n{body}" + (
+            f"\n{styles}" if styles else ""
+        )
 
     title = envelope.get("title")
     lines = [f"table: {title}" if isinstance(title, str) and title else "table"]
@@ -205,13 +208,95 @@ def _rewritten(envelope: dict[str, Any]) -> str:
     return json.dumps(envelope, ensure_ascii=False)
 
 
+#: The grid's cell style keys a writer may set: bold, italic, underline,
+#: font size, font face, font colour, background, horizontal/vertical align.
+STYLE_KEYS = frozenset({"bl", "it", "un", "fs", "ff", "fc", "bg", "ht", "vt"})
+_STYLE_NAMES = {
+    "bl": "bold",
+    "it": "italic",
+    "un": "underline",
+    "fs": "size",
+    "ff": "font",
+    "fc": "colour",
+    "bg": "fill",
+    "ht": "align",
+    "vt": "valign",
+}
+
+
+def _styled(value: Any, grid: dict[tuple[int, int], Any]) -> tuple[Any, dict[str, Any]]:
+    """``(plain value, style)`` for one written cell.
+
+    A plain value carries no style. A dict carries the value under ``v``
+    and, optionally, ``like`` — the address of a cell whose style this one
+    copies — and explicit style keys that win over the copied ones. "Like
+    A3" is how a person would say it, and it spares the model from reading
+    colour codes: the deck copy keeps its look by not touching styles, and
+    a table keeps its look by copying them.
+    """
+    if not isinstance(value, dict):
+        return value, {}
+    style: dict[str, Any] = {}
+    like = value.get("like")
+    if isinstance(like, str) and like:
+        source = grid.get(_at(like))
+        if isinstance(source, dict):
+            style.update({k: v for k, v in source.items() if k in STYLE_KEYS})
+    style.update({k: v for k, v in value.items() if k in STYLE_KEYS})
+    unknown = sorted(k for k in value if k not in STYLE_KEYS and k not in {"v", "like"})
+    if unknown:
+        known = ", ".join(sorted(STYLE_KEYS))
+        raise ValueError(
+            f"unknown cell keys {unknown} — a cell is a value, or "
+            f'{{"v": value, "like": "A3"}}, or a value with style keys from: {known}'
+        )
+    return value.get("v"), style
+
+
+def _a1(r: int, c: int) -> str:
+    return f"{_letters(c)}{r + 1}"
+
+
+def _style_lines(sheet: dict[str, Any], limit: int = 12) -> str:
+    """The sheet's styling, grouped: ``bold, fill #DDEBF7 @ A3, B3, C3``.
+
+    The CSV shows values; a model asked to match a sheet's look needs to
+    know where the look is. Grouped by identical style so a header row is
+    one line, capped so a heavily formatted sheet does not drown the values.
+    """
+    groups: dict[tuple[tuple[str, Any], ...], list[str]] = {}
+    for (r, c), cell in sorted(cell_map(sheet).items()):
+        if not isinstance(cell, dict):
+            continue
+        style = tuple(
+            (k, cell[k]) for k in _STYLE_NAMES if k in cell  # a fixed, readable order
+        )
+        if style:
+            groups.setdefault(style, []).append(_a1(r, c))
+    if not groups:
+        return ""
+    lines = ['styles (copy one with {"v": ..., "like": "A3"}):']
+    for style, refs in list(groups.items())[:limit]:
+        described = ", ".join(
+            _STYLE_NAMES[k] if k in {"bl", "it", "un"} and v else f"{_STYLE_NAMES[k]} {v}"
+            for k, v in style
+        )
+        shown = ", ".join(refs[:8]) + (f" … +{len(refs) - 8}" if len(refs) > 8 else "")
+        lines.append(f"  {described} @ {shown}")
+    if len(groups) > limit:
+        lines.append(f"  … and {len(groups) - limit} more style groups")
+    return "\n".join(lines)
+
+
 def write_cells(content: str, sheet: str, cells: dict[str, Any]) -> tuple[str, str]:
     """Put values into one grid sheet, addressed cell by cell.
 
     ``cells`` maps a cell address to what goes in it — ``{"B3": 42,
     "C3": "=B3*2"}``. A value starting with ``=`` stays a formula; an empty
     string clears the cell. Whatever styling a cell already carries stays on
-    it, the same way the reconciler keeps it.
+    it, the same way the reconciler keeps it. A dict value —
+    ``{"v": "Total", "like": "A3", "bl": 1}`` — sets style too: copied from
+    ``like`` first, then the explicit keys (see :data:`STYLE_KEYS`).
 
     Writing into ``s0`` also refreshes ``rows``, because ``rows`` is the
     projection of that sheet and the xlsx export reads it: left stale, the
@@ -225,7 +310,8 @@ def write_cells(content: str, sheet: str, cells: dict[str, Any]) -> tuple[str, s
     target = sheets[index]
     grid = cell_map(target)
     written = {_at(ref): value for ref, value in cells.items()}
-    for at, value in written.items():
+    for at, raw in written.items():
+        value, wanted = _styled(raw, grid)
         fresh = _value_cell(value)
         existing = grid.get(at)
         style = (
@@ -233,6 +319,7 @@ def write_cells(content: str, sheet: str, cells: dict[str, Any]) -> tuple[str, s
             if isinstance(existing, dict)
             else {}
         )
+        style.update(wanted)
         if fresh is None and not style:
             grid.pop(at, None)
         else:

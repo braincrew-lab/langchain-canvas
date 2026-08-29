@@ -276,3 +276,25 @@ export function toElements(s: Slide, page?: SlidePage): SlideElement[] {
 /** The elements actually on a slide: explicit edits win; otherwise derive. */
 export const resolveElements = (s: Slide, page?: SlidePage): SlideElement[] =>
   s.elements?.length ? s.elements : toElements(s, page);
+
+
+/**
+ * The text colour a slide falls back to when neither the element nor the
+ * slide names one: dark on a light background, light on a dark one.
+ *
+ * Without this the fallback was the editor's own `color`, which follows the
+ * app theme — light text in a dark app — and a white slide's unnamed text
+ * (table cells, WordArt) vanished. Only a solid `#rgb`/`#rrggbb` background
+ * is judged; gradients and images default to dark text, the print default.
+ */
+export function defaultTextColor(background: string | undefined | null): string {
+  const hex = typeof background === "string" ? /^#([0-9a-f]{3}|[0-9a-f]{6})\b/i.exec(background.trim()) : null;
+  if (!hex) return "#1f2328";
+  let value = hex[1];
+  if (value.length === 3) value = value.split("").map((c) => c + c).join("");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luminance > 0.5 ? "#1f2328" : "#f8f8f8";
+}

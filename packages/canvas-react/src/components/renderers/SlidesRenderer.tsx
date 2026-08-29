@@ -10,11 +10,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { Slide, SlideElement, SlidePage, SlidesData } from "../../protocol/artifacts";
-import { resolveElements } from "../../client/slideElements";
+import { defaultTextColor, resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
-import { FreeSlide, shapeStyle, textStyle } from "./FreeSlide";
+import { FreeSlide, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 
 /** Track a slide box's width and derive the display font scale for `page`.
@@ -124,7 +124,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const slide = slides[at];
   const slideStyle = {
     ...(slide.background ? { background: slide.background } : {}),
-    ...(slide.textColor ? { color: slide.textColor } : {}),
+    color: slide.textColor ?? defaultTextColor(slide.background),
   };
 
   const setSlides = (next: Slide[]) => patch({ slides: next });
@@ -167,6 +167,12 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   const addElement = (el: Omit<SlideElement, "id">) =>
     update({ elements: [...resolveElements(slide, page), { ...el, id: newElementId() }] });
   const addTextEl = () => addElement({ type: "text", x: 12, y: 16, w: 45, h: 16, text: "Text", fontSize: 24 });
+  const addTableEl = () =>
+    addElement({
+      type: "table", x: 10, y: 25, w: 80, h: 40,
+      rows: [["Column 1", "Column 2", "Column 3"], ["", "", ""], ["", "", ""]],
+      header: true, stroke: "#9e9e9e", strokeWidth: 1, fontSize: 18,
+    });
   const addImageEl = (file: File | undefined) => {
     if (!file) return;
     const reader = new FileReader();
@@ -212,12 +218,16 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   el.type === "text" ? (
                     <div
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor }) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
                     >
                       {el.text}
                     </div>
                   ) : el.type === "shape" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor, ...shapeStyle(el, thumbBox.scale) }} />
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale) }} />
+                  ) : el.type === "table" ? (
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", color: s.textColor ?? defaultTextColor(s.background) }}>
+                      <SlideTable el={el} scale={thumbBox.scale} />
+                    </div>
                   ) : (
                     <img key={el.id} src={assetUrl(el.src)} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
                   ),
@@ -233,6 +243,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
       <div className="cv-deck__main">
         <div className="cv-deck__toolbar cv-chrome">
           <button onClick={addTextEl} title="Add text box">+ Text</button>
+          <button onClick={addTableEl} title="Add table">+ Table</button>
           <button onClick={() => imgRef.current?.click()} title="Add image">+ Image</button>
           <input ref={imgRef} type="file" accept="image/*" hidden onChange={(e) => addImageEl(e.target.files?.[0])} />
           <input ref={bgRef} type="file" accept="image/*" hidden onChange={(e) => setSlideBgImage(e.target.files?.[0])} />
@@ -308,8 +319,12 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                     </div>
                   </div>
                 ) : el.type === "shape" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor ?? defaultTextColor(slide.background) }}>
                     <div style={shapeStyle(el, presentBox.scale)} />
+                  </div>
+                ) : el.type === "table" ? (
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden" }}>
+                    <SlideTable el={el} scale={presentBox.scale} />
                   </div>
                 ) : (
                   <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>

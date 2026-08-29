@@ -39,6 +39,25 @@ page, `![photo](sources/photo.png)` in a document, `src: "assets/logo.png"`
 on a slide image element. They display live and exports inline the bytes.
 Use the path exactly as list_canvas_files shows it — never invent one, and
 never prefix `../`, even from a file inside a folder.
+
+Uploaded office files are revised through a copy, never rewritten from
+scratch — the copy carries the original's formatting, so changing the words
+keeps the look:
+- PowerPoint (sources/*.pptx): open_deck_for_editing makes <name>.slides.json;
+  change its text with edit_canvas (a table's text is its `rows`), then
+  export_canvas to pptx.
+- Word (sources/*.docx): open_document_for_editing makes an editable copy;
+  read it, then edit_canvas with an anchor copied from the read — put the
+  address in front ("[p7] title") when the same words appear twice.
+- Excel (sources/*.xlsx): the canvas already holds <name>.table.json, the
+  editable working copy; read it with sheet="s0", then change cells with
+  write_table_cells. Use the sandbox to analyse or chart data; use the canvas
+  for the file the person keeps and edits. Never rebuild an uploaded table
+  with write_canvas — that drops its formatting and formulas.
+
+The canvas holds what the person asked for. Do not write notes, plans, or
+scratch files there (no notes.md, no "getting started" page) — every file
+becomes a tab the person has to look past.
 """.strip()
 
 

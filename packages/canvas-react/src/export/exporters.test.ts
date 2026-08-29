@@ -176,3 +176,30 @@ describe("printed background colours", () => {
     expect(PRINT_COLOR_CSS).toContain("print-color-adjust:exact");
   });
 });
+
+describe("slidesToPrintHtml (tables)", () => {
+  it("prints a table element as a real table with its spans, widths and grid line", () => {
+    const deck: SlidesData = {
+      slides: [
+        {
+          elements: [
+            {
+              id: "t", type: "table", x: 10, y: 20, w: 80, h: 40,
+              rows: [["Header", ""], ["a", "b"]],
+              header: true, colWidths: [3, 1], stroke: "#9E9E9E", strokeWidth: 2, fontSize: 16,
+              cells: [{ r: 0, c: 0, colSpan: 2, fill: "#DDEEFF" }],
+            },
+          ],
+        },
+      ],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toContain('<col style="width:75%">');
+    expect(html).toContain('rowspan="1" colspan="2"');
+    expect(html).toContain("border:2px solid #9E9E9E");
+    expect(html).toContain("background:#DDEEFF");
+    expect(html).toMatch(/font-weight:700[^>]*>Header</);
+    expect(html).toMatch(/font-weight:400[^>]*>a</);
+    expect(html.match(/<td/g)).toHaveLength(3); // the covered cell is not drawn
+  });
+});
