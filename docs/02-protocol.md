@@ -132,7 +132,9 @@ type SlideElement = {
   id: string;
   type: "text" | "image" | "shape" | "table";
   x: number; y: number; w: number; h: number;   // percent of the slide
-  // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...
+  // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...,
+  //       autofit ("shape" grows the box with its text · "text" shrinks the
+  //       type to the box · "none", the default, leaves overflow to the check)
   // image: src   ·   shape: shape ("rect" | "ellipse" | "line"), fill, stroke, strokeWidth
   // table: rows (string[][]), header, colWidths, rowHeights, cells (per-cell
   //        fill / color / bold / align / fontSize / colSpan / rowSpan); the

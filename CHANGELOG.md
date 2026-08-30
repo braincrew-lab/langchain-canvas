@@ -4,6 +4,25 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.27] — 2026-08-30
+
+### Added
+- **A text box can grow with its text, or shrink its type to fit.** `SlideElement`
+  gains `autofit`: `shape` (the box takes the height its words need), `text`
+  (the type shrinks to stay inside), `none` (the default — the deck check names
+  the overflow). The pptx importer carries the original's setting across, the
+  exporter writes `spAutoFit` / `normAutofit` with the grown height or the
+  shrink, the editor, thumbnails, present view and print export draw the same
+  box, and the deck check swaps the overflow finding for what an autofit box
+  can still do wrong: grow off the page, or shrink below readable. One
+  estimate on both sides (`slide_text.py` / `slideText.ts`, golden-tested).
+  Counted before: four in ten text boxes in uploaded decks grow with their
+  text, and every one arrived frozen at its placeholder's height.
+- **The deck outline and the copy reply say which boxes do.** `grows` /
+  `shrinks` after the size in `read_canvas`, and a count in the
+  `open_deck_for_editing` reply, with the choice spelled out: let a growing box
+  take its height, shorten the words, set `autofit`, or ask.
+
 ## [0.7.26] — 2026-08-30
 
 ### Added

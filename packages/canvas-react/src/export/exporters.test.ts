@@ -53,6 +53,26 @@ describe("slidesToPrintHtml (safe export)", () => {
     expect(html).toContain("justify-content:center");
   });
 
+  it("draws a growing box at its grown height and shrinking type at its shrink", () => {
+    const long = "가나다라마바사아자차카타파하 ".repeat(8);
+    const deck: SlidesData = {
+      slides: [{
+        elements: [
+          { id: "g", type: "text", x: 0, y: 0, w: 40, h: 5, fontSize: 24, text: long, autofit: "shape" },
+          { id: "s", type: "text", x: 0, y: 50, w: 40, h: 5, fontSize: 24, text: long, autofit: "text" },
+          { id: "f", type: "text", x: 0, y: 70, w: 40, h: 5, fontSize: 24, text: long },
+        ],
+      }],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    const heights = [...html.matchAll(/height:([\d.]+)%/g)].map((m) => Number(m[1]));
+    expect(heights[0]).toBeGreaterThan(20);
+    expect(heights[1]).toBe(5);
+    expect(heights[2]).toBe(5);
+    expect(html).toContain("font-size:24px");
+    expect(html).toMatch(/font-size:(\d+\.\d+|[1-9]|1\d|2[0-3])px/);
+  });
+
   it("draws a shape that has only an outline as an outline, with no fill", () => {
     const deck: SlidesData = {
       slides: [{

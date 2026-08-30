@@ -21,6 +21,7 @@ import type { Artifact, DocumentData, SlideElement, SlidesData, TableData } from
 import { defaultTextColor, resolveElements } from "../client/slideElements";
 import { deckPage, PAGE_DPI } from "../client/slidePage";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../client/slideTable";
+import { boxHeightPct, textFitScale } from "../client/slideText";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -139,13 +140,13 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
       const fg = slide.textColor ?? defaultTextColor(slide.background);
       const els = resolveElements(slide, page)
         .map((el) => {
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
+          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el)}%`;
           if (el.type === "text") {
             // box is numeric; colours and the face are escaped individually — the
             // composed style string is then safe to place in the attribute as-is.
             const style = [
               box,
-              `font-size:${el.fontSize ?? 24}px`,
+              `font-size:${(el.fontSize ?? 24) * textFitScale(el)}px`,
               `font-weight:${el.bold ? 700 : 400}`,
               `color:${escapeAttr(el.color ?? fg)}`,
               el.stroke ? `-webkit-text-stroke:${Math.max(0.5, el.strokeWidth ?? 1)}px ${escapeAttr(el.stroke)}` : "",

@@ -14,6 +14,7 @@ import { defaultTextColor, resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
+import { boxHeightPct } from "../../client/slideText";
 import { FreeSlide, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 
@@ -218,7 +219,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   el.type === "text" ? (
                     <div
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
                     >
                       {el.text}
                     </div>
@@ -313,7 +314,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%` }}>
                     <div className="cv-free__text" style={textStyle(el, presentBox.scale)}>
                       {el.text}
                     </div>
