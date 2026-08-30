@@ -32,7 +32,7 @@ export { useCanvasSave } from "./hooks/useCanvasSave";
 export type { CanvasSaveHandler, CanvasSavePayload } from "./hooks/useCanvasSave";
 
 // schema fixtures — render the canvas with no backend
-export { scenarios } from "./fixtures/scenarios";
+export { scenarios, DECK_FIXTURE_HTML } from "./fixtures/scenarios";
 export type { Scenario } from "./fixtures/scenarios";
 
 // registry

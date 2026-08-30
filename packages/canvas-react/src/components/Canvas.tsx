@@ -477,7 +477,7 @@ function EmptyState({
             }}
           />
           <p className="cv-empty__formats">
-            {acceptAll ? "Any file — tables and pages open here, the rest goes to the agent" : "CSV · Excel · Markdown · HTML · JSON"}
+            {acceptAll ? "Any file — tables and pages open here, the rest goes to the agent" : "CSV · Excel · Markdown · HTML · Slides · JSON"}
           </p>
         </>
       )}

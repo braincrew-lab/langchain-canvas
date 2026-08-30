@@ -167,36 +167,76 @@ const table: Scenario = {
 
 // --- slides ---------------------------------------------------------------------
 
+const DECK_SHELL_HTML = `<!DOCTYPE html><html data-lcx-dialect="1" data-ratio="16:9"><head><meta charset="utf-8"><title>Q4 Review</title></head><body></body></html>`;
+
+/** The canonical *.slides.html deck this scenario streams in via canvas.patch —
+ *  five `<template data-slide-id="…">` blocks, `<style>` first in each (the
+ *  style-first invariant `client/deck.ts:159` STYLE_RE enforces). Exported so
+ *  the importer test can reuse it as an "upload this file" fixture. */
+export const DECK_FIXTURE_HTML = `<!DOCTYPE html><html data-lcx-dialect="1" data-ratio="16:9"><head><meta charset="utf-8"><title>Q4 Review</title></head><body>
+<template data-slide-id="s1" data-slide-title="Q4 Business Review">
+<style>
+  .slide{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b1020;color:#e6e8ef;font-family:system-ui,sans-serif;text-align:center;padding:48px}
+  .slide h1{font-size:44px;margin:0 0 12px}
+  .slide p{font-size:20px;margin:0;color:#9aa4b2}
+</style>
+<div class="slide"><h1>Q4 Business Review</h1><p>Prepared for the board &middot; 2026</p></div>
+</template>
+<template data-slide-id="s2" data-slide-title="Q4 in review">
+<style>
+  .slide{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;background:#ffffff;color:#111827;font-family:system-ui,sans-serif;padding:48px}
+  .slide h2{font-size:32px;margin:0 0 20px}
+  .slide ul{font-size:20px;line-height:1.6;margin:0;padding-left:24px}
+</style>
+<div class="slide"><h2>Q4 in review</h2><ul><li>Revenue up 24% QoQ</li><li>Two new enterprise logos</li><li>Churn down to 1.2%</li></ul></div>
+</template>
+<template data-slide-id="s3" data-slide-title="Wins &amp; watch-items">
+<style>
+  .slide{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;background:#ffffff;color:#111827;font-family:system-ui,sans-serif;padding:48px}
+  .slide h2{font-size:32px;margin:0 0 20px}
+  .cols{display:flex;gap:32px;flex:1}
+  .col{flex:1}
+  .col h3{font-size:18px;margin:0 0 12px;color:#6b7280}
+  .col ul{font-size:18px;line-height:1.6;margin:0;padding-left:20px}
+</style>
+<div class="slide"><h2>Wins &amp; watch-items</h2><div class="cols"><div class="col"><h3>Wins</h3><ul><li>Self-serve onboarding</li><li>Usage-based pricing</li><li>Faster support SLAs</li></ul></div><div class="col"><h3>Watch-items</h3><ul><li>Enterprise security review</li><li>EU data residency</li><li>On-call load</li></ul></div></div></div>
+</template>
+<template data-slide-id="s4" data-slide-title="What's next">
+<style>
+  .slide{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b1020;color:#e6e8ef;font-family:system-ui,sans-serif;text-align:center}
+  .slide h2{font-size:38px;margin:0 0 12px}
+  .slide p{font-size:18px;margin:0;color:#9aa4b2}
+</style>
+<div class="slide"><h2>What's next</h2><p>Roadmap for Q1</p></div>
+</template>
+<template data-slide-id="s5" data-slide-title="Thank you">
+<style>
+  .slide{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b1020;color:#e6e8ef;font-family:system-ui,sans-serif;text-align:center}
+  .slide h1{font-size:54px;margin:0 0 12px;font-weight:700}
+  .slide p{font-size:24px;margin:0;color:#6b7280}
+</style>
+<div class="slide"><h1>Thank you</h1><p>Questions?</p></div>
+</template>
+</body></html>`;
+
 const slides: Scenario = {
   id: "slides",
   title: "Slide deck",
-  description: "A slide deck (title + bullets), navigable and exportable to .pptx.",
+  description: "A slide deck (*.slides.html dialect), navigable, editable and exportable.",
   events: [
-    { type: "canvas.create", artifact: { id: "deck", type: "slides", title: "Q4 Review", version: 1, status: "streaming", data: { slides: [] } } },
     {
-      type: "canvas.patch",
-      id: "deck",
-      patch: {
-        slides: [
-          { layout: "title", title: "Q4 Business Review", subtitle: "Prepared for the board · 2026", background: "#0b1020", textColor: "#e6e8ef", notes: "Welcome the room; set the tone for the quarter." },
-          { layout: "content", title: "Q4 in review", bullets: ["Revenue up 24% QoQ", "Two new enterprise logos", "Churn down to 1.2%"], notes: "Lead with the revenue number." },
-          {
-            layout: "two-column",
-            title: "Wins & watch-items",
-            bullets: ["Self-serve onboarding", "Usage-based pricing", "Faster support SLAs"],
-            bullets2: ["Enterprise security review", "EU data residency", "On-call load"],
-          },
-          { layout: "section", title: "What's next", subtitle: "Roadmap for Q1" },
-          {
-            layout: "blank",
-            elements: [
-              { id: "e1", type: "text", x: 8, y: 12, w: 60, h: 16, text: "Thank you", fontSize: 54, bold: true },
-              { id: "e2", type: "text", x: 8, y: 34, w: 70, h: 12, text: "Questions?", fontSize: 28, color: "#6b7280" },
-            ],
-          },
-        ],
+      type: "canvas.create",
+      artifact: {
+        id: "deck",
+        type: "slides",
+        title: "Q4 Review",
+        version: 1,
+        status: "streaming",
+        meta: { kind: "deck", ratio: "16:9" },
+        data: { html: DECK_SHELL_HTML },
       },
     },
+    { type: "canvas.patch", id: "deck", patch: { html: DECK_FIXTURE_HTML } },
     { type: "canvas.status", id: "deck", status: "complete" },
     { type: "done" },
   ],

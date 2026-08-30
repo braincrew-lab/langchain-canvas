@@ -20,18 +20,28 @@ export interface CanvasImportOptions {
    * table/document to its store right away.
    */
   onImported?: (artifact: Artifact, file: File) => void;
+  /**
+   * Fired once per file that could not be imported — either an unsupported
+   * extension or a parse/validation failure thrown by `importFile`.
+   */
+  onImportError?: (file: File, error: Error) => void;
 }
 
-export function useCanvasImport({ onImported }: CanvasImportOptions = {}) {
+export function useCanvasImport({ onImported, onImportError }: CanvasImportOptions = {}) {
   const api = useCanvasStoreApi();
   const imported = useRef(onImported);
   imported.current = onImported;
+  const importError = useRef(onImportError);
+  importError.current = onImportError;
 
   const importFiles = useCallback(
     async (files: Iterable<File>): Promise<string | null> => {
       let lastId: string | null = null;
       for (const file of files) {
-        if (!canImport(file)) continue;
+        if (!canImport(file)) {
+          importError.current?.(file, new Error(`Unsupported file type "${file.name}"`));
+          continue;
+        }
         try {
           const events = await importFile(file);
           api.getState().applyEvents(events);
@@ -44,6 +54,7 @@ export function useCanvasImport({ onImported }: CanvasImportOptions = {}) {
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("[langchain-canvas] import failed:", file.name, err);
+          importError.current?.(file, err instanceof Error ? err : new Error(String(err)));
         }
       }
       return lastId;

@@ -54,8 +54,10 @@ pnpm install
 pnpm dev:web                  # → open http://localhost:3000/replay
 ```
 
-Pick a scenario (HTML page, streaming doc, chart, table) and watch it render
-exactly as a real agent would drive it. In code:
+Pick a scenario (HTML page, streaming doc, chart, table, slide deck) and watch it
+render exactly as a real agent would drive it — or click **Open file** to put a
+local `.csv` / `.md` / `.html` / `.slides.html` / `.json` file on the same canvas;
+an opened file flows through the same reconciler as a streamed artifact. In code:
 
 ```tsx
 import { Canvas, useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
