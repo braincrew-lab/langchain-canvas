@@ -17,7 +17,7 @@ import type { StreamEvent } from "../protocol/events";
 import { isCanvasEvent } from "../protocol/events";
 import type { ElementSelection } from "../protocol/selection";
 import type { Artifact } from "../protocol/artifacts";
-import { type CanvasState, emptyCanvasState, reduceCanvas } from "../client/reconcile";
+import { type CanvasState, emptyCanvasState, reduceCanvas, updateLive } from "../client/reconcile";
 
 /** Fired when the *user* edits an artifact in the canvas (a table cell, a chart
  *  value, document text, a slide/HTML element). The host wires this to sync the
@@ -79,18 +79,24 @@ export interface CanvasStore {
   canvas: CanvasState;
   messages: ChatMessage[];
   isStreaming: boolean;
+  /** The agent is working on this canvas: hand edits are refused until it is done. */
+  isBusy: boolean;
   error: string | null;
   /** Elements the user selected inside an `html` artifact (click = 1, marquee = N). */
   selections: ElementSelection[];
   /** Last command forwarded to the html iframe (style panel → renderer bus). */
   iframeCommand: IframeCommand | null;
 
-  /** Snapshots for undo/redo — only user edits are recorded (not agent streaming). */
-  undoStack: CanvasState[];
-  redoStack: CanvasState[];
+  /** Snapshots for undo/redo, per artifact — only the person's own edits are
+   *  recorded, and an agent write to a file clears that file's stacks: what
+   *  the agent produced is a version on the rail, not a step to undo. */
+  undoStack: Record<string, Artifact[]>;
+  redoStack: Record<string, Artifact[]>;
 
   /** Host callback fired after a user edit reconciles — the write-back hook. */
   onUserEdit: UserEditHandler | null;
+  /** Fires every pending debounced save at once (see `useCanvasSave`). */
+  saveFlusher: (() => Promise<void>) | null;
 
   /** URL prefix that resolves a canvas-relative asset path (see `resolveAssetUrl`).
    *  Renderers use it to display `assets/` / `sources/` references live; the
@@ -104,10 +110,19 @@ export interface CanvasStore {
   applyEvents: (events: StreamEvent[]) => void;
   /** Apply a *user*-initiated event, recording a snapshot so it can be undone. */
   applyUserEvent: (event: StreamEvent) => void;
+  /** Step the active artifact back / forward. Each step is an edit like any
+   *  other: it is refused while the agent works and it reaches `onUserEdit`,
+   *  so what is on screen after undo is what gets saved. */
   undo: () => void;
   redo: () => void;
+  /** Hand pending saves through now (the host registers the flusher). Blurs
+   *  an edit in progress first so its value is part of what lands. */
+  flushSaves: () => Promise<void>;
+  setSaveFlusher: (flush: (() => Promise<void>) | null) => void;
   addUserMessage: (text: string) => void;
   setStreaming: (value: boolean) => void;
+  /** Freeze or thaw hand editing (the host flips this around an agent run). */
+  setBusy: (value: boolean) => void;
   setActiveArtifact: (id: string) => void;
   setSelections: (selections: ElementSelection[]) => void;
   sendIframeCommand: (command: Omit<IframeCommand, "seq">) => void;
@@ -123,27 +138,78 @@ const initialState = () => ({
   canvas: emptyCanvasState(),
   messages: [] as ChatMessage[],
   isStreaming: false,
+  isBusy: false,
   error: null as string | null,
   selections: [] as ElementSelection[],
   iframeCommand: null as IframeCommand | null,
-  undoStack: [] as CanvasState[],
-  redoStack: [] as CanvasState[],
+  undoStack: {} as Record<string, Artifact[]>,
+  redoStack: {} as Record<string, Artifact[]>,
+  saveFlusher: null as (() => Promise<void>) | null,
   onUserEdit: null as UserEditHandler | null,
   assetBaseUrl: null as string | null,
 });
 
 /** Create an isolated canvas store. */
 export function createCanvasStore(): StoreApi<CanvasStore> {
+/** Events from the agent or a reload that put new data into an artifact. */
+const REMOTE_DATA_EVENTS = new Set(["canvas.create", "canvas.append", "canvas.patch", "canvas.node_patch", "canvas.replace"]);
+
+/**
+ * Count the remote data changes an artifact has received, on `meta.remoteSeq`.
+ *
+ * An editor that freezes its data at mount (the spreadsheet) needs a reason to
+ * remount when the agent writes — and must NOT remount for the person's own
+ * edits, which flow through `applyUserEvent` and would otherwise reset the
+ * grid under their hands. The two paths are already separate; this is the
+ * counter that lets a renderer key on the remote one alone.
+ */
+function stampRemote(state: CanvasStore, event: StreamEvent): CanvasStore {
+  if (!REMOTE_DATA_EVENTS.has(event.type)) return state;
+  const id = (event as { id?: string; artifact?: { id?: string } }).id ?? (event as { artifact?: { id?: string } }).artifact?.id;
+  if (!id) return state;
+  const current = state.canvas.artifacts[id];
+  if (!current) return state;
+  const remoteSeq = (typeof current.meta?.remoteSeq === "number" ? current.meta.remoteSeq : 0) + 1;
+  const stamped = { ...current, meta: { ...(current.meta ?? {}), remoteSeq } };
+  // The agent's write is the file's new ground: the person's earlier steps
+  // no longer lead anywhere sensible, and undoing across them would put a
+  // state on screen the server never had.
+  const { [id]: _undo, ...undoStack } = state.undoStack;
+  const { [id]: _redo, ...redoStack } = state.redoStack;
+  return {
+    ...state,
+    canvas: { ...state.canvas, artifacts: { ...state.canvas.artifacts, [id]: stamped } },
+    undoStack,
+    redoStack,
+  };
+}
+
+/** Put `artifact` on screen as the person's edit and tell the host. */
+function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, get: () => CanvasStore, artifact: Artifact, undoStack: Record<string, Artifact[]>, redoStack: Record<string, Artifact[]>): void {
+  set((state) => ({ canvas: updateLive(state.canvas, artifact), undoStack, redoStack, selections: [] }));
+  const restored = get().canvas.artifacts[artifact.id];
+  if (restored) get().onUserEdit?.(restored);
+}
+
   return createStore<CanvasStore>((set, get) => ({
     ...initialState(),
 
-    applyEvent: (event) => set((state) => foldEvent(state, event)),
-    applyEvents: (events) => set((state) => events.reduce(foldEvent, state)),
+    applyEvent: (event) => set((state) => stampRemote(foldEvent(state, event), event)),
+    applyEvents: (events) =>
+      set((state) => events.reduce((acc, event) => stampRemote(foldEvent(acc, event), event), state)),
 
     applyUserEvent: (event) => {
+      // While the agent writes, a hand edit would land on a file that is about
+      // to change under it and be saved over what the agent produced — or the
+      // other way round. The host shows the freeze; this is what enforces it.
+      if (get().isBusy) return;
       set((state) => {
-        const undoStack = [...state.undoStack, state.canvas].slice(-UNDO_LIMIT);
-        return { ...foldEvent(state, event), undoStack, redoStack: [] };
+        const id = editedArtifactId(event);
+        const before = id ? state.canvas.artifacts[id] : undefined;
+        if (!id || !before) return foldEvent(state, event);
+        const steps = [...(state.undoStack[id] ?? []), before].slice(-UNDO_LIMIT);
+        const { [id]: _redo, ...redoStack } = state.redoStack;
+        return { ...foldEvent(state, event), undoStack: { ...state.undoStack, [id]: steps }, redoStack };
       });
       // Notify the host of the write so it can sync it back to the agent/backend.
       // Fires after the store settles, with the reconciled artifact.
@@ -152,28 +218,44 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
       const artifact = id ? state.canvas.artifacts[id] : undefined;
       if (artifact) state.onUserEdit?.(artifact);
     },
-    undo: () =>
-      set((state) => {
-        if (!state.undoStack.length) return state;
-        const previous = state.undoStack[state.undoStack.length - 1];
-        return {
-          canvas: previous,
-          undoStack: state.undoStack.slice(0, -1),
-          redoStack: [...state.redoStack, state.canvas].slice(-UNDO_LIMIT),
-          selections: [],
-        };
-      }),
-    redo: () =>
-      set((state) => {
-        if (!state.redoStack.length) return state;
-        const next = state.redoStack[state.redoStack.length - 1];
-        return {
-          canvas: next,
-          redoStack: state.redoStack.slice(0, -1),
-          undoStack: [...state.undoStack, state.canvas].slice(-UNDO_LIMIT),
-          selections: [],
-        };
-      }),
+    undo: () => {
+      const state = get();
+      const id = state.canvas.activeId;
+      const steps = id ? state.undoStack[id] ?? [] : [];
+      const current = id ? state.canvas.artifacts[id] : undefined;
+      if (state.isBusy || !id || !steps.length || !current) return;
+      const previous = steps[steps.length - 1];
+      restore(
+        set,
+        get,
+        previous,
+        { ...state.undoStack, [id]: steps.slice(0, -1) },
+        { ...state.redoStack, [id]: [...(state.redoStack[id] ?? []), current].slice(-UNDO_LIMIT) },
+      );
+    },
+    redo: () => {
+      const state = get();
+      const id = state.canvas.activeId;
+      const steps = id ? state.redoStack[id] ?? [] : [];
+      const current = id ? state.canvas.artifacts[id] : undefined;
+      if (state.isBusy || !id || !steps.length || !current) return;
+      const next = steps[steps.length - 1];
+      restore(
+        set,
+        get,
+        next,
+        { ...state.undoStack, [id]: [...(state.undoStack[id] ?? []), current].slice(-UNDO_LIMIT) },
+        { ...state.redoStack, [id]: steps.slice(0, -1) },
+      );
+    },
+    flushSaves: async () => {
+      if (typeof document !== "undefined") {
+        const active = document.activeElement as HTMLElement | null;
+        if (active?.isContentEditable) active.blur();
+      }
+      await get().saveFlusher?.();
+    },
+    setSaveFlusher: (flush) => set({ saveFlusher: flush }),
 
     addUserMessage: (text) =>
       set((state) => ({
@@ -182,6 +264,7 @@ export function createCanvasStore(): StoreApi<CanvasStore> {
       })),
 
     setStreaming: (value) => set({ isStreaming: value }),
+    setBusy: (value) => set({ isBusy: value }),
     setActiveArtifact: (id) => set((state) => ({ canvas: { ...state.canvas, activeId: id } })),
     setSelections: (selections) => set({ selections }),
     sendIframeCommand: (command) =>
@@ -254,6 +337,7 @@ function linkArtifact(messages: ChatMessage[], artifactId: string): ChatMessage[
   }
   const next = messages.slice();
   const current = next[index];
+  if (current.artifactIds?.includes(artifactId)) return messages;
   next[index] = { ...current, artifactIds: [...(current.artifactIds ?? []), artifactId] };
   return next;
 }
