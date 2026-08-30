@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { DECK_FIXTURE_HTML, scenarios } from "../fixtures/scenarios";
 import type { CanvasCreate } from "../protocol/events";
+import { createCanvasStore } from "../store/store";
 import { canImport, importFile, parseCsv } from "./importers";
 
 // jsdom's File doesn't implement the Blob read methods, so back them with the body.
@@ -74,6 +76,53 @@ describe("importFile routing", () => {
 
   it("rejects an unsupported extension", async () => {
     await expect(importFile(file("a.exe", "x"))).rejects.toThrow(/Unsupported/);
+  });
+});
+
+describe("deck import", () => {
+  it("*.slides.html → slides artifact carrying meta.kind = 'deck'", async () => {
+    const a = created(await importFile(file("q4.slides.html", DECK_FIXTURE_HTML)));
+    expect(a.type).toBe("slides");
+    expect((a.data as { html: string }).html).toBe(DECK_FIXTURE_HTML);
+    expect(a.title).toBe("q4");
+    expect(a.meta?.kind).toBe("deck");
+    expect(a.meta?.ratio).toBe("16:9");
+  });
+
+  it("upload renders identically to the streamed slides scenario", async () => {
+    const scenario = scenarios.find((s) => s.id === "slides");
+    if (!scenario) throw new Error("slides scenario not found in fixtures");
+    const store = createCanvasStore();
+    store.getState().applyEvents(scenario.events);
+    const streamed = store.getState().canvas.artifacts.deck;
+    if (!streamed) throw new Error("deck artifact was not created by the slides scenario");
+
+    const uploaded = created(await importFile(file("q4.slides.html", DECK_FIXTURE_HTML)));
+
+    expect(uploaded.data).toEqual(streamed.data);
+    // The store may stamp bookkeeping onto `meta` (e.g. a remote change counter)
+    // as events are applied; the upload must carry every protocol-level key the
+    // stream did, so compare as a subset rather than byte-for-byte.
+    expect(uploaded.meta).toEqual({ kind: "deck", ratio: "16:9" });
+    expect(streamed.meta).toMatchObject(uploaded.meta ?? {});
+  });
+
+  it("a .html file whose <html> open tag carries data-lcx-dialect is also imported as a deck", async () => {
+    const html = '<html data-lcx-dialect="1"><head></head><body></body></html>';
+    const a = created(await importFile(file("deck.html", html)));
+    expect(a.type).toBe("slides");
+    expect(a.meta?.kind).toBe("deck");
+  });
+
+  it("a .html file that merely mentions data-lcx-dialect in body text stays a plain html artifact", async () => {
+    const html = "<html><body><p>Set data-lcx-dialect on the html tag</p></body></html>";
+    const a = created(await importFile(file("page.html", html)));
+    expect(a.type).toBe("html");
+  });
+
+  it("rejects a legacy slide deck JSON envelope", async () => {
+    const payload = JSON.stringify({ type: "slides", data: { slides: [] }, title: "old" });
+    await expect(importFile(file("old.json", payload))).rejects.toThrow(/Legacy slide deck JSON is not supported/);
   });
 });
 

@@ -5,7 +5,10 @@
  * file and edit it on the canvas, then export it back out (round-trip). Each
  * importer maps a file to a `canvas.create` + `canvas.status: complete` event
  * pair, so an opened file flows through the exact same reconciler path an
- * agent's stream would — no special-casing downstream.
+ * agent's stream would — no special-casing downstream. A `.slides.html` file
+ * (or any `.html` file whose `<html>` tag carries the deck dialect attribute)
+ * is imported as a `slides` artifact so it renders and edits identically to a
+ * deck streamed in by an agent.
  *
  * Dependency policy mirrors the exporters: every format here is parsed inline
  * with zero dependencies. A spreadsheet is opened on the Python side instead
@@ -13,8 +16,15 @@
  * fills, merges and images — more than a browser should carry to do well.
  */
 
-import type { Artifact, DocumentData, HtmlData, TableColumn, TableData } from "../protocol/artifacts";
+import type { Artifact, DocumentData, HtmlData, SlidesData, TableColumn, TableData } from "../protocol/artifacts";
+import { isLegacySlidesData } from "../protocol/artifacts";
 import type { CanvasCreate, CanvasStatus, StreamEvent } from "../protocol/events";
+
+// Mirrors the Python-side dialect check (`langchain_canvas/deck/validate.py`
+// `_DIALECT_ATTR_RE`) — anchored on the `<html>` open tag so a slide body that
+// merely *mentions* the attribute in text doesn't misfire.
+const DIALECT_ATTR_RE = /<html\b[^>]*\bdata-lcx-dialect\b/i;
+const RATIO_ATTR_RE = /<html\b[^>]*\bdata-ratio\s*=\s*"([^"]*)"/i;
 
 /** Extensions we can turn into an artifact, for `accept="…"` and drop filtering. */
 export const IMPORTABLE_EXTENSIONS = [".csv", ".md", ".markdown", ".txt", ".html", ".htm", ".json"] as const;
@@ -49,25 +59,37 @@ export async function importFile(file: File): Promise<StreamEvent[]> {
   const ext = extensionOf(file.name);
   const id = newId(file.name);
   const title = baseName(file.name);
+  const text = await file.text();
+
+  const isDeck = ext === ".html" || ext === ".htm"
+    ? file.name.toLowerCase().endsWith(".slides.html") || DIALECT_ATTR_RE.test(text)
+    : false;
+  if (isDeck) {
+    // "q4.slides.html" -> title "q4.slides" -> deck title "q4"; "deck.html" -> title "deck" unchanged.
+    const deckTitle = title.toLowerCase().endsWith(".slides") ? title.slice(0, -".slides".length) : title;
+    const ratio = RATIO_ATTR_RE.exec(text)?.[1] ?? "16:9";
+    const data: SlidesData = { html: text };
+    return toEvents({ ...artifact(id, "slides", deckTitle, data), meta: { kind: "deck", ratio } });
+  }
 
   switch (ext) {
     case ".csv": {
-      const data = parseCsv(await file.text());
+      const data = parseCsv(text);
       return toEvents(artifact(id, "table", title, data));
     }
     case ".md":
     case ".markdown":
     case ".txt": {
-      const data: DocumentData = { format: "markdown", content: await file.text() };
+      const data: DocumentData = { format: "markdown", content: text };
       return toEvents(artifact(id, "document", title, data));
     }
     case ".html":
     case ".htm": {
-      const data: HtmlData = { html: await file.text() };
+      const data: HtmlData = { html: text };
       return toEvents(artifact(id, "html", title, data));
     }
     case ".json":
-      return importJson(await file.text(), id, title);
+      return importJson(text, id, title);
     default:
       throw new Error(`Unsupported file type "${ext || file.name}". Supported: ${IMPORTABLE_EXTENSIONS.join(", ")}`);
   }
@@ -91,6 +113,9 @@ function importJson(text: string, id: string, title: string): StreamEvent[] {
   // A previously-exported artifact envelope: re-home it under a fresh id.
   if (parsed && typeof parsed === "object" && "type" in parsed && "data" in parsed) {
     const a = parsed as Artifact;
+    if (a.type === "slides" && isLegacySlidesData(a.data)) {
+      throw new Error("Legacy slide deck JSON is not supported; export the deck as .slides.html");
+    }
     return toEvents({ ...a, id, version: 1, status: "complete" });
   }
   // Otherwise show the JSON as a fenced markdown block.
