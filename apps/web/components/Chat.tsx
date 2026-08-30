@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { ArrowUp, AtSign, Paperclip, Square } from "lucide-react";
 import { ArtifactCard, type ChatMessage } from "@braincrew-lab/langchain-canvas";
 
 interface ChatProps {
@@ -76,28 +77,45 @@ export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, su
       </div>
 
       <div className="composer">
-        <textarea
-          className="composer__input"
-          value={draft}
-          placeholder="Message the agent…"
-          rows={1}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        {isStreaming ? (
-          <button className="composer__btn composer__btn--stop" onClick={onStop}>
-            Stop
-          </button>
-        ) : (
-          <button className="composer__btn" onClick={submit} disabled={!draft.trim()}>
-            Send
-          </button>
-        )}
+        <div className="composer__card">
+          <textarea
+            className="composer__input"
+            value={draft}
+            placeholder="Ask the agent to add, edit or export slides…"
+            rows={1}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <div className="composer__actions">
+            <div className="composer__left">
+              <button type="button" className="composer__icon" aria-label="Attach file" disabled>
+                <Paperclip size={16} aria-hidden />
+              </button>
+              <button type="button" className="composer__icon" aria-label="Mention" disabled>
+                <AtSign size={16} aria-hidden />
+              </button>
+            </div>
+            {isStreaming ? (
+              <button className="composer__send composer__send--stop" onClick={onStop} aria-label="Stop">
+                <Square size={14} aria-hidden />
+              </button>
+            ) : (
+              <button
+                className="composer__send"
+                onClick={submit}
+                disabled={!draft.trim()}
+                aria-label="Send"
+              >
+                <ArrowUp size={16} aria-hidden />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

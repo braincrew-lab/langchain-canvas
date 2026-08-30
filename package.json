@@ -9,7 +9,8 @@
     "build": "pnpm --filter @braincrew-lab/langchain-canvas build",
     "dev:web": "pnpm --filter langchain-canvas-web dev",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm --filter @braincrew-lab/langchain-canvas test"
+    "test": "pnpm -r test",
+    "lint:design": "bash scripts/design-lint.sh"
   },
   "keywords": [
     "langchain",

@@ -15,7 +15,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { Check } from "lucide-react";
 import { Canvas, scenarios, useCanvasReplay, type StreamEvent } from "@braincrew-lab/langchain-canvas";
+
+import { TYPE_LABELS } from "../lib/ui-constants";
 
 interface Prop {
   name: string;
@@ -41,16 +44,6 @@ const ARTIFACT_PROPS: Prop[] = [
   { name: "data", type: "object", required: true, desc: "Type-specific payload the renderer reads (see the table below)." },
   { name: "meta", type: "object", required: false, desc: "Free-form metadata; ignored by the renderer unless you use it." },
 ];
-
-/** Friendly Office names shown on the tabs (the wire `type` stays lowercase). */
-const LABELS: Record<string, string> = {
-  "html-page": "Web",
-  document: "Word",
-  chart: "Chart",
-  table: "Excel",
-  slides: "PowerPoint",
-  versions: "Versions",
-};
 
 /** Per-scenario docs: the Python call, the `data` schema, and its properties. */
 const DOCS: Record<string, Doc> = {
@@ -193,14 +186,16 @@ export default function ExplorerPage() {
           </div>
         </header>
 
-        <nav className="explorer__tabs">
+        <nav className="explorer__tabs" role="tablist">
           {scenarios.map((s) => (
             <button
               key={s.id}
+              role="tab"
+              aria-selected={s.id === activeId}
               className={`explorer__tab ${s.id === activeId ? "is-active" : ""}`}
               onClick={() => setActiveId(s.id)}
             >
-              {LABELS[s.id] ?? DOCS[s.id]?.type ?? s.id}
+              {TYPE_LABELS[s.id] ?? DOCS[s.id]?.type ?? s.id}
             </button>
           ))}
         </nav>
@@ -217,7 +212,7 @@ export default function ExplorerPage() {
             <PropTable props={ARTIFACT_PROPS} />
           </Section>
 
-          <Section n="3" title={`${LABELS[activeId] ?? doc.type} — "${doc.type}" data`}>
+          <Section n="3" title={`${doc.type} data`}>
             <pre className="explorer__code explorer__code--muted">{doc.schema}</pre>
             <PropTable props={doc.props} />
           </Section>
@@ -232,7 +227,10 @@ export default function ExplorerPage() {
             {error ? (
               <p className="explorer__err">⚠ {error}</p>
             ) : (
-              <p className="explorer__ok">✓ valid — rendered on the right</p>
+              <p className="explorer__ok">
+                <Check size={14} aria-hidden />
+                valid — rendered on the right
+              </p>
             )}
           </Section>
         </div>

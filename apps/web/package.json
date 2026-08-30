@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@braincrew-lab/langchain-canvas": "workspace:*",
+    "lucide-react": "^0.469.0",
     "next": "^15.5.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -18,6 +20,7 @@
     "@types/node": "^22.9.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4"
   }
 }

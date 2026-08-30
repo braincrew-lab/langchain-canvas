@@ -149,6 +149,85 @@ useEffect(() => { play(scenarios.find((s) => s.id === "table")!.events); }, [pla
 useCanvasStream({ mock: (msg) => (/차트|chart/i.test(msg) ? chartEvents : null) }); // null → 엔드포인트로
 ```
 
+## 테마
+
+기본 테마는 라이트이고, 스타일시트의 모든 색상·모서리·그림자·폰트는 CSS 변수입니다 —
+포크 없이 `--cv-*` 토큰을 오버라이드해 리테마할 수 있습니다.
+
+```tsx
+import "@braincrew-lab/langchain-canvas/styles.css";
+```
+
+### 토큰
+
+전체 27개 토큰 목록과 현재 값은
+`packages/canvas-react/src/styles/canvas.css`에서 확인할 수 있습니다. 대표적인 항목만
+추리면:
+
+| 토큰 | 용도 | 라이트 기본값 |
+|---|---|---|
+| `--cv-bg` / `--cv-surface` | 캔버스 배경 / 카드 표면 | `#F9FAFB` / `#FFFFFF` |
+| `--cv-border` / `--cv-border-soft` | 기본 / 옅은 보더 | `#D1D6DB` / `#E5E8EB` |
+| `--cv-text` / `--cv-text-secondary` / `--cv-muted` | 텍스트 위계 | `#191F28` / `#333D4B` / `#6B7684` |
+| `--cv-tag-bg` | 태그/필 배경 | `#F2F4F6` |
+| `--cv-accent` / `--cv-accent-weak` / `--cv-accent-text` / `--cv-accent-border` | 액센트 계열(활성 탭, 배지, 포커스 링) | `#9360FF` / `#F5F0FF` / `#5232B3` / `#E0D4F5` |
+| `--cv-cta` / `--cv-cta-hover` | 기본 CTA | `#704BD6` / `#5B3CC4` |
+| `--cv-sidebar-active` / `--cv-sidebar-selected` | 사이드바 행 상태 | `#EFE4F7` / `#F7F2FB` |
+| `--cv-user-bubble` | 챗 사용자 말풍선 배경 | `#191F28` |
+| `--cv-destructive-text` / `--cv-destructive-light` / `--cv-destructive-border` | 파괴적 액션 | `#B91C1C` / `#FEF2F2` / `#FECACA` |
+| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | 모서리 반경 | `2px` / `6px` / `20px` |
+| `--cv-shadow-card` | 카드 elevation | `0 2px 8px rgba(25,31,40,0.06)` |
+| `--cv-font` / `--cv-font-display` / `--cv-mono` | 타이포그래피(아래 Fonts 참고) | — |
+
+### 토큰 오버라이드
+
+스타일시트 import 이후, `:root`(또는 `<Canvas />`의 조상 요소 아무 곳)에 변수를 설정하면
+됩니다:
+
+```css
+:root {
+  --cv-accent: #2563eb;
+  --cv-radius: 8px;
+}
+```
+
+### 다크 모드
+
+다크 모드는 더 이상 자동으로 켜지지 않습니다. 다크 팔레트는 명시적인 `.dark` 클래스
+스코프 아래에 있으므로, `<html>`(또는 `<Canvas />`의 조상 요소)에 클래스를 추가해야
+활성화됩니다:
+
+```html
+<html class="dark">
+```
+
+**OS 자동 다크 모드 복원:** 이전 스타일시트는 `prefers-color-scheme: dark`를 자체적으로
+따라갔지만, 그 미디어쿼리는 제거되어 이제 호스트 앱이 활성 테마를 직접 제어합니다. 이
+동작에 의존하고 있었다면, `.dark` 오버라이드를 그대로 미러링해 자신의 스타일시트에
+다시 추가하세요:
+
+```css
+@media (prefers-color-scheme: dark) {
+  :root:not(.dark) {
+    --cv-bg: #0f1115;
+    --cv-surface: #171a21;
+    --cv-border: #262b36;
+    --cv-text: #e6e8eb;
+    --cv-muted: #9aa4b2;
+    --cv-accent: #818cf8;
+    --cv-accent-weak: #1e2130;
+  }
+}
+```
+
+### 폰트
+
+`--cv-font`, `--cv-font-display`, `--cv-mono`는 범용 폰트 스택 이름
+(`"Pretendard", "Sora", -apple-system, ...` / `"Sora", "Pretendard", ...` /
+`"IBM Plex Mono", Menlo, monospace`)으로만 되어 있고, 이 패키지에는 폰트 파일이
+번들되어 있지 않습니다. 실제로 렌더링되게 하려면 해당 폰트 패밀리를 앱에서 직접
+로드하거나, 이미 로드한 폰트로 변수를 오버라이드하세요.
+
 ## 동작 방식
 
 ```

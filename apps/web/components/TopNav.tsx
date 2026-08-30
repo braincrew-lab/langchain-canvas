@@ -4,12 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { BrandLogo } from "./BrandLogo";
-
-const LINKS = [
-  { href: "/", label: "Docs" },
-  { href: "/chat", label: "Chat demo" },
-  { href: "/replay", label: "Replay" },
-];
+import { NAV_LINKS } from "../lib/ui-constants";
 
 export function TopNav() {
   const pathname = usePathname();
@@ -17,12 +12,14 @@ export function TopNav() {
     <header className="topnav">
       <Link href="/" className="topnav__brand">
         <span className="topnav__logo">
-          <BrandLogo />
+          <BrandLogo size={16} />
         </span>
-        <b>langchain-canvas</b>
+        <b>Deep Agent Builder</b>
+        <span className="topnav__sep">/</span>
+        <span className="topnav__module">Canvas</span>
       </Link>
       <nav className="topnav__links">
-        {LINKS.map((l) => (
+        {NAV_LINKS.map((l) => (
           <Link key={l.href} href={l.href} className={pathname === l.href ? "is-active" : ""}>
             {l.label}
           </Link>
