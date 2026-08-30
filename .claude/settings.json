@@ -1,0 +1,200 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PostToolUse",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PreToolUse",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PreToolUse",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      },
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PreToolUse",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PreToolUse",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Glob|Grep"
+      },
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" PreToolUse",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "ExitPlanMode"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" SessionStart",
+            "timeout": 30,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" Stop",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Agent"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" SubagentStart",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" SubagentStop",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" TaskCompleted",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" TaskCreated",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/omb/omb-hook.sh\" TeammateIdle",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "OMB_DOCUMENTATION_LANGUAGE": "ko",
+    "OMB_USE_CODEX": "1",
+    "OMB_ORM_BACKEND": "tortoise",
+    "OMB_SUBAGENT_WATCHDOG": "true",
+    "OMB_SUBAGENT_POLL_SLICE_S": "30",
+    "OMB_SUBAGENT_STARTUP_GRACE_S": "120",
+    "OMB_SUBAGENT_SOFT_INACTIVITY_S": "120",
+    "OMB_SUBAGENT_INACTIVITY_S": "300",
+    "OMB_SUBAGENT_HARD_CEILING_S": "900",
+    "OMB_SUBAGENT_RETRY_MAX": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git grep:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git status:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(mypy:*)",
+      "Bash(npx eslint:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(printenv:*)",
+      "Bash(pyright:*)",
+      "Bash(pytest:*)",
+      "Bash(rg:*)",
+      "Bash(ruff:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(wc:*)",
+      "Edit(.claude/agent-memory/**)",
+      "Edit(.omb/**)",
+      "Glob",
+      "Grep",
+      "Read",
+      "Skill"
+    ],
+    "ask": [
+      "ExitPlanMode"
+    ],
+    "defaultMode": "default"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "\"$CLAUDE_PROJECT_DIR/.claude/statusline-omb.sh\"",
+    "padding": 1
+  },
+  "respectGitignore": true
+}

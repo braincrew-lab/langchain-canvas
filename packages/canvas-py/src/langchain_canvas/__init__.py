@@ -30,6 +30,7 @@ from .converters import ConvertedSource, PageRenderable, SourceConverter, defaul
 from .emitter import Canvas, ChartHandle, DeckHandle, DocumentHandle, TableHandle
 from .exporters import ExportedFile, Exporter, default_exporters
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
+from .history_repair import repair_orphaned_tool_calls, repair_tool_history
 from .replay import (
     encode_artifact,
     encode_chart,
@@ -37,6 +38,7 @@ from .replay import (
     hydrate_events,
     source_preview_events,
 )
+from .state import canvas_now, last_change_line
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
 from .streaming.sse import sse_from_agent
 from .tools import (
@@ -50,6 +52,10 @@ from .tools import (
 )
 
 __all__ = [
+    "repair_orphaned_tool_calls",
+    "repair_tool_history",
+    "canvas_now",
+    "last_change_line",
     "ASSET_REFERENCE_PREFIXES",
     "Canvas",
     "SUPPORTED_FORMULA_FUNCTIONS",

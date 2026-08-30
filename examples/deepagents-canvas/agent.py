@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 
-from langchain_canvas import FileCanvasStore, create_canvas_tools, create_export_tool
+from langchain_canvas import FileCanvasStore, create_canvas_tools, create_export_tool, repair_tool_history
 
 from doc_check import make_check_document
 
@@ -141,4 +141,7 @@ graph = create_deep_agent(
         create_export_tool(STORE),
     ],
     system_prompt=SYSTEM_PROMPT,
+    # Fill in results for tool calls an interrupted run left unanswered, so a
+    # thread never gets stuck on Anthropic's "tool_use without tool_result" 400.
+    middleware=[repair_tool_history],
 )
