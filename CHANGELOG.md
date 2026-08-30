@@ -4,6 +4,55 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.26] — 2026-08-30
+
+### Added
+- **An uploaded workbook gets an editable working copy.** `workbook_working_copy`
+  lands `<name>.table.json` next to a `sources/*.xlsx` upload, with the sheets,
+  fonts, merges and formulas of the original. With the copy on the canvas the
+  upload shows as a file card, so there is one grid — the one that saves.
+- **The eye opens on its own.** `export_canvas` returns the exported file's page
+  grid when a page renderer is mounted (`converters=`). Measured before: told to
+  look 14 times, looked once.
+- **Anchors take an address.** A Word edit may lead with the address the read
+  printed — `"[p7] title"` — which picks that paragraph when the same words
+  appear twice; the address alone means the whole paragraph.
+- **An upload being edited shows as its copy alone.** Once `deck.slides.html`,
+  `book.table.json` or `Editing - memo.docx` is on the canvas, the
+  `sources/` upload it came from has no tab of its own (the file list still
+  has it). The copy names are one rule on both sides, parity-pinned.
+- **Undo is an edit.** Undo and redo work per file, reach `onUserEdit` (so
+  what is on screen after undo is what gets saved), are refused while the
+  canvas is busy, and a file's steps are forgotten once the agent writes it —
+  the agent's result is a version on the rail, not a step to undo. A click
+  that moves nothing is no longer recorded as an edit.
+- **Pending saves can be flushed.** `useCanvasSave` returns a saver with
+  `flush()`, and the store's `flushSaves()` blurs an edit in progress and
+  hands every pending save through — for a host to call before a message
+  starts a run, or before a version is named.
+- **The canvas can be frozen while the agent works.** `<Canvas busy busyLabel=…>`
+  shows a banner and the store refuses hand edits until the host thaws it.
+- **A table's look is readable and copyable.** `read_canvas(sheet=…)` ends with
+  `styles:` lines saying where each look lives; `write_table_cells` takes
+  `{"v": …, "like": "A3"}` to copy a cell's style, plus explicit style keys.
+- **The canvas tells the model where it stands.** `canvas_now` (for the system
+  prompt) lists the files and what the person changed since the agent last
+  wrote; `read_canvas` headers carry the file's last change (who, what, when).
+
+### Changed
+- `write_canvas` refuses a `.table.json` with keys outside `data`, that does not
+  parse, or that would drop the person's grid state. The reply names the fix;
+  nothing is saved.
+- A table save is normalised so `columns` and `rows` are always present, and the
+  table renderer no longer crashes when they are not.
+- `edit_canvas` with identical `old` and `new` saves nothing.
+- An agent's write to a spreadsheet redraws the grid at once (`meta.remoteSeq`),
+  where before it showed only after a reload.
+- The spreadsheet grid does not persist Fortune's mount-time normalisation as an
+  edit; a change counts once the person has pointed at or typed into the grid.
+- Tool descriptions and `CANVAS_GUIDANCE` say, per office format, which file is
+  edited and how; the refusal for writing into `sources/` names the way in.
+
 ## [0.7.25] — 2026-08-28
 
 ### Added

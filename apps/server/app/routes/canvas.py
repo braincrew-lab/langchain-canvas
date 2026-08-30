@@ -22,7 +22,12 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from langchain_canvas import encode_artifact, hydrate_events, source_preview_events
+from langchain_canvas import (
+    encode_artifact,
+    hydrate_events,
+    source_preview_events,
+    workbook_working_copy,
+)
 from langchain_canvas.replay import SOURCES_PREFIX
 from langchain_canvas.store import (
     CanvasFileNotFoundError,
@@ -129,6 +134,12 @@ async def upload(thread_id: str, file: UploadFile) -> dict:
         commit = STORE.write(thread_id, path, text, description, actor="human")
     else:
         commit = STORE.write_bytes(thread_id, path, data, description, actor="human")
+    # A workbook gets its editable copy right away; with the copy on the
+    # canvas the upload itself shows as a card (see workbook_working_copy).
+    copy_events: list[dict] = []
+    if name.lower().endswith(".xlsx"):
+        landed = workbook_working_copy(STORE, thread_id, path, actor="human")
+        copy_events = landed[1] if landed else []
     events = source_preview_events(
         STORE,
         thread_id,
@@ -137,7 +148,7 @@ async def upload(thread_id: str, file: UploadFile) -> dict:
         revision=commit.revision,
         description=description,
     )
-    return {"path": path, "revision": commit.revision, "events": events}
+    return {"path": path, "revision": commit.revision, "events": [*events, *copy_events]}
 
 
 @router.get("/api/canvas/{thread_id}/files")

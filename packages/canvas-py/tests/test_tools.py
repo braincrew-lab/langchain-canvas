@@ -1030,11 +1030,14 @@ def test_descriptions_only_name_tools_that_exist() -> None:
         create_document_tools,
         create_export_tool,
     )
+    from langchain_canvas.tools import create_deck_tools, create_table_tools
 
     store = InMemoryCanvasStore()
     built = [
         *create_canvas_tools(store),
         *create_document_tools(store),
+        *create_deck_tools(store),
+        *create_table_tools(store),
         create_export_tool(store),
         create_asset_tool(store),
         create_check_table_tool(store),
@@ -1214,3 +1217,60 @@ def test_the_editing_operations_answer_a_deck_the_same_way() -> None:
         revision="r1",
     )
     assert "`pages`" in reply, reply
+
+
+# --- nothing to change, nothing saved ------------------------------------------------
+
+
+def test_an_edit_whose_old_equals_new_saves_nothing() -> None:
+    store = InMemoryCanvasStore()
+    runtime = _runtime(thread_id="t1")
+    _invoke(_tools(store)["write_canvas"], runtime, path="a.md", content="hello", description="c")
+    before = len(store.history("t1"))
+    revision = store.read("t1", "a.md").revision
+    reply = _invoke(
+        _tools(store)["edit_canvas"], runtime,
+        path="a.md", old="hello", new="hello", description="noop", revision=revision,
+    )
+    assert reply.startswith("Error:") and "nothing to change" in reply
+    assert len(store.history("t1")) == before
+
+
+# --- the eye opens on its own --------------------------------------------------------
+
+
+class _PptxEye:
+    """A page renderer for .pptx that answers with one image block per page."""
+
+    suffixes = (".pptx",)
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[int] | str]] = []
+
+    def convert(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        return ConvertedSource(blocks=[{"type": "text", "text": "deck"}], metadata={})
+
+    def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        self.calls.append((path, pages))
+        return ConvertedSource(
+            blocks=[
+                {"type": "image", "source_type": "base64", "data": "AA==", "mime_type": "image/png"}
+                for _ in pages
+            ],
+            metadata={"pages": ",".join(map(str, pages))},
+        )
+
+    def render_grid(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        self.calls.append((path, "grid"))
+        return ConvertedSource(
+            blocks=[
+                {"type": "image", "source_type": "base64", "data": "AA==", "mime_type": "image/png"}
+            ],
+            metadata={},
+        )

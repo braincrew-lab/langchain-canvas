@@ -49,6 +49,7 @@ const LABELS: Record<string, string> = {
   chart: "Chart",
   table: "Excel",
   slides: "PowerPoint",
+  versions: "Versions",
 };
 
 /** Per-scenario docs: the Python call, the `data` schema, and its properties. */
@@ -131,6 +132,23 @@ deck.complete()`,
 type SlidesData = { html: string };`,
     props: [
       { name: "html", type: "string", required: true, desc: "The whole deck document: one <template data-slide-id> per slide. Renders as an editable deck (add / duplicate / delete) and exports to .pptx." },
+    ],
+  },
+  versions: {
+    type: "html",
+    pyCall: `page = canvas.open_html(title="Coffee history")
+page.set_html(html)
+page.complete()
+canvas.commit(page.id, "Create page")          # -> v1
+# ... a user hand-edit lands as "Manual edit: 1 change" (v2)
+canvas.html(page.id).patch(html=revised_html)
+canvas.commit(page.id, "Update closing phrase") # -> v3`,
+    schema: `// canvas.commit — a named snapshot of one artifact.
+// Any artifact type; the rail lists commits newest-first.
+type CommitEvent = { type: "canvas.commit"; id: string; description: string; revision: string };`,
+    props: [
+      { name: "description", type: "string", required: true, desc: "What changed in this version, shown on the version rail." },
+      { name: "revision", type: "string", required: true, desc: "Stable identifier for the snapshot (v1, v2, …); restore-view loads it read-only." },
     ],
   },
 };

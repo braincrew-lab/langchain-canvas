@@ -133,3 +133,4 @@ describe("printed background colours", () => {
     expect(PRINT_COLOR_CSS).toContain("print-color-adjust:exact");
   });
 });
+

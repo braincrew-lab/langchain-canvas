@@ -35,6 +35,7 @@ Requires ``python-docx`` — installed by the ``office`` extra.
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
@@ -313,8 +314,50 @@ def _not_found(spots: list[_Spot], anchor: str) -> AnchorError:
     return AnchorError("\n".join(parts))
 
 
+# An anchor may lead with the address the reader printed: ``[p7] 리서치``.
+_ADDRESSED = re.compile(r"^\[([A-Za-z0-9/]+)\]\s*(.*)$", re.DOTALL)
+
+
+def split_address(anchor: str) -> tuple[str | None, str]:
+    """``("p7", "리서치")`` for ``"[p7] 리서치"``; ``(None, anchor)`` otherwise.
+
+    A title that is the whole of its paragraph and appears again in the body
+    cannot be made unique by "extending it with surrounding words" — there
+    are none. The address the reader prints is the disambiguator, and the
+    one a model reaches for first; so the anchor accepts it in front. The
+    text after it may be empty, which means the whole paragraph.
+    """
+    match = _ADDRESSED.match(anchor)
+    if match is None:
+        return None, anchor
+    return match.group(1), match.group(2)
+
+
 def _resolve(spots: list[_Spot], anchor: str) -> tuple[_Spot, int]:
-    """The single paragraph an anchor points at, or a loud refusal."""
+    """The single paragraph an anchor points at, or a loud refusal.
+
+    Returns ``(spot, offset)``; ``offset`` is where the anchor's text part
+    starts inside the paragraph (0 for an address-only anchor).
+    """
+    label, text = split_address(anchor)
+    if label is not None:
+        addressed = [spot for spot in spots if spot.label == label]
+        if not addressed:
+            known = ", ".join(f"[{spot.label}]" for spot in spots[:_MAX_AMBIGUOUS_SHOWN])
+            raise AnchorError(
+                f"no paragraph is addressed [{label}] — the addresses in this document "
+                f"start {known}; copy one from read_canvas."
+            )
+        spots = addressed
+        if not text:
+            return spots[0], 0
+        hits = _find(spots, text)
+        if not hits:
+            raise AnchorError(
+                f"[{label}] does not contain {text!r} — that paragraph reads "
+                f"{spots[0].text!r}."
+            )
+        return hits[0]
     if not anchor:
         raise AnchorError("anchor is empty — pass the text you want to point at.")
     hits = _find(spots, anchor)
@@ -325,8 +368,8 @@ def _resolve(spots: list[_Spot], anchor: str) -> tuple[_Spot, int]:
         extra = len(hits) - _MAX_AMBIGUOUS_SHOWN
         more = f" and {extra} more" if extra > 0 else ""
         raise AnchorError(
-            f"anchor matches {len(hits)} places ({where}{more}) — extend it with "
-            "surrounding words until exactly one place matches."
+            f"anchor matches {len(hits)} places ({where}{more}) — put the address in "
+            f"front to pick one, like {where.split(', ')[0]} {anchor!r}."
         )
     return hits[0]
 
@@ -433,7 +476,15 @@ def replace_text(data: bytes, old: str, new: str, *, path: str = "document.docx"
     document = _open(data, path=path)
     spots = _spots(document)
     spot, start = _resolve(spots, old)
-    _splice(spot.runs, start, start + len(old), new)
+    label, matched = split_address(old)
+    if label is not None:
+        # The address is how the caller pointed, not text for the page — a
+        # replacement written in the same shape ("[p7] new title") drops it.
+        new_label, new_text = split_address(new)
+        if new_label == label:
+            new = new_text
+    length = len(matched) if matched else len(spot.text)
+    _splice(spot.runs, start, start + length, new)
     return repack(data, _saved(document), {spot.part})
 
 

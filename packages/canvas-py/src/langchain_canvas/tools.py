@@ -95,13 +95,18 @@ from .exporters import (
     pptx_page_size_inches,
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
+from .protocol.artifacts import TableData
 from .protocol.events import CanvasCommit, CanvasSlidePatch, SlideStatus
 from .replay import (
     ARTIFACT_SUFFIXES,
+    TABLE_SUFFIX,
     display_title,
+    encode_artifact,
     events_for_commit,
     source_preview_events,
+    working_copy_path,
 )
+from .state import last_change_line
 from .store import (
     BinaryContentError,
     CanvasFileNotFoundError,
@@ -126,7 +131,23 @@ _SOURCES_READONLY_DOCUMENT = (
     "Error: {path} is the user's original upload and is read-only. Call "
     "open_document_for_editing on it first, then edit the copy it makes."
 )
+_SOURCES_READONLY_DECK = (
+    "Error: {path} is the user's original upload and is read-only. Call "
+    "open_deck_for_editing on it first, then edit the copy it makes."
+)
+_SOURCES_READONLY_WORKBOOK = (
+    "Error: {path} is the user's original upload and is read-only. Its editable "
+    'working copy is {copy} — read that with sheet="s0", then change cells with '
+    "write_table_cells. Do not rebuild it with write_canvas."
+)
 _DEFAULT_READ_LIMIT = 400
+
+
+def _with_eye(text: str, images: list[dict]) -> str | list[dict]:
+    """The tool reply as text, or text followed by page images when there are any."""
+    if not images:
+        return text
+    return [{"type": "text", "text": text}, *images]
 _DOCUMENT_FORMATS = ", ".join(DOCUMENT_OP_SUFFIXES)
 
 
@@ -185,6 +206,31 @@ def _working_copy_name(source: str) -> str:
     return name if name.startswith(_WORKING_COPY_MARKER) else _WORKING_COPY_MARKER + name
 
 
+# An inline picture the deck reader hands over, by the four types it emits.
+_IMAGE_DATA_URI = re.compile(r"^data:(image/(?:png|jpeg|gif|webp));base64,(.+)$", re.DOTALL)
+_SUFFIX_FOR_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _decode_image_data_uri(src: Any) -> tuple[str, bytes] | None:
+    """(file suffix, bytes) for an inline image; ``None`` for anything else."""
+    if not isinstance(src, str):
+        return None
+    match = _IMAGE_DATA_URI.match(src)
+    if match is None:
+        return None
+    try:
+        blob = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return _SUFFIX_FOR_MIME[match.group(1)], blob
+
+
+
 def _deck_copy_name(source: str) -> str:
     """Canvas-root name for the editable deck made from ``source``.
 
@@ -205,6 +251,10 @@ def _sources_readonly(path: str) -> str:
     """
     if _is_document_file(path):
         return _SOURCES_READONLY_DOCUMENT.format(path=path)
+    if path.lower().endswith(".pptx"):
+        return _SOURCES_READONLY_DECK.format(path=path)
+    if path.lower().endswith(".xlsx"):
+        return _SOURCES_READONLY_WORKBOOK.format(path=path, copy=working_copy_path(path))
     return _SOURCES_READONLY
 
 
@@ -414,6 +464,16 @@ def create_canvas_tools(
     def _has_file(canvas_id: str, path: str) -> bool:
         return any(info.path == path for info in store.list_files(canvas_id))
 
+    def _revision_header(canvas_id: str, path: str, revision: str) -> str:
+        """``revision: v4`` plus who last changed the file and when.
+
+        The revision alone says nothing about whether the person has been
+        here; the actor and the age do, and they come from the log the store
+        already keeps.
+        """
+        last = last_change_line(store, canvas_id, path)
+        return f"revision: {revision}" + (f"\n{last}" if last else "")
+
     def _edit_document(
         runtime: ToolRuntime,
         canvas_id: str,
@@ -488,6 +548,72 @@ def create_canvas_tools(
             )
         return ""
 
+    def _table_refusal(
+        canvas_id: str, path: str, content: str, *, is_new: bool
+    ) -> tuple[str | None, str]:
+        """``(refusal, content)`` for a table save: refuse, or normalise.
+
+        Three things put a broken grid in front of the person: a file that is
+        not the envelope, keys written outside ``data``, and a rewrite of a
+        table the person has formatted (its ``sheet``) that drops that state.
+        Everything else is normalised through the schema, so ``columns`` and
+        ``rows`` are always present for the renderer.
+        """
+        shape = (
+            '{"type": "table", "title": "...", "data": {"columns": [...], "rows": [...]}}'
+        )
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError as exc:
+            return (
+                f"Error: {path} was not saved — it is not valid JSON ({exc.msg} at line "
+                f"{exc.lineno}). A table is {shape}."
+            ), content
+        if not isinstance(envelope, dict):
+            return f"Error: {path} was not saved — a table is {shape}.", content
+        misplaced = [k for k in ("columns", "rows", "sheet") if k in envelope]
+        if misplaced:
+            named = ", ".join(f'"{k}"' for k in misplaced)
+            return (
+                f"Error: {path} was not saved — {named} must sit inside \"data\", not at "
+                f"the top level: {shape}."
+            ), content
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            return f"Error: {path} was not saved — \"data\" is missing: {shape}.", content
+        try:
+            model = TableData.model_validate(data)
+        except Exception as exc:  # noqa: BLE001 - pydantic's message is the fix
+            return f"Error: {path} was not saved — {exc}", content
+        if not is_new:
+            try:
+                current = json.loads(store.read(canvas_id, path).content)
+            except (CanvasStoreError, ValueError):
+                current = None
+            has_sheet = isinstance(current, dict) and bool(
+                (current.get("data") or {}).get("sheet")
+            )
+            if has_sheet and not model.sheet:
+                return (
+                    f"Error: {path} was not saved — it holds the person's grid state "
+                    "(formatting, merges, formulas), which this rewrite would erase. "
+                    "Change cells with write_table_cells instead."
+                ), content
+        normalised = model.model_dump(by_alias=True, exclude_none=True)
+        title = envelope.get("title")
+        try:
+            content = encode_artifact(
+                {
+                    "type": "table",
+                    "title": title if isinstance(title, str) else display_title(path),
+                    "data": normalised,
+                },
+                path,
+            )
+        except ValueError as exc:
+            return f"Error: {path} was not saved — {exc}", content
+        return None, content
+
     def _deck_html_note(content: str) -> str:
         """The deck check for a canonical ``.slides.html`` deck."""
         warnings = [issue.message for issue in validate_deck(content)]
@@ -561,14 +687,47 @@ def create_canvas_tools(
         )
         sliced, note = _sliced(text, offset, limit)
         meta = ", ".join(f"{k}: {v}" for k, v in converted.metadata.items())
-        header = f"revision: {got.revision}\nconverted view of {path}" + (
+        header = f"{_revision_header(canvas_id, path, got.revision)}\nconverted view of {path}" + (
             f" ({meta})" if meta else ""
         )
+        way_in = _way_to_edit(canvas_id, path)
+        if way_in:
+            header += f"\n{way_in}"
         body = f"{header}\n{sliced}" + (f"\n{note}" if note else "")
         images = [block for block in converted.blocks if block.get("type") == "image"]
         if images:
             return [{"type": "text", "text": body}, *images]
         return body
+
+    def _way_to_edit(canvas_id: str, path: str) -> str:
+        """One line under an upload's read: the file it is edited through.
+
+        A read that shows the words but not the door leaves the model to
+        guess, and the guess was a fresh file with none of the original's
+        formatting. Empty for files that are not uploads.
+        """
+        if not path.startswith(_SOURCES_PREFIX):
+            return ""
+        lowered = path.lower()
+        if lowered.endswith(".xlsx"):
+            copy = working_copy_path(path)
+            if _has_file(canvas_id, copy):
+                return (
+                    f'Editable working copy: {copy} — read it with sheet="s0" and change '
+                    "cells with write_table_cells (this upload is read-only)."
+                )
+            return "This upload is read-only; there is no editable copy on the canvas yet."
+        if lowered.endswith(".pptx"):
+            return (
+                "To edit: open_deck_for_editing makes an editable copy "
+                "(this upload is read-only)."
+            )
+        if lowered.endswith(DOCUMENT_OP_SUFFIXES):
+            return (
+                "To edit: open_document_for_editing makes an editable copy "
+                "(this upload is read-only)."
+            )
+        return ""
 
     @tool
     def read_canvas(
@@ -630,16 +789,17 @@ def create_canvas_tools(
             except ValueError as exc:
                 return f"Error: {exc}."
             if view is not None and sheet is None:
-                return f"revision: {got.revision}\n{view}"
+                return f"{_revision_header(canvas_id, path, got.revision)}\n{view}"
             if view is not None:
                 header, _, body = view.partition("\n")
                 sliced, note = _sliced(body, offset, limit)
                 return (
-                    f"revision: {got.revision}\n{header}\n{sliced}"
+                    f"{_revision_header(canvas_id, path, got.revision)}\n{header}\n{sliced}"
                     + (f"\n{note}" if note else "")
                 )
         sliced, note = _sliced(got.content, offset, limit)
-        return f"revision: {got.revision}\n{sliced}" + (f"\n{note}" if note else "")
+        header = _revision_header(canvas_id, path, got.revision)
+        return f"{header}\n{sliced}" + (f"\n{note}" if note else "")
 
     @tool
     def write_canvas(
@@ -648,7 +808,7 @@ def create_canvas_tools(
         description: str,
         runtime: ToolRuntime,
         revision: str | None = None,
-    ) -> str:
+    ) -> str | list[dict]:
         """Create a new canvas file, or fully replace an existing one.
 
         `description` becomes the version-history entry — one short sentence
@@ -678,6 +838,10 @@ def create_canvas_tools(
             return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
         is_new = not _has_file(canvas_id, path)
+        if path.lower().endswith(TABLE_SUFFIX):
+            refusal, content = _table_refusal(canvas_id, path, content, is_new=is_new)
+            if refusal is not None:
+                return refusal
         try:
             commit = store.write(
                 canvas_id,
@@ -703,7 +867,7 @@ def create_canvas_tools(
         description: str,
         revision: str,
         runtime: ToolRuntime,
-    ) -> str:
+    ) -> str | list[dict]:
         """Replace exactly one occurrence of `old` with `new` in a canvas file.
 
         `revision` must be the value returned by your most recent
@@ -715,12 +879,18 @@ def create_canvas_tools(
 
         Word files ({document_formats}) are edited the same way: `old` is text
         copied from `read_canvas`, matched across the runs Word split it into,
+        and may lead with the address the read printed — `"[p7] Title"` — to
+        pick that paragraph when the same words appear twice (`"[p7]"` alone
+        means the whole paragraph). `new` is the replacement text only; an
+        address in front of it is dropped, never written into the document.
         and it must still match exactly once in the whole file — body, tables,
         headers and footers included.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
+        if old == new:
+            return "Error: old and new are the same — nothing to change, nothing saved."
         if _is_document_file(path):
             return _edit_document(runtime, canvas_id, path, old, new, description, revision)
         try:
@@ -749,6 +919,7 @@ def create_canvas_tools(
             # not there. Check the file as the edit left it.
             edited = store.read(canvas_id, path, revision=commit.revision).content
             save_note = _save_note(canvas_id, path, edited)
+            return f"Edited {path} (revision {commit.revision}).{save_note}"
         return f"Edited {path} (revision {commit.revision}).{save_note}"
 
     @tool
@@ -1117,6 +1288,12 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
 
     def _load(canvas_id: str, path: str) -> Any:
         if not path.endswith(".table.json"):
+            if path.startswith(_SOURCES_PREFIX) and path.lower().endswith(".xlsx"):
+                raise ValueError(
+                    f"{path} is the uploaded original (read-only); its working copy is "
+                    f"{working_copy_path(path)} — read that with sheet=\"s0\" and write "
+                    "cells there"
+                )
             raise ValueError(f"this works on .table.json tables (got {path})")
         return store.read(canvas_id, path)
 
@@ -1167,6 +1344,12 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
         the `### sheet:` line of the read, so nothing needs counting. A value
         starting with `=` stays a formula; `""` clears the cell. Styling on a
         cell you overwrite stays.
+
+        To match the sheet's look, write a dict: `{"v": "Notes", "like":
+        "A3"}` copies A3's bold, fill, font and colour onto the cell; explicit
+        keys win over the copy — `{"v": "Total", "bl": 1, "bg": "#DDEBF7",
+        "fc": "#1F4E78", "fs": 11}`. The read's `styles:` lines say where each
+        look lives, so "like the header" is `like` the header's address.
 
         This is how to change a table: rewriting the whole file with
         `write_canvas` replaces every sheet and drops the formatting, merges
@@ -1246,8 +1429,18 @@ def inline_deck_skin(content: str, store: CanvasStore, canvas_id: str) -> str:
     return serialize_deck(patched)
 
 
-def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:
+def create_export_tool(
+    store: CanvasStore,
+    *,
+    exporters: list[Exporter] | None = None,
+    converters: list[SourceConverter] | None = None,
+) -> Any:
     """Build an ``export_canvas`` tool bound to ``store``.
+
+    ``converters`` is the same list ``create_canvas_tools`` takes; when one of
+    them renders pages for the exported format, the reply carries a thumbnail
+    grid of the file that was just written — the export is the moment the
+    result is final, so it is the moment to look.
 
     Kept separate from :func:`create_canvas_tools` so the four standard tools
     stay a stable contract — add this tool when your agent should hand users
@@ -1257,8 +1450,10 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
     """
     active_exporters = default_exporters() if exporters is None else exporters
 
+    active_converters = default_converters() if converters is None else converters
+
     @tool
-    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str:
+    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str | list[dict]:
         """Export canvas work into a downloadable office file.
 
         ``path`` is one canvas file (``report/02-overview.html``,
@@ -1336,9 +1531,24 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
             f"Export {path} -> {exported.filename}",
             actor="agent",
         )
-        return (
+        reply = (
             f"Exported {path} to {out_path} ({len(exported.data)} bytes, revision "
             f"{commit.revision}). The user can download it from the canvas file list."
+        )
+        renderer = _renderer_for(out_path, active_converters)
+        if renderer is None:
+            return reply
+        try:
+            converted = renderer.render_grid(exported.data, path=out_path)
+        except Exception:  # noqa: BLE001 - the look is a bonus; the export already landed
+            return reply + " (The page renderer could not draw it — read it with pages=\"grid\".)"
+        images = [block for block in converted.blocks if block.get("type") == "image"]
+        if not images:
+            return reply
+        return _with_eye(
+            reply + " These are its pages as exported — check them before telling the user "
+            "it is done.",
+            images,
         )
 
     return export_canvas

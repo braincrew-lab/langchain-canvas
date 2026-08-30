@@ -63,7 +63,7 @@ export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, su
                 <span className="bubble__typing" />
               )}
             </div>
-            {message.artifactIds?.map((id) => <ArtifactCard key={id} artifactId={id} />)}
+            {Array.from(new Set(message.artifactIds)).map((id) => <ArtifactCard key={id} artifactId={id} />)}
           </div>
         ))}
 

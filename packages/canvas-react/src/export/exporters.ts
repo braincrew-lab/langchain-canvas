@@ -169,6 +169,7 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
   return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
 }
 
+
 // --- helpers --------------------------------------------------------------------
 
 function escapeXml(value: string): string {

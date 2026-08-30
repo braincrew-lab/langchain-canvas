@@ -156,7 +156,7 @@ function create(state: CanvasState, artifact: Artifact): CanvasState {
 /** Update the live artifact after a content change. A committed (described)
  *  tail is frozen — new work opens a fresh working entry on top of it instead
  *  of overwriting the snapshot. */
-function updateLive(state: CanvasState, artifact: Artifact): CanvasState {
+export function updateLive(state: CanvasState, artifact: Artifact): CanvasState {
   const versions = state.history[artifact.id] ?? [];
   const last = versions[versions.length - 1];
   if (!last || typeof last.meta?.commitDescription !== "string") {

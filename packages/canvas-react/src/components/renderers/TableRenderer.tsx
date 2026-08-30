@@ -151,13 +151,16 @@ function deriveColumns(rows: TableData["rows"]): TableColumn[] {
 const EMPTY_FORMULAS: FormulaValues = new Map();
 
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
-  const rows = artifact.data.rows;
+  // A table written by hand or by an agent may carry only `sheet`, or only
+  // `rows`; neither absence is a reason to crash the tab.
+  const rows = artifact.data.rows ?? [];
+  const declaredColumns = artifact.data.columns ?? [];
   // Fall back to deriving columns from the row keys, so a table that arrives with
   // rows but no explicit `columns` still renders instead of "Waiting for data".
   const columns = useMemo(
-    () => (artifact.data.columns.length ? artifact.data.columns : deriveColumns(rows)),
+    () => (declaredColumns.length ? declaredColumns : deriveColumns(rows)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [artifact.id, artifact.version, artifact.data.columns.length, rows.length],
+    [artifact.id, artifact.version, declaredColumns.length, rows.length],
   );
   const [mounted, setMounted] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -206,7 +209,11 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
     for (let i = 0; i < json.length; i++) hash = ((hash << 5) + hash + json.charCodeAt(i)) | 0;
     return (hash >>> 0).toString(36);
   }, [rows]);
-  const dataKey = `${artifact.id}:v${artifact.version}:${columns.length}x${rows.length}:${rowsSig}`;
+  // `remoteSeq` counts the agent's (and reload's) writes: a sheet-only change
+  // from the agent leaves version, columns and rows untouched, and without
+  // this the grid kept showing the old cells until a page reload.
+  const remoteSeq = typeof artifact.meta?.remoteSeq === "number" ? artifact.meta.remoteSeq : 0;
+  const dataKey = `${artifact.id}:v${artifact.version}:r${remoteSeq}:${columns.length}x${rows.length}:${rowsSig}`;
   const hasFormulas = useMemo(
     () => rows.slice(0, 400).some((row) => columns.some((col) => isFormula(row[col.key]))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -297,8 +304,18 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // fires the host's onUserEdit write-back hook.
   const applyEvent = useCanvasStore((s) => s.applyUserEvent);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fortune normalises the workbook it was handed and reports that back through
+  // onChange on mount — column widths, border records — before anyone touched
+  // it. Persisting that wrote a version of every opened spreadsheet with no
+  // edit in it. A change counts once the person has pointed at or typed into
+  // the grid; the workbook remounts (new wbKey) re-arm the gate.
+  const interactedRef = useRef(false);
+  useEffect(() => {
+    interactedRef.current = false;
+  }, [wbKey]);
   const handleChange = useCallback(
     (sheets: unknown) => {
+      if (!interactedRef.current) return;
       if (persistTimer.current) clearTimeout(persistTimer.current);
       persistTimer.current = setTimeout(() => {
         // Never let an empty mount-time serialization replace real content —
@@ -320,6 +337,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // next to the current selection, or at the top-left if nothing is selected.
   const wbRef = useRef<WorkbookInstance>(null);
   const insert = (type: "row" | "column") => {
+    interactedRef.current = true; // the toolbar sits outside the grid, but this is an edit
     const sel = wbRef.current?.getSelection?.();
     const range = sel?.[0]?.[type] ?? [0, 0];
     wbRef.current?.insertRowOrColumn(type, Math.max(0, range[1]), 1, "rightbottom");
@@ -374,7 +392,16 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
         )}
         <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
       </div>
-      <div className="cv-sheet" ref={rootRef}>
+      <div
+        className="cv-sheet"
+        ref={rootRef}
+        onPointerDownCapture={() => {
+          interactedRef.current = true;
+        }}
+        onKeyDownCapture={() => {
+          interactedRef.current = true;
+        }}
+      >
         <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
           <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
         </Suspense>
