@@ -175,7 +175,7 @@ import "@braincrew-lab/langchain-canvas/styles.css";
 | `--cv-sidebar-active` / `--cv-sidebar-selected` | 사이드바 행 상태 | `#EFE4F7` / `#F7F2FB` |
 | `--cv-user-bubble` | 챗 사용자 말풍선 배경 | `#191F28` |
 | `--cv-destructive-text` / `--cv-destructive-light` / `--cv-destructive-border` | 파괴적 액션 | `#B91C1C` / `#FEF2F2` / `#FECACA` |
-| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | 모서리 반경 | `2px` / `6px` / `20px` |
+| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | 모서리 반경 | `0` / `0` / `0` (sharp corners) |
 | `--cv-shadow-card` | 카드 elevation | `0 2px 8px rgba(25,31,40,0.06)` |
 | `--cv-font` / `--cv-font-display` / `--cv-mono` | 타이포그래피(아래 Fonts 참고) | — |
 

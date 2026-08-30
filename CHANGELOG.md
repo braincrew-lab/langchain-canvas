@@ -48,8 +48,8 @@ automatic behavior is removed, even though no exported API signature changes.
   `--cv-shadow-card`, `--cv-font-display`. An app overriding only the
   pre-existing tokens keeps working; the new tokens fall back to the
   package's own defaults unless also overridden.
-- **`--cv-radius` grew from `12px` to `2px`.** Any new rule consuming
-  `var(--cv-radius)` now renders a sharper corner by default; override it to
+- **All corner radii are now `0` (sharp corners).** `--cv-radius`, `--cv-radius-md`, and `--cv-radius-xl` resolve to `0`, and literal radii were flattened; any rule consuming
+  `var(--cv-radius)` now renders a square corner by default; override the tokens to
   restore the previous look.
 - `--cv-accent` no longer carries an inline fallback literal (e.g.
   `var(--cv-accent, #6366f1)`) at its consumption sites — the token's own
@@ -168,7 +168,7 @@ automatic behavior is removed, even though no exported API signature changes.
 
 ### Changed
 - **Polished, consistent toolbar buttons.** Every renderer's controls now share one
-  button language — a consistent 8px radius, a hairline of depth, a soft hover
+  button language — sharp square corners, a hairline of depth, a soft hover
   lift, a tactile press, and a visible focus ring; segmented controls (Design/Code,
   device preview) and primary actions (Present) get a subtle accent gloss. Works in
   both light and dark themes.

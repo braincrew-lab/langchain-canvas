@@ -26,7 +26,7 @@ const pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Deep Agent Builder / Canvas",
+  title: "Deep Canvas",
   description: "A live canvas for LangChain agents.",
 };
 

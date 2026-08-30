@@ -56,21 +56,6 @@ body {
   font-family: var(--cv-font-display);
   font-weight: 600;
 }
-.topnav__sep {
-  color: var(--cv-text-secondary);
-}
-.topnav__module {
-  color: var(--cv-text-secondary);
-}
-.topnav__logo {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--cv-radius);
-  background: var(--cv-text);
-  color: #ffffff;
-}
 .topnav__links {
   display: flex;
   gap: 4px;
@@ -247,7 +232,7 @@ body {
 .bubble {
   max-width: 300px;
   padding: 10px 14px;
-  border-radius: 18px;
+  border-radius: 0;
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -257,7 +242,7 @@ body {
   align-self: flex-end;
   background: var(--cv-user-bubble);
   color: #ffffff;
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 0;
 }
 .bubble--assistant {
   align-self: flex-start;
@@ -445,7 +430,7 @@ body {
   font-size: 12px;
   background: var(--cv-bg);
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: 0;
 }
 
 .pane__head { padding: 20px 20px 12px; }
@@ -543,7 +528,7 @@ body {
 .composer__send {
   width: 32px;
   height: 32px;
-  border-radius: 999px;
+  border-radius: 0;
   border: 0;
   background: var(--cv-cta);
   color: #ffffff;

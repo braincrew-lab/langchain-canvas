@@ -68,7 +68,7 @@ describe("canvas.css token contract", () => {
     expect(root).toMatch(/--cv-bg\s*:\s*#F9FAFB/i);
     expect(root).toMatch(/--cv-accent\s*:\s*#9360FF/i);
     expect(root).toMatch(/--cv-cta\s*:\s*#704BD6/i);
-    expect(root).toMatch(/--cv-radius\s*:\s*2px/i);
+    expect(root).toMatch(/--cv-radius\s*:\s*0/i);
     expect(root).toMatch(/--cv-sidebar-active\s*:\s*#EFE4F7/i);
     expect(root).toMatch(/--cv-destructive-text\s*:\s*#B91C1C/i);
   });

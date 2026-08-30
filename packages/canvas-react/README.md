@@ -182,7 +182,7 @@ values):
 | `--cv-sidebar-active` / `--cv-sidebar-selected` | Sidebar row states | `#EFE4F7` / `#F7F2FB` |
 | `--cv-user-bubble` | Chat user bubble background | `#191F28` |
 | `--cv-destructive-text` / `--cv-destructive-light` / `--cv-destructive-border` | Destructive actions | `#B91C1C` / `#FEF2F2` / `#FECACA` |
-| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | Corner radii | `2px` / `6px` / `20px` |
+| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | Corner radii | `0` / `0` / `0` (sharp corners) |
 | `--cv-shadow-card` | Card elevation | `0 2px 8px rgba(25,31,40,0.06)` |
 | `--cv-font` / `--cv-font-display` / `--cv-mono` | Typography (see Fonts below) | — |
 
