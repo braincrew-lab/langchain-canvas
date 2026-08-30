@@ -12,12 +12,15 @@ import { HtmlRenderer } from "./HtmlRenderer";
 const ChartRenderer = lazy(() => import("./ChartRenderer").then((m) => ({ default: m.ChartRenderer })));
 const DocumentRenderer = lazy(() => import("./DocumentRenderer").then((m) => ({ default: m.DocumentRenderer })));
 const TableRenderer = lazy(() => import("./TableRenderer").then((m) => ({ default: m.TableRenderer })));
-const SlidesRenderer = lazy(() => import("./SlidesRenderer").then((m) => ({ default: m.SlidesRenderer })));
+// `slides` renders the canonical `.slides.html` deck dialect. `DeckRenderer`'s
+// own `isLegacySlidesData` guard renders a read-only card for artifacts still
+// carrying the pre-dialect `{slides:[...]}` shape.
+const DeckRenderer = lazy(() => import("./DeckRenderer").then((m) => ({ default: m.DeckRenderer })));
 // The file card is dependency-free like the html substrate, but rare enough on
 // most canvases that it still splits into an on-demand chunk.
 const FileRenderer = lazy(() => import("./FileRenderer").then((m) => ({ default: m.FileRenderer })));
 
-export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, SlidesRenderer, FileRenderer };
+export { HtmlRenderer, DocumentRenderer, ChartRenderer, TableRenderer, DeckRenderer, FileRenderer };
 
 /**
  * The batteries-included renderers. `html` is the base substrate (sandboxed
@@ -30,6 +33,6 @@ export const builtinRenderers: ArtifactRegistry = {
   document: DocumentRenderer,
   chart: ChartRenderer,
   table: TableRenderer,
-  slides: SlidesRenderer,
+  slides: DeckRenderer,
   file: FileRenderer,
 };

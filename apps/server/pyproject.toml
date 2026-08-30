@@ -13,6 +13,13 @@ dependencies = [
     "playwright>=1.45",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
+]
+
 [tool.uv.sources]
 langchain-canvas = { path = "../../packages/canvas-py", editable = true }
 

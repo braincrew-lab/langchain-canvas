@@ -7,6 +7,7 @@ sees the same versions the log folds to.
 
 from __future__ import annotations
 
+from langchain_canvas.deck import Deck, SlideTemplate, serialize_deck
 from langchain_canvas.replay import hydrate_events
 from langchain_canvas.store import Commit, InMemoryCanvasStore, fold_history
 
@@ -15,7 +16,7 @@ def _commit(revision: str, *, paths: list[str] | None = None, amends: str | None
     return Commit(
         revision=revision,
         description=f"save {revision}",
-        paths=paths if paths is not None else ["deck.slides.json"],
+        paths=paths if paths is not None else ["deck.slides.html"],
         amends=amends,
     )
 
@@ -93,21 +94,24 @@ def _commit_events(events: list[dict]) -> list[dict]:
     return [e for e in events if e["type"] == "canvas.commit"]
 
 
-def _slides(text: str) -> str:
-    return (
-        '{"type": "slides", "title": "Deck", "data": {"slides": '
-        f'[{{"layout": "title", "title": "{text}"}}]}}}}'
+def _deck(text: str) -> str:
+    slide = SlideTemplate(
+        slide_id="slide-001",
+        title=text,
+        style_css="",
+        body_html=f'<section class="slide" data-node-id="n1">{text}</section>',
     )
+    return serialize_deck(Deck(title="Deck", ratio="16:9", source=None, slides=[slide]))
 
 
 def test_hydrate_replays_a_folded_burst_as_one_version() -> None:
     store = InMemoryCanvasStore()
-    first = store.write("c1", "deck.slides.json", _slides("one"), "Manual edit", actor="human")
+    first = store.write("c1", "deck.slides.html", _deck("one"), "Manual edit", actor="human")
     for text in ("two", "three"):
         store.write(
             "c1",
-            "deck.slides.json",
-            _slides(text),
+            "deck.slides.html",
+            _deck(text),
             "Manual edit",
             actor="human",
             amends=first.revision,
@@ -119,21 +123,21 @@ def test_hydrate_replays_a_folded_burst_as_one_version() -> None:
     assert commits[0]["revision"] == "v3"
     # The version carries the latest content — nothing between is needed.
     created = next(e for e in events if e["type"] == "canvas.create")
-    assert created["artifact"]["data"]["slides"][0]["title"] == "three"
+    assert "three" in created["artifact"]["data"]["html"]
 
 
 def test_hydrate_splits_versions_where_the_actor_changes() -> None:
     store = InMemoryCanvasStore()
-    mine = store.write("c1", "deck.slides.json", _slides("one"), "Manual edit", actor="human")
+    mine = store.write("c1", "deck.slides.html", _deck("one"), "Manual edit", actor="human")
     store.write(
-        "c1", "deck.slides.json", _slides("two"), "Manual edit", actor="human", amends=mine.revision
+        "c1", "deck.slides.html", _deck("two"), "Manual edit", actor="human", amends=mine.revision
     )
-    store.write("c1", "deck.slides.json", _slides("agent"), "Redraw", actor="agent")
-    later = store.write("c1", "deck.slides.json", _slides("four"), "Manual edit", actor="human")
+    store.write("c1", "deck.slides.html", _deck("agent"), "Redraw", actor="agent")
+    later = store.write("c1", "deck.slides.html", _deck("four"), "Manual edit", actor="human")
     store.write(
         "c1",
-        "deck.slides.json",
-        _slides("five"),
+        "deck.slides.html",
+        _deck("five"),
         "Manual edit",
         actor="human",
         amends=later.revision,
@@ -146,6 +150,6 @@ def test_hydrate_splits_versions_where_the_actor_changes() -> None:
 def test_hydrate_keeps_every_agent_write_as_its_own_version() -> None:
     store = InMemoryCanvasStore()
     for text in ("one", "two"):
-        store.write("c1", "deck.slides.json", _slides(text), "Write deck", actor="agent")
+        store.write("c1", "deck.slides.html", _deck(text), "Write deck", actor="agent")
 
     assert len(_commit_events(hydrate_events(store, "c1"))) == 2

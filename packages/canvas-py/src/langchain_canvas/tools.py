@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import html as html_lib
 import json
 import re
 import subprocess
@@ -41,7 +42,6 @@ from .assets import (
     ASSET_IMAGE_MIME,
     ASSETS_PREFIX,
     inline_canvas_assets,
-    inline_slides_assets,
     normalize_asset_reference,
 )
 from .converters import (
@@ -52,7 +52,23 @@ from .converters import (
     UnsafeArchiveError,
     converter_for,
     default_converters,
-    ensure_archive_within_limits,
+)
+from .deck import (
+    SLIDES_HTML_SUFFIX,
+    Deck,
+    DeckParseError,
+    PptxImportError,
+    SlideTemplate,
+    baseline_slide_html,
+    extract_slides,
+    format_layout_warnings,
+    parse_deck,
+    patch_slide,
+    read_slide,
+    sanitize_slide_html,
+    serialize_deck,
+    validate_deck,
+    validate_slide_html,
 )
 from .document_lint import (
     format_document_warnings,
@@ -71,7 +87,7 @@ from .document_ops import (
     replace_text,
 )
 from .exporters import (
-    DEFAULT_SLIDE_PAGE_IN,
+    PPTX_MIME,
     Exporter,
     MissingExporterDependencyError,
     default_exporters,
@@ -79,12 +95,10 @@ from .exporters import (
     pptx_page_size_inches,
 )
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
-from .layout_lint import format_layout_warnings, lint_slides_data
+from .protocol.events import CanvasCommit, CanvasSlidePatch, SlideStatus
 from .replay import (
     ARTIFACT_SUFFIXES,
-    SLIDES_SUFFIX,
     display_title,
-    encode_slides,
     events_for_commit,
     source_preview_events,
 )
@@ -133,7 +147,7 @@ def _other_ways_to_open(path: str, converters: list[SourceConverter]) -> str:
     if path.lower().endswith(".pptx"):
         return (
             f"To edit it, copy it out with open_deck_for_editing (it becomes a "
-            f"{SLIDES_SUFFIX} deck you can edit and export back to PowerPoint). "
+            f"{SLIDES_HTML_SUFFIX} deck you can edit and export back to PowerPoint). "
             f"To just look, read {path} — with `pages` for the slide images."
         )
     if any(
@@ -180,7 +194,7 @@ def _deck_copy_name(source: str) -> str:
     """
     name = source.rsplit("/", 1)[-1]
     stem = name[: -len(".pptx")] if name.lower().endswith(".pptx") else name
-    return f"{stem}{SLIDES_SUFFIX}"
+    return f"{stem}{SLIDES_HTML_SUFFIX}"
 
 
 def _sources_readonly(path: str) -> str:
@@ -358,152 +372,6 @@ def _parse_pages(spec: str) -> list[int]:
     return list(dict.fromkeys(pages))
 
 
-def _refit_slides_to_page(
-    data: dict, old_w: float, old_h: float, new_w: float, new_h: float
-) -> None:
-    """Re-project existing free elements onto a page with another size.
-
-    Filling ``page`` changes the coordinate space the percent geometry
-    refers to; leaving the numbers behind silently stretched every shape
-    (a circle became ratio 0.750 on a 4:3 skin). This applies the same
-    uniform-scale + center letterbox the exporter uses — at save time, so
-    the stored deck already means the same picture on the new page.
-    Structured slides (title / bullets, no elements) stay untouched: their
-    derived layout is defined in page percent and redraws for any ratio.
-    Font sizes ride the same uniform scale as the geometry — the exporter
-    treats px as an absolute size in the deck's coordinate space, so
-    scaling both keeps this exactly the file the old exporter-side
-    projection produced for a page-less deck.
-
-    The projection is the direct old-to-new letterbox, and deliberately
-    NOT round-trip exact: min-scale letterboxing is not invertible, and
-    slide software asks the user how to re-fit on a page change for the
-    same reason. What IS guaranteed is containment — coordinates inside
-    the old page land inside the new page, always. (An earlier version
-    composed through the classic canvas to make swaps path-independent;
-    that silently pushed content re-placed for the current page off the
-    page entirely. Do not bring that back — off-page content is the worse
-    failure.)
-    """
-    scale = min(new_w / old_w, new_h / old_h)
-    offset_x = (new_w - old_w * scale) / 2.0
-    offset_y = (new_h - old_h * scale) / 2.0
-    font_factor = scale
-    for slide in data.get("slides") or []:
-        if not isinstance(slide, dict):
-            continue
-        elements = slide.get("elements")
-        if not isinstance(elements, list) or not elements:
-            continue
-        # The exporter applies `padding` in the NEW space too, so solve the
-        # stored percents back out of the projected on-page position.
-        pad = (slide.get("padding") or 0.0) / 100.0
-        span = 1.0 - 2.0 * pad
-        if span <= 0:
-            # padding >= 50 leaves no content area to solve back into — the
-            # schema refuses it and the layout check names it; never divide
-            # by it (a re-fit crash would take the whole save down).
-            continue
-        for el in elements:
-            if not isinstance(el, dict):
-                continue
-            try:
-                ex = pad + (float(el["x"]) / 100.0) * span
-                ey = pad + (float(el["y"]) / 100.0) * span
-                ew = (float(el["w"]) / 100.0) * span
-                eh = (float(el["h"]) / 100.0) * span
-            except (KeyError, TypeError, ValueError):
-                continue  # malformed element — the exporter reports it later
-            el["x"] = round(((offset_x + ex * old_w * scale) / new_w - pad) / span * 100.0, 4)
-            el["y"] = round(((offset_y + ey * old_h * scale) / new_h - pad) / span * 100.0, 4)
-            el["w"] = round(ew * old_w * scale / new_w / span * 100.0, 4)
-            el["h"] = round(eh * old_h * scale / new_h / span * 100.0, 4)
-            font = el.get("fontSize", el.get("font_size"))
-            if isinstance(font, (int, float)):
-                key = "fontSize" if "fontSize" in el else "font_size"
-                el[key] = round(font * font_factor, 4)
-
-
-def _deck_with_skin_page(
-    store: CanvasStore, canvas_id: str, content: str
-) -> tuple[str, str | None, str | None]:
-    """The deck content with ``page`` filled from its template skin.
-
-    A deck that names a template gets the skin's real page size written
-    into ``data.page``, so the editor, the preview, and the export agree
-    on one aspect ratio — the agent never types the numbers by hand. The
-    skin decides the page on a swap too: a deck whose page no longer
-    matches its template is re-fitted from its CURRENT page, otherwise the
-    content stays stranded in the old ratio's letterbox with no way out
-    through coordinates alone. When the size changes the existing elements
-    are re-fitted (see :func:`_refit_slides_to_page`); when the RATIO
-    changes the third return value carries a note to relay — the change is
-    safe but the content now sits letterboxed, and re-placing it is the
-    model's call, never a silent one. A deck without a template keeps
-    whatever page it has. Content that is not a template-bearing
-    envelope passes through untouched (the exporter raises its own honest
-    errors later). Returns ``(content, error, note)``: a skin that trips
-    the archive safety limits is an error to relay, not a detail to
-    absorb.
-    """
-    try:
-        envelope = json.loads(content)
-    except json.JSONDecodeError:
-        return content, None, None
-    data = envelope.get("data") if isinstance(envelope, dict) else None
-    if not isinstance(data, dict):
-        return content, None, None
-    template = data.get("template")
-    if not isinstance(template, str) or not template.lower().endswith(".pptx"):
-        return content, None, None
-    ref = normalize_asset_reference(template)
-    if ref is None:
-        return content, None, None
-    try:
-        raw = store.read_bytes(canvas_id, ref).data
-    except CanvasStoreError:
-        return content, None, None  # missing skin degrades at export time too
-    try:
-        ensure_archive_within_limits(raw, path=ref)
-    except UnsafeArchiveError as exc:
-        return content, f"Error: {exc}", None
-    size = pptx_page_size_inches(raw)
-    if size is None:
-        return content, None, None
-    new_w, new_h = round(size[0], 4), round(size[1], 4)
-    # "The skin decides the page" holds on a swap too, not only on the first
-    # attach: the deck's current page is the OLD coordinate space to re-fit
-    # from. A deck whose page already matches the skin passes untouched.
-    old_w, old_h = DEFAULT_SLIDE_PAGE_IN
-    page = data.get("page")
-    if isinstance(page, dict):
-        got_w = page.get("widthIn", page.get("width_in"))
-        got_h = page.get("heightIn", page.get("height_in"))
-        if (
-            isinstance(got_w, (int, float))
-            and isinstance(got_h, (int, float))
-            and got_w > 0
-            and got_h > 0
-        ):
-            if abs(got_w - new_w) < 1e-4 and abs(got_h - new_h) < 1e-4:
-                return content, None, None
-            old_w, old_h = float(got_w), float(got_h)
-    data["page"] = {"widthIn": new_w, "heightIn": new_h}
-    note = None
-    if abs(new_w - old_w) > 1e-4 or abs(new_h - old_h) > 1e-4:
-        # Any size change re-fits: with the same ratio the percents come out
-        # unchanged and only font sizes ride the physical scale, so the
-        # stored deck exports exactly like the un-swapped one did.
-        _refit_slides_to_page(data, old_w, old_h, new_w, new_h)
-    if abs(new_w / new_h - old_w / old_h) > 1e-6:
-        note = (
-            f" Note: page changed to {new_w} x {new_h} in to match the "
-            "template. Existing slides were scaled to fit (they now sit "
-            "letterboxed); re-place their elements to use the full page."
-        )
-    return json.dumps(envelope, ensure_ascii=False), None, note
-
-
 def create_canvas_tools(
     store: CanvasStore,
     *,
@@ -592,7 +460,8 @@ def create_canvas_tools(
 
     def _is_checked(path: str) -> bool:
         """Whether a save-time check has anything to say about this path."""
-        return path.lower().endswith(".slides.json") or is_document_path(path)
+        lowered = path.lower()
+        return lowered.endswith(SLIDES_HTML_SUFFIX) or is_document_path(path)
 
     def _save_note(canvas_id: str, path: str, content: str) -> str:
         """Certain-only warnings for a file just saved ('' when clean).
@@ -601,12 +470,13 @@ def create_canvas_tools(
         it rides every save and the model sees a defect the moment it writes
         one. A deck gets the deck check; a document or page gets the
         reference check, which is the defect that reached readers as a broken
-        image. See :mod:`langchain_canvas.layout_lint` and
+        image. See :mod:`langchain_canvas.deck.validate` and
         :mod:`langchain_canvas.document_lint` for the no-false-positives
         contract both keep.
         """
-        if path.lower().endswith(".slides.json"):
-            return _deck_note(canvas_id, path, content)
+        lowered = path.lower()
+        if lowered.endswith(SLIDES_HTML_SUFFIX):
+            return _deck_html_note(content)
         if is_document_path(path):
             on_canvas = _canvas_paths(canvas_id)
             if on_canvas is None:
@@ -618,20 +488,9 @@ def create_canvas_tools(
             )
         return ""
 
-    def _deck_note(canvas_id: str, path: str, content: str) -> str:
-        """The deck check, over the envelope's ``data`` ('' when unreadable)."""
-        try:
-            envelope = json.loads(content)
-        except json.JSONDecodeError:
-            return ""
-        data = envelope.get("data") if isinstance(envelope, dict) else None
-        if not isinstance(data, dict):
-            return ""
-        on_canvas = _canvas_paths(canvas_id)
-        warnings = lint_slides_data(
-            data,
-            ref_exists=None if on_canvas is None else on_canvas.__contains__,
-        )
+    def _deck_html_note(content: str) -> str:
+        """The deck check for a canonical ``.slides.html`` deck."""
+        warnings = [issue.message for issue in validate_deck(content)]
         return format_layout_warnings(warnings)
 
     def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
@@ -808,43 +667,16 @@ def create_canvas_tools(
         `../`). The canvas shows them live and exports inline the bytes, so
         never copy an upload to reference it.
 
-        Structured files carry an envelope: a `.slides.json` deck is
-        `{"type": "slides", "title": "...", "data": {"slides": [...]}}`.
-        Write each slide one of two ways, never both — `elements` is drawn
-        instead of the structured fields, not on top of them:
-
-        - Structured, and it is laid out for you: `title`, `subtitle`,
-          `bullets` (a list of strings), `bullets2` for the right-hand
-          column, `image`, and `layout`. `layout` is exactly one of
-          `content` (the default — heading over bullets), `title`,
-          `section`, `image`, `two-column`, `blank`. Any other value is
-          rejected; omit it rather than invent one. Sizes and positions are
-          chosen from the content, so do not add coordinates here.
-        - Free `elements`, for a slide you are composing yourself. Every
-          element needs an `id` (a short unique string), a `type` of
-          text|image|shape, and `x`/`y`/`w`/`h` as percent of the slide,
-          0-100. Colors are `#hex`. `fontSize` is px on a 960x540 page —
-          the layout's own scale is 48 (a cover line), 38 (a heading),
-          and 30 / 24 / 19 (body). Picking from it keeps a slide you
-          placed by hand next to the ones you did not, and keeps a deck
-          from carrying eight sizes nobody chose. Nothing under 14px is
-          readable on the canvas or a projector.
-
-        Optional per slide: `background` (a `#hex` string), `notes`.
-        Optional deck-level `"template": "sources/brand.pptx"` makes the
-        pptx export build on that file's masters and layouts. A
-        `.table.json` sheet is `{"type": "table", "data": {"sheet": {...}}}`.
+        A structured `.table.json` sheet carries an envelope:
+        `{"type": "table", "title": "...", "data": {"sheet": {...}}}`. A
+        slide deck is a `.slides.html` file instead — raw HTML, one
+        `<template data-slide-id>` per slide — made and edited slide by
+        slide through the dedicated deck tools, never written whole
+        through this one.
         """
         if path.startswith(_SOURCES_PREFIX):
             return _sources_readonly(path)
         canvas_id = _canvas_id(runtime)
-        page_note = None
-        if path.lower().endswith(".slides.json"):
-            content, page_error, page_note = _deck_with_skin_page(
-                store, canvas_id, content
-            )
-            if page_error is not None:
-                return page_error
         is_new = not _has_file(canvas_id, path)
         try:
             commit = store.write(
@@ -861,7 +693,7 @@ def create_canvas_tools(
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
         save_note = _save_note(canvas_id, path, content)
-        return f"Wrote {path} (revision {commit.revision}).{page_note or ''}{save_note}"
+        return f"Wrote {path} (revision {commit.revision}).{save_note}"
 
     @tool
     def edit_canvas(
@@ -1383,6 +1215,37 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
     return [write_table_cells, add_table_sheet]
 
 
+def inline_deck_skin(content: str, store: CanvasStore, canvas_id: str) -> str:
+    """Replace a deck's ``lcx:source`` skin reference with a ``data:`` URI.
+
+    The canonical-dialect twin of :func:`inline_slides_assets`'s template
+    inlining: :class:`~langchain_canvas.deck.export.DeckPptxExporter` keeps
+    the ``Exporter`` contract content-only, so the export tool inlines the
+    ``.pptx`` skin reference here before the exporter runs. A reference that
+    cannot be inlined (missing, not a store path, not a ``.pptx``) is left
+    untouched — the exporter then degrades to a blank export, the same
+    honesty :func:`inline_slides_assets` applies to its ``template`` field.
+    """
+    try:
+        deck = parse_deck(content)
+    except DeckParseError:
+        return content
+    source = deck.source
+    if not isinstance(source, str) or not source.lower().endswith(".pptx"):
+        return content
+    path = normalize_asset_reference(source)
+    if path is None:
+        return content
+    try:
+        raw = store.read_bytes(canvas_id, path).data
+    except CanvasStoreError:
+        return content
+    encoded = base64.b64encode(raw).decode()
+    new_source = f"data:{PPTX_MIME};base64,{encoded}"
+    patched = Deck(title=deck.title, ratio=deck.ratio, source=new_source, slides=deck.slides)
+    return serialize_deck(patched)
+
+
 def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None = None) -> Any:
     """Build an ``export_canvas`` tool bound to ``store``.
 
@@ -1399,20 +1262,20 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         """Export canvas work into a downloadable office file.
 
         ``path`` is one canvas file (``report/02-overview.html``,
-        ``sales.table.json``) or a directory prefix ending in ``/``
-        (``report/``), which merges every .html file under it, in name
-        order, into one document with a page break between sections.
-        ``target`` is the output format: ``docx`` for .html files,
-        ``xlsx`` for .table.json tables, ``pptx`` for .slides.json decks.
-        The result is saved under ``exports/`` on the canvas, where the
-        user can download it.
+        ``sales.table.json``, ``deck.slides.html``) or a directory prefix
+        ending in ``/`` (``report/``), which merges every .html file under
+        it, in name order, into one document with a page break between
+        sections. ``target`` is the output format: ``docx`` for .html
+        files, ``xlsx`` for .table.json tables, ``pptx`` for
+        ``.slides.html`` decks. The result is saved under ``exports/`` on
+        the canvas, where the user can download it.
 
-        Template skin: a slides deck whose data carries
-        ``"template": "sources/brand.pptx"`` exports onto that file's
-        masters and layouts, so the original's logos, backgrounds, and
-        headers survive, and the text takes the face that file uses most.
-        A missing or unreadable skin degrades to the plain blank-layout
-        export, where fonts fall back to whatever the viewer has installed.
+        Template skin: a ``.slides.html`` deck's ``lcx:source`` meta points
+        an export at that file's masters and layouts, so the original's
+        logos, backgrounds, and headers survive, and the text takes the
+        face that file uses most. A missing or unreadable skin degrades to
+        the plain blank-layout export, where fonts fall back to whatever
+        the viewer has installed.
         """
         canvas_id = _canvas_id(runtime)
         try:
@@ -1436,16 +1299,20 @@ def create_export_tool(store: CanvasStore, *, exporters: list[Exporter] | None =
         except BinaryContentError:
             return (
                 f"Error: {path} is binary; export reads text canvas files "
-                "(.html, .table.json, .slides.json)."
+                "(.html, .table.json, .slides.html)."
             )
 
         # Relative asset references (assets/, sources/) become data: URIs here,
         # before the exporter runs — exporters keep their one-method contract
-        # and the exported file leaves self-contained, images included.
-        if sample.lower().endswith((".html", ".htm")):
+        # and the exported file leaves self-contained, images included. The
+        # .slides.html check runs before the general .html check (both match
+        # `endswith`) so a canonical deck gets both its asset references AND
+        # its lcx:source skin reference inlined.
+        if sample.lower().endswith(SLIDES_HTML_SUFFIX):
             content = inline_canvas_assets(content, store, canvas_id)
-        elif sample.lower().endswith(".slides.json"):
-            content = inline_slides_assets(content, store, canvas_id)
+            content = inline_deck_skin(content, store, canvas_id)
+        elif sample.lower().endswith((".html", ".htm")):
+            content = inline_canvas_assets(content, store, canvas_id)
 
         exporter = exporter_for(sample, target, active_exporters)
         if exporter is None:
@@ -1715,19 +1582,84 @@ def create_check_table_tool(
     return check_table
 
 
-def create_deck_tools(store: CanvasStore) -> list[Any]:
-    """Build the tool that makes an uploaded deck editable.
+def _ratio_for_pptx(data: bytes) -> str:
+    """The deck ratio nearest the source presentation's declared page size.
 
-    An uploaded ``.pptx`` already shows as slides — the upload path reads it
-    with :func:`~langchain_canvas.pptx_import.pptx_to_slides`. But it shows
-    from under ``sources/``, where the user's originals are read-only, and
-    under its own name, which no exporter matches. So it can be looked at and
+    Defaults to ``"16:9"`` when the page size cannot be read — the same
+    fallback :func:`~langchain_canvas.deck.baseline._canvas_size` uses for an
+    unrecognized ratio string.
+    """
+    size = pptx_page_size_inches(data)
+    if size is None or size[1] <= 0:
+        return "16:9"
+    aspect = size[0] / size[1]
+    return "4:3" if abs(aspect - 4 / 3) < abs(aspect - 16 / 9) else "16:9"
+
+
+def _parse_incoming_template(template_html: str, slide_id: str) -> SlideTemplate:
+    """The one ``<template>`` fragment ``template_html`` must contain.
+
+    ``edit_deck_slide`` takes a full ``<template data-slide-id="...">...
+    </template>`` fragment (the same shape :func:`~langchain_canvas.deck.patch_slide`
+    and ``canvas.slide_patch``'s ``template_html`` carry) — wrapping it in a
+    throwaway deck document reuses :func:`~langchain_canvas.deck.parse_deck`'s
+    title/style/body split instead of duplicating that parsing here.
+    """
+    wrapper = f"<!DOCTYPE html><html><body>{template_html}</body></html>"
+    try:
+        parsed = parse_deck(wrapper)
+    except DeckParseError as exc:
+        raise DeckParseError(f"template_html is not a valid <template> fragment: {exc}") from exc
+    if len(parsed.slides) != 1:
+        raise DeckParseError(
+            "template_html must contain exactly one <template data-slide-id=...> element"
+        )
+    slide = parsed.slides[0]
+    if slide.slide_id != slide_id:
+        raise DeckParseError(
+            f"template_html's data-slide-id {slide.slide_id!r} does not match {slide_id!r}"
+        )
+    return slide
+
+
+def _serialize_template_fragment(
+    slide_id: str, title: str | None, style_css: str, body_html: str
+) -> str:
+    """The ``<template data-slide-id="...">...</template>`` fragment
+    :func:`~langchain_canvas.deck.patch_slide` expects.
+
+    Mirrors ``deck.model``'s private slide serialization format exactly (the
+    shape :func:`~langchain_canvas.deck.parse_deck` reads back), kept here
+    rather than exported from ``deck.model`` because this task's edits are
+    scoped to this module.
+    """
+    attrs = f' data-slide-id="{html_lib.escape(slide_id, quote=True)}"'
+    if title:
+        attrs += f' data-slide-title="{html_lib.escape(title, quote=True)}"'
+    parts = [f"<template{attrs}>"]
+    if style_css:
+        parts.append(f"<style>{style_css}</style>")
+    parts.append(body_html)
+    parts.append("</template>")
+    return "\n".join(parts)
+
+
+def create_deck_tools(store: CanvasStore) -> list[Any]:
+    """Build the tools that make an uploaded deck editable, slide by slide.
+
+    An uploaded ``.pptx`` already shows as slides — the upload path extracts
+    it with :func:`~langchain_canvas.deck.extract_slides`. But it shows from
+    under ``sources/``, where the user's originals are read-only, and under
+    its own name, which no exporter matches. So it can be looked at and
     nothing else.
 
-    This copies it out: the same slides, written to a ``.slides.json`` at the
-    canvas root, which edits and exports like any deck the agent builds. The
-    copy names the original as its ``template``, so exporting rebuilds on the
-    real masters and layouts rather than a blank page.
+    ``open_deck_for_editing`` copies it out: each slide's structure rendered
+    into dialect-compliant baseline HTML, written to a ``.slides.html`` deck
+    at the canvas root, which edits and exports like any deck the agent
+    builds. The copy names the original as its ``lcx:source`` meta, so
+    exporting rebuilds on the real masters and layouts rather than a blank
+    page. ``read_deck_slide``/``edit_deck_slide``/``list_deck_slides`` then
+    work one slide at a time, without resending or rewriting the whole deck.
 
     Kept out of :func:`create_canvas_tools` so the four standard tools stay a
     stable contract; mount this when your agent should edit decks people send.
@@ -1742,12 +1674,13 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
         """Copy an uploaded PowerPoint file into an editable canvas deck.
 
         `source` is the uploaded `.pptx` (usually under `sources/`). The copy
-        lands at the canvas root as a `.slides.json` you can edit with
-        `edit_canvas` and export back to PowerPoint; pass `destination` to
-        name it yourself. The upload stays where it is, unchanged.
+        lands at the canvas root as a `.slides.html` deck you can inspect
+        with `list_deck_slides` and edit one slide at a time with
+        `read_deck_slide`/`edit_deck_slide`; pass `destination` to name it
+        yourself. The upload stays where it is, unchanged.
 
         The copy keeps each slide's shapes, text, pictures and speaker notes,
-        and points at the original as its template so an export rebuilds on
+        and points at the original as its source so an export rebuilds on
         the original's masters. Tables, charts and grouped shapes do not come
         across — read the upload itself to see those.
         """
@@ -1763,8 +1696,8 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
                 "Error: sources/ holds the user's uploads — put the copy "
                 "somewhere else (the default is the deck's name at the canvas root)."
             )
-        if not target.endswith(SLIDES_SUFFIX):
-            return f"Error: the copy has to be a {SLIDES_SUFFIX} file (got {target})."
+        if not target.endswith(SLIDES_HTML_SUFFIX):
+            return f"Error: the copy has to be a {SLIDES_HTML_SUFFIX} file (got {target})."
         if any(info.path == target for info in store.list_files(canvas_id)):
             return (
                 f"Error: {target} is already on the canvas. Edit that one, or pass "
@@ -1777,43 +1710,186 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
         except CanvasStoreError as exc:
             return f"Error: {exc}."
 
-        from .pptx_import import PptxImportError, pptx_to_slides
-
         try:
-            deck = pptx_to_slides(got.data)
+            extractions = extract_slides(got.data, path=source)
+        except UnsafeArchiveError as exc:
+            return f"Error: {exc}."
         except PptxImportError as exc:
             return f"Error: {exc}."
-        deck["template"] = source
-        try:
-            commit = store.write(
-                canvas_id,
-                target,
-                # Through the envelope encoder, never json.dumps: a .slides.json
-                # without {"type","title","data"} parses as no artifact at all
-                # and the canvas falls back to showing the JSON as a document.
-                encode_slides(display_title(target), deck),
-                f"Copy {source} for editing",
-                actor="agent",
+
+        ratio = _ratio_for_pptx(got.data)
+        slides: list[SlideTemplate] = []
+        for index, extraction in enumerate(extractions):
+            slide_id = f"slide-{index + 1:03d}"
+            for image in extraction.images:
+                asset_path = f"{ASSETS_PREFIX}{image.sha}.{image.ext}"
+                if not any(info.path == asset_path for info in store.list_files(canvas_id)):
+                    try:
+                        store.write_bytes(
+                            canvas_id, asset_path, image.data, f"Asset for {source}", actor="agent"
+                        )
+                    except CanvasStoreError as exc:
+                        return f"Error: {exc}."
+            body_html = baseline_slide_html(extraction, slide_id=slide_id, ratio=ratio)
+            slides.append(
+                SlideTemplate(slide_id=slide_id, title=None, style_css="", body_html=body_html)
             )
+
+        content = serialize_deck(
+            Deck(title=display_title(target), ratio=ratio, source=source, slides=slides)
+        )
+        description = f"Copy {source} for editing"
+        try:
+            commit = store.write(canvas_id, target, content, description, actor="agent")
         except CanvasStoreError as exc:
             return f"Error: {exc}."
-        # An artifact broadcast, not a source one: source_preview_events treats
-        # a .json path as a text preview, which drew the deck as its own JSON.
+
         writer = getattr(runtime, "stream_writer", None)
         if writer is not None:
             for event in events_for_commit(
                 target,
-                store.read(canvas_id, target, revision=commit.revision).content,
+                content,
                 is_new=True,
                 revision=commit.revision,
                 description=commit.description,
             ):
                 writer(event)
-        count = len(deck.get("slides", []))
+            for slide in slides:
+                writer(
+                    SlideStatus(id=target, slide_id=slide.slide_id, stage="complete").model_dump(
+                        by_alias=True, exclude_none=True
+                    )
+                )
+
         return (
-            f"Copied {source} to {target} ({count} slide(s), revision "
+            f"Copied {source} to {target} ({len(slides)} slide(s), revision "
             f"{commit.revision}). Edit {target} and export it to pptx; {source} "
             "keeps the user's original."
         )
 
-    return [open_deck_for_editing]
+    @tool
+    def read_deck_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
+        """Read one slide's `<template>` fragment out of a `.slides.html` deck.
+
+        Returns the deck's current `revision` plus the exact fragment you can
+        edit and pass back to `edit_deck_slide`. Always read a slide again
+        right before editing it, so you see edits the user may have made by
+        hand.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not path.endswith(SLIDES_HTML_SUFFIX):
+            return f"Error: {path} is not a {SLIDES_HTML_SUFFIX} deck."
+        try:
+            got = store.read(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            slide = read_slide(got.content, slide_id)
+        except DeckParseError as exc:
+            return f"Error: {exc}."
+        fragment = _serialize_template_fragment(
+            slide.slide_id, slide.title, slide.style_css, slide.body_html
+        )
+        return f"revision: {got.revision}\n{fragment}"
+
+    @tool
+    def list_deck_slides(path: str, runtime: ToolRuntime) -> str:
+        """List a `.slides.html` deck's slide ids and titles, in order."""
+        canvas_id = _canvas_id(runtime)
+        if not path.endswith(SLIDES_HTML_SUFFIX):
+            return f"Error: {path} is not a {SLIDES_HTML_SUFFIX} deck."
+        try:
+            got = store.read(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            deck = parse_deck(got.content)
+        except DeckParseError as exc:
+            return f"Error: {exc}."
+        if not deck.slides:
+            return f"{path} has no slides."
+        return "\n".join(
+            f"{slide.slide_id}: {slide.title or '(untitled)'}" for slide in deck.slides
+        )
+
+    @tool
+    def edit_deck_slide(
+        path: str, slide_id: str, template_html: str, revision: str, runtime: ToolRuntime
+    ) -> str:
+        """Replace one slide's `<template>` fragment in a `.slides.html` deck.
+
+        `template_html` is a full `<template data-slide-id="...">...
+        </template>` fragment for `slide_id` — read one with `read_deck_slide`
+        first, then send back the edited fragment. `revision` must be the
+        value from your most recent `read_deck_slide`/`list_deck_slides` of
+        this file; if the deck changed since, the call is rejected and you
+        must read again. The fragment is sanitized against an HTML allowlist
+        before it is saved, and every other slide's bytes are left untouched
+        — even a byte-identical duplicate slide is never affected, because
+        the match is on `slide_id`, never on content.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not path.endswith(SLIDES_HTML_SUFFIX):
+            return f"Error: {path} is not a {SLIDES_HTML_SUFFIX} deck."
+        try:
+            got = store.read(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+
+        try:
+            incoming = _parse_incoming_template(template_html, slide_id)
+        except DeckParseError as exc:
+            return f"Error: {exc}."
+
+        body_result = sanitize_slide_html(incoming.body_html)
+        removed = list(body_result.removed)
+        style_css = incoming.style_css
+        if style_css:
+            style_result = sanitize_slide_html(f"<style>{style_css}</style>")
+            removed += style_result.removed
+            style_css = style_result.html.removeprefix("<style>").removesuffix("</style>")
+
+        issues = validate_slide_html(body_result.html, slide_id=slide_id)
+        if issues:
+            return "Error: " + "; ".join(issue.message for issue in issues)
+
+        new_fragment = _serialize_template_fragment(
+            slide_id, incoming.title, style_css, body_result.html
+        )
+        try:
+            new_deck_html = patch_slide(got.content, slide_id, new_fragment)
+        except DeckParseError as exc:
+            return f"Error: {exc}."
+
+        description = f"Edit slide {slide_id}"
+        try:
+            commit = store.write(
+                canvas_id, path, new_deck_html, description, base_revision=revision, actor="agent"
+            )
+        except RevisionMismatchError as exc:
+            return f"Error: {exc}. {_RETRY_HINT}"
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+
+        writer = getattr(runtime, "stream_writer", None)
+        if writer is not None:
+            writer(
+                CanvasSlidePatch(id=path, slide_id=slide_id, template_html=new_fragment).model_dump(
+                    by_alias=True, exclude_none=True
+                )
+            )
+            writer(
+                CanvasCommit(id=path, description=description, revision=commit.revision).model_dump(
+                    by_alias=True, exclude_none=True
+                )
+            )
+        removed_note = f" Removed unsafe content: {', '.join(removed)}." if removed else ""
+        return f"Edited slide {slide_id} in {path} (revision {commit.revision}).{removed_note}"
+
+    return [open_deck_for_editing, read_deck_slide, edit_deck_slide, list_deck_slides]

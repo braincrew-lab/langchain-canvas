@@ -134,7 +134,8 @@ def inline_canvas_assets(html: str, store: CanvasStore, canvas_id: str) -> str:
 
 
 def inline_slides_assets(content: str, store: CanvasStore, canvas_id: str) -> str:
-    """Replace asset references in a ``.slides.json`` envelope with ``data:`` URIs.
+    """Replace asset references in the legacy pre-dialect slides envelope with
+    ``data:`` URIs.
 
     The slides twin of :func:`inline_canvas_assets`: slide decks carry their
     image references in JSON fields (each element's ``src`` and a structured

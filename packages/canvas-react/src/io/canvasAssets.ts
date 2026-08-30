@@ -18,7 +18,7 @@
  * is compared against it by the protocol parity tests.
  */
 
-import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
+import { isLegacySlidesData, type Artifact, type HtmlData, type SlidesData } from "../protocol/artifacts";
 
 export const ASSET_REFERENCE_PREFIXES = ["assets/", "sources/"] as const;
 
@@ -147,10 +147,10 @@ function safeDecode(value: string): string {
 
 /**
  * An artifact with every canvas-asset reference inlined as a `data:` URI —
- * the export chokepoint. `html` inlines its page source; `slides` inlines
- * image elements and the image-layout `image`; other types (and a missing
- * `assetBaseUrl`) pass through unchanged, so hosts without a file endpoint
- * keep today's behavior exactly.
+ * the export chokepoint. `html` inlines its page source; a canonical `slides`
+ * deck (`{ html }`) inlines the same way; a legacy `{ slides: [...] }` deck
+ * and other types (and a missing `assetBaseUrl`) pass through unchanged, so
+ * hosts without a file endpoint keep today's behavior exactly.
  */
 export async function inlineArtifactAssets<T extends Artifact>(
   artifact: T,
@@ -164,32 +164,13 @@ export async function inlineArtifactAssets<T extends Artifact>(
   }
   if (artifact.type === "slides") {
     const data = artifact.data as SlidesData;
-    let changed = false;
-    const slides = await Promise.all(
-      (data.slides ?? []).map(async (slide) => {
-        let next = slide;
-        if (isAssetReference(slide.image)) {
-          const uri = await fetchAssetDataUri(slide.image, assetBaseUrl);
-          if (uri) {
-            next = { ...next, image: uri };
-            changed = true;
-          }
-        }
-        if (next.elements?.some((el) => isAssetReference(el.src))) {
-          const elements = await Promise.all(
-            next.elements.map(async (el) => {
-              if (!isAssetReference(el.src)) return el;
-              const uri = await fetchAssetDataUri(el.src, assetBaseUrl);
-              return uri ? { ...el, src: uri } : el;
-            }),
-          );
-          next = { ...next, elements };
-          changed = true;
-        }
-        return next;
-      }),
-    );
-    return changed ? { ...artifact, data: { ...data, slides } } : artifact;
+    // A legacy `{ slides: [...] }` artifact carries no `html` to inline — the
+    // renderer already falls back to a read-only card for it, so exporting it
+    // as-is (no asset references resolved) is the same "unresolved but honest"
+    // contract `inlineHtmlAssets` documents above.
+    if (isLegacySlidesData(data) || typeof data.html !== "string") return artifact;
+    const html = await inlineHtmlAssets(data.html, assetBaseUrl);
+    return html === data.html ? artifact : { ...artifact, data: { ...data, html } };
   }
   return artifact;
 }

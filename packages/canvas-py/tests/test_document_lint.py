@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from langchain_canvas.deck import Deck, serialize_deck
 from langchain_canvas.document_lint import (
     format_document_warnings,
     is_document_path,
@@ -221,15 +222,12 @@ def test_an_edit_that_adds_a_broken_reference_is_reported() -> None:
 def test_the_deck_check_still_speaks_for_decks() -> None:
     store = InMemoryCanvasStore()
     tools = _tools(store)
+    empty_deck = serialize_deck(Deck(title="D", ratio="16:9", source=None, slides=[]))
     result = tools["write_canvas"].func(
-        path="deck.slides.json",
-        content=(
-            '{"type":"slides","title":"D","data":{"slides":[{"elements":'
-            '[{"id":"i","type":"image","src":"sources/gone.png",'
-            '"x":0,"y":0,"w":50,"h":50}]}]}}'
-        ),
+        path="deck.slides.html",
+        content=empty_deck,
         description="draft",
         runtime=_Runtime(),
     )
     assert "Deck check:" in result
-    assert "sources/gone.png" in result
+    assert "deck has no slides" in result

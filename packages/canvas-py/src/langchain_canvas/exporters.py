@@ -21,14 +21,10 @@ import binascii
 import io
 import json
 import re
-from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol, runtime_checkable
 
-from .converters import ensure_archive_within_limits
-from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
-from .slide_layout import BULLET_PREFIX, resolve_elements
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -81,7 +77,7 @@ def exporter_for(path: str, target: str, exporters: list[Exporter]) -> Exporter 
 def _stem(path: str) -> str:
     """The output filename stem for a canvas path (or directory prefix)."""
     name = path.rstrip("/").rsplit("/", 1)[-1]
-    for suffix in (".table.json", ".slides.json", ".html", ".htm"):
+    for suffix in (".table.json", ".slides.html", ".html", ".htm"):
         if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
             break
@@ -326,25 +322,6 @@ def _data_uri_bytes(src: str) -> bytes | None:
         return None
 
 
-def _pptx_data_uri_bytes(src: str | None) -> bytes | None:
-    """The pptx bytes of an inlined template skin, or ``None``.
-
-    A non-data-URI value here means the skin reference could not be inlined
-    (file missing, wrong type) — the caller degrades to the blank export.
-    """
-    if not src:
-        return None
-    match = re.match(
-        rf"^data:{re.escape(PPTX_MIME)};base64,(.+)$", src.strip(), re.IGNORECASE
-    )
-    if not match:
-        return None
-    try:
-        return base64.b64decode(match.group(1), validate=True)
-    except (binascii.Error, ValueError):
-        return None
-
-
 def pptx_page_size_inches(data: bytes) -> tuple[float, float] | None:
     """The (width, height) a pptx declares, in inches, or ``None``.
 
@@ -369,99 +346,6 @@ def pptx_page_size_inches(data: bytes) -> tuple[float, float] | None:
     else:
         cx, cy = match.group(1), match.group(2)
     return int(cx) / _EMU_PER_INCH, int(cy) / _EMU_PER_INCH
-
-
-def _skin_presentation(template: str | None, presentation_cls: Any) -> Any | None:
-    """The template skin opened as the base presentation, or ``None``.
-
-    Drops the skin's own slides — the deck's content replaces them — while
-    its masters and layouts (logos, backgrounds, headers) stay and style
-    every slide added on top. Unreadable skin bytes degrade to ``None`` so
-    the export never dies on a bad template; a skin whose ZIP container
-    exceeds the safety limits raises ``UnsafeArchiveError`` instead — a
-    decompression bomb is an attack to refuse loudly, not a formatting
-    mishap to absorb.
-    """
-    data = _pptx_data_uri_bytes(template)
-    if data is None:
-        return None
-    ensure_archive_within_limits(data, path="the template skin")
-    try:
-        base = presentation_cls(io.BytesIO(data))
-        id_list = base.slides._sldIdLst
-        for slide_id in list(id_list):
-            base.part.drop_rel(slide_id.rId)
-            id_list.remove(slide_id)
-    except Exception:  # noqa: BLE001 — any parse failure means "not a usable skin"
-        return None
-    return base
-
-
-def _skin_typeface(template: str | None) -> str | None:
-    """The face a template skin actually uses most, or ``None``.
-
-    Counts the literal ``typeface`` values in the skin's own slides — the
-    faces its author picked run by run — and falls back to its layouts when
-    the file carries no slides, as a true template does. A value starting
-    with ``+`` is a theme reference, not a face, so it is not counted: the
-    theme is where a missing east-asian entry hides. Only the three script
-    elements are read — a bullet's or a symbol's font is a dingbat picked
-    for one glyph, never the face the deck is set in.
-
-    A family and its weight variants can tie (``Pretendard`` /
-    ``Pretendard Light`` / ``Pretendard SemiBold``, three uses each). The
-    plainest name wins — shortest, then alphabetical — which lands on the
-    family itself rather than on one of its weights, and keeps the answer
-    the same whatever order the archive lists its parts in.
-    """
-    data = _pptx_data_uri_bytes(template)
-    if data is None:
-        return None
-    import zipfile
-
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            names = archive.namelist()
-            for folder in ("ppt/slides/slide", "ppt/slideLayouts/slideLayout"):
-                faces: Counter[str] = Counter()
-                for name in names:
-                    if not (name.startswith(folder) and name.endswith(".xml")):
-                        continue
-                    xml = archive.read(name).decode("utf-8", "replace")
-                    faces.update(
-                        face
-                        for face in re.findall(
-                            r'<a:(?:latin|ea|cs)\b[^>]*typeface="([^"]+)"', xml
-                        )
-                        if not face.startswith("+")
-                    )
-                if faces:
-                    most = max(faces.values())
-                    return min(
-                        (face for face, uses in faces.items() if uses == most),
-                        key=lambda face: (len(face), face),
-                    )
-    except (zipfile.BadZipFile, KeyError):
-        return None
-    return None
-
-
-def _content_layout(presentation: Any) -> Any:
-    """The least-furnished layout — the closest thing to a blank canvas.
-
-    Prefers a layout literally named "Blank" (the stock template's index 6),
-    else the one with the fewest placeholders, so skinned exports draw on
-    the emptiest surface the template offers while inheriting its master.
-    """
-    layouts = [
-        layout
-        for master in presentation.slide_masters
-        for layout in master.slide_layouts
-    ]
-    for layout in layouts:
-        if (layout.name or "").strip().lower() == "blank":
-            return layout
-    return min(layouts, key=lambda layout: len(layout.placeholders))
 
 
 def _safe_name(title: str | None) -> str | None:
@@ -547,320 +431,17 @@ def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
                     run.bold = True
 
 
-# --- slides -> pptx --------------------------------------------------------
-
-# The editor's slide canvas is 1280x720 px; the exported deck is 10 x 5.625
-# inches (16:9) — the same page the browser-side pptx export uses, so the two
-# doors produce the same-looking deck. Element geometry is percent-based.
+# The classic canvas page — what percent geometry means when a deck carries
+# no `page` of its own. Kept for `deck.export` (the canonical dialect's
+# exporter), which reuses the same page as its unskinned default.
 _SLIDE_WIDTH_IN = 10.0
 _SLIDE_HEIGHT_IN = 5.625
-# The classic canvas page — what percent geometry means when a deck carries
-# no `page` of its own. Tools use it to re-fit decks onto another page.
 DEFAULT_SLIDE_PAGE_IN = (_SLIDE_WIDTH_IN, _SLIDE_HEIGHT_IN)
 # python-pptx page dimensions are Emu integers (914400 per inch).
 _EMU_PER_INCH = 914400
-# Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
-_PX_TO_PT = 0.75
-_EMU_PER_POINT = 12700
-# The hanging indent a bulleted line gets, as a multiple of its own type size.
-_BULLET_HANG = 1.2
-_DEFAULT_FONT_PX = 24.0
-_DEFAULT_SHAPE_FILL = "5B5BD6"
-
-_HEX_COLOR_PATTERN = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def _hex_rgb(value: str | None) -> str | None:
-    """A 6-digit RGB hex string for a ``#rgb`` / ``#rrggbb`` color, else None."""
-    if not value:
-        return None
-    match = _HEX_COLOR_PATTERN.match(value.strip())
-    if not match:
-        return None
-    digits = match.group(1)
-    if len(digits) == 3:
-        digits = "".join(ch * 2 for ch in digits)
-    return digits.upper()
-
-
-def _resolved_slide_elements(slide: Slide, page: SlidePage | None = None) -> list[SlideElement]:
-    """What is actually on the slide: explicit edits win, else derive."""
-    return resolve_elements(slide, page)
-
-
-class SlidesPptxExporter:
-    """``.slides.json`` decks as editable PowerPoint files.
-
-    Every element lands as a real shape — text boxes with runs, pictures,
-    drawing shapes — never a rendered bitmap, so the received file reopens
-    fully editable. What survives the trip: percent geometry mapped onto a
-    16:9 page (padding insets included), text with size / bold / color /
-    alignment, ``data:``-URI images (png / jpeg / gif) placed contained in
-    their box, rect / ellipse / line shapes, solid ``#hex`` slide
-    backgrounds, and speaker notes. Structured slides (title / bullets /
-    layout) derive the same elements the canvas renders.
-
-    Template skins: when the deck's ``template`` field references a pptx
-    (inlined to a data URI before export), the export opens that file as its
-    base — the skin's masters and layouts style every slide, so the
-    original's logos, backgrounds, and headers survive; the skin's own
-    slides are dropped and its native page size is kept (percent geometry
-    projects onto any page). Text takes the face the skin uses most, named
-    for Latin, east-asian, and complex scripts alike, so the deck reads in
-    the template's own type. A missing or unreadable skin degrades to the
-    blank default below.
-
-    Honest limits: without a skin there is no master or theme (elements sit
-    on a blank 16:9 layout); the canvas preview never renders the skin
-    (export-time only); no animations, transitions, or SmartArt; image/url
-    backgrounds are skipped; an explicit slide ``background`` paints over
-    the skin's; non-data-URI image references are skipped (inline assets
-    before exporting); without a skin there is no face to name, so fonts
-    fall back to whatever the viewer has installed.
-    Requires ``python-pptx`` — installed by the ``office`` extra.
-    """
-
-    suffixes: tuple[str, ...] = (".slides.json",)
-    target: str = "pptx"
-
-    def export(self, content: str, *, path: str, title: str | None = None) -> ExportedFile:
-        try:
-            from pptx import Presentation  # type: ignore[import-untyped]
-            from pptx.dml.color import RGBColor  # type: ignore[import-untyped]
-            from pptx.enum.shapes import (  # type: ignore[import-untyped]
-                MSO_CONNECTOR,
-                MSO_SHAPE,
-            )
-            from pptx.enum.text import (  # type: ignore[import-untyped]
-                MSO_ANCHOR,
-                MSO_AUTO_SIZE,
-                PP_ALIGN,
-            )
-            from pptx.oxml.ns import qn  # type: ignore[import-untyped]
-            from pptx.util import Emu, Inches, Pt  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise MissingExporterDependencyError(
-                "exporting .slides.json to pptx needs python-pptx — install "
-                "langchain-canvas[office] or register your own exporter"
-            ) from exc
-
-        try:
-            envelope = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{path} does not contain valid slides JSON") from exc
-        if not isinstance(envelope, dict):
-            raise ValueError(f"{path} does not contain a slides envelope")
-        if not isinstance(envelope.get("data"), dict):
-            # A deck written without the envelope used to export as one blank
-            # slide — silence that hides the real mistake. Name the shape so
-            # a tool-calling model can correct itself.
-            raise ValueError(
-                f'{path} has no "data" envelope — write slides files as '
-                '{"type": "slides", "data": {"slides": [...]}} '
-                "(element x/y/w/h are percent of the slide, 0-100)"
-            )
-        try:
-            deck = SlidesData.model_validate(envelope.get("data") or {})
-        except Exception as exc:  # noqa: BLE001 — pydantic detail relayed honestly
-            raise ValueError(f"{path} does not contain a valid slide deck: {exc}") from exc
-        envelope_title = envelope.get("title")
-        if not isinstance(envelope_title, str):
-            envelope_title = None
-
-        alignments = {
-            "left": PP_ALIGN.LEFT,
-            "center": PP_ALIGN.CENTER,
-            "right": PP_ALIGN.RIGHT,
-        }
-
-        anchors = {
-            "top": MSO_ANCHOR.TOP,
-            "middle": MSO_ANCHOR.MIDDLE,
-            "bottom": MSO_ANCHOR.BOTTOM,
-        }
-        # The deck's own page is the coordinate space its percent geometry
-        # refers to; absent means the classic 16:9 canvas.
-        canvas_w = deck.page.width_in if deck.page else _SLIDE_WIDTH_IN
-        canvas_h = deck.page.height_in if deck.page else _SLIDE_HEIGHT_IN
-        presentation = _skin_presentation(deck.template, Presentation)
-        skin_face = _skin_typeface(deck.template) if presentation is not None else None
-        if presentation is None:
-            presentation = Presentation()
-            presentation.slide_width = Inches(canvas_w)
-            presentation.slide_height = Inches(canvas_h)
-        # A skin keeps its native page size. (The stub types the dimensions
-        # Optional; a real file always carries them.)
-        page_w_in = (presentation.slide_width or Inches(canvas_w)) / _EMU_PER_INCH
-        page_h_in = (presentation.slide_height or Inches(canvas_h)) / _EMU_PER_INCH
-        # When the page differs from the deck's canvas (a skin with another
-        # aspect ratio), project with ONE uniform scale and center the
-        # content — width and height stretched separately would distort
-        # every shape (a circle approved on the 16:9 preview must stay a
-        # circle on a 4:3 page). The leftover margins show the skin's own
-        # background, which is exactly what a branded page is for.
-        scale = min(page_w_in / canvas_w, page_h_in / canvas_h)
-        offset_x = (page_w_in - canvas_w * scale) / 2.0
-        offset_y = (page_h_in - canvas_h * scale) / 2.0
-        blank_layout = _content_layout(presentation)
-
-        for slide_model in deck.slides or [Slide()]:
-            slide = presentation.slides.add_slide(blank_layout)
-            background = _hex_rgb(slide_model.background)
-            if background is not None:
-                fill = slide.background.fill
-                fill.solid()
-                fill.fore_color.rgb = RGBColor.from_string(background)
-
-            # A slide `padding` (percent) insets the content area, exactly as
-            # the editor and the browser-side exports apply it.
-            pad = (slide_model.padding or 0.0) / 100.0
-            span = 1.0 - 2.0 * pad
-
-            def inch_box(element: SlideElement) -> tuple[Any, Any, Any, Any]:
-                left = offset_x + (pad + (element.x / 100.0) * span) * canvas_w * scale
-                top = offset_y + (pad + (element.y / 100.0) * span) * canvas_h * scale
-                width = (element.w / 100.0) * span * canvas_w * scale
-                height = (element.h / 100.0) * span * canvas_h * scale
-                return Inches(left), Inches(top), Inches(width), Inches(height)
-
-            for element in _resolved_slide_elements(slide_model, deck.page):
-                left, top, width, height = inch_box(element)
-                if element.type == "text":
-                    box = slide.shapes.add_textbox(left, top, width, height)
-                    frame = box.text_frame
-                    frame.word_wrap = True
-                    # Boxes are measured to hold their own text, so nothing
-                    # needs shrinking — and shrink-to-fit is what made two
-                    # bullets of the same size render at different sizes.
-                    frame.auto_size = MSO_AUTO_SIZE.NONE
-                    frame.margin_left = frame.margin_right = Emu(0)
-                    frame.margin_top = frame.margin_bottom = Emu(0)
-                    # Where the text sits inside its box. Left unset, a box
-                    # measured for centred text draws it against the top edge.
-                    if element.vertical_align:
-                        frame.vertical_anchor = anchors[element.vertical_align]
-                    color = _hex_rgb(element.color) or _hex_rgb(slide_model.text_color)
-                    alignment = alignments.get(element.align or "left")
-                    # Text rides the same scale as the geometry, so type and
-                    # shapes keep their relative proportions on any page size.
-                    size_pt = (element.font_size or _DEFAULT_FONT_PX) * _PX_TO_PT * scale
-                    for index, line in enumerate((element.text or "").split("\n")):
-                        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
-                        paragraph.alignment = alignment
-                        if element.line_height:
-                            paragraph.line_spacing = element.line_height
-                        if element.space_before is not None:
-                            paragraph.space_before = Pt(element.space_before * _PX_TO_PT)
-                        if element.space_after is not None:
-                            paragraph.space_after = Pt(element.space_after * _PX_TO_PT)
-                        if line.startswith(BULLET_PREFIX):
-                            line = line[len(BULLET_PREFIX):]
-                            # A literal bullet inside the run is drawn by
-                            # whichever font covers the text after it, so a
-                            # deck of mixed scripts gets mixed bullet glyphs
-                            # and ragged left edges. A paragraph bullet is
-                            # drawn once by the list, and its hanging indent
-                            # puts wrapped lines under the text. python-pptx
-                            # has no public API for either.
-                            hang = str(int(size_pt * _BULLET_HANG * _EMU_PER_POINT))
-                            properties = paragraph._p.get_or_add_pPr()
-                            properties.set("marL", hang)
-                            properties.set("indent", "-" + hang)
-                            properties.append(
-                                properties.makeelement(
-                                    qn("a:buChar"), {"char": BULLET_PREFIX.strip()}
-                                )
-                            )
-                        run = paragraph.add_run()
-                        run.text = line
-                        run.font.size = Pt(size_pt)
-                        run.font.bold = bool(element.bold)
-                        band = _hex_rgb(element.highlight)
-                        if band:
-                            # python-pptx exposes no highlight accessor; the
-                            # element goes straight into the run properties.
-                            properties = run.font._rPr
-                            mark = properties.makeelement(qn("a:highlight"), {})
-                            colour = mark.makeelement(qn("a:srgbClr"), {"val": band})
-                            mark.append(colour)
-                            properties.append(mark)
-                        if color is not None:
-                            run.font.color.rgb = RGBColor.from_string(color)
-                        face = element.font_family or skin_face
-                        if face:
-                            # `a:latin` covers Latin script only — Korean and
-                            # the rest of CJK read `a:ea`, and complex scripts
-                            # read `a:cs`. A theme's east-asian entry is often
-                            # empty, so a run naming only its Latin face leaves
-                            # Hangul with nowhere to go. python-pptx stops at
-                            # `a:latin`; the schema fixes the sibling order.
-                            latin = run.font._rPr.get_or_add_latin()
-                            latin.set("typeface", face)
-                            latin.addnext(latin.makeelement(qn("a:cs"), {"typeface": face}))
-                            latin.addnext(latin.makeelement(qn("a:ea"), {"typeface": face}))
-                elif element.type == "shape":
-                    outline = _hex_rgb(element.stroke)
-                    # A shape may be drawn by its outline alone. Defaulting the
-                    # fill in that case would paint over what the border frames.
-                    fill_color = _hex_rgb(element.fill) or (
-                        None if outline else _DEFAULT_SHAPE_FILL
-                    )
-                    if element.shape == "line":
-                        connector = slide.shapes.add_connector(
-                            MSO_CONNECTOR.STRAIGHT, left, top, Emu(int(left) + int(width)), Emu(int(top) + int(height))
-                        )
-                        connector.line.color.rgb = RGBColor.from_string(
-                            outline or fill_color or _DEFAULT_SHAPE_FILL
-                        )
-                        connector.line.width = Pt((element.stroke_width or 2) * _PX_TO_PT)
-                    else:
-                        shape_type = MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
-                        shape = slide.shapes.add_shape(shape_type, left, top, width, height)
-                        if fill_color:
-                            shape.fill.solid()
-                            shape.fill.fore_color.rgb = RGBColor.from_string(fill_color)
-                        else:
-                            shape.fill.background()
-                        if outline:
-                            shape.line.color.rgb = RGBColor.from_string(outline)
-                            shape.line.width = Pt((element.stroke_width or 1) * _PX_TO_PT)
-                        else:
-                            shape.line.fill.background()
-                elif element.src:
-                    data = _data_uri_bytes(element.src)
-                    if data is None:
-                        continue  # not inlined / not an embeddable type — skip honestly
-                    try:
-                        picture = slide.shapes.add_picture(io.BytesIO(data), left, top)
-                    except Exception:  # noqa: BLE001 — corrupt image data; keep the deck
-                        continue
-                    # Contain the picture in its box (never stretch), centered —
-                    # the same object-fit the canvas and browser exports use.
-                    native_w, native_h = picture.image.size
-                    if native_w and native_h:
-                        # `fit`, not `scale` — this is the per-picture
-                        # contain factor; rebinding `scale` here silently
-                        # corrupted the page projection for every element
-                        # after an image (fonts exploded past pptx limits).
-                        fit = min(int(width) / native_w, int(height) / native_h)
-                        picture.width = Emu(int(native_w * fit))
-                        picture.height = Emu(int(native_h * fit))
-                        picture.left = Emu(int(left) + (int(width) - int(picture.width)) // 2)
-                        picture.top = Emu(int(top) + (int(height) - int(picture.height)) // 2)
-
-            if slide_model.notes:
-                notes_frame = slide.notes_slide.notes_text_frame
-                if notes_frame is not None:
-                    notes_frame.text = slide_model.notes
-
-        out = io.BytesIO()
-        presentation.save(out)
-        # The deck's own title names the file when the caller has none — a
-        # slides envelope carries one, unlike the html/table sources.
-        name = _safe_name(title) or _safe_name(envelope_title) or _stem(path)
-        return ExportedFile(out.getvalue(), f"{name}.pptx", PPTX_MIME)
-
 
 def default_exporters() -> list[Exporter]:
     """The built-in exporters, in routing order."""
-    return [TableXlsxExporter(), HtmlDocxExporter(), SlidesPptxExporter()]
+    from .deck.export import DeckPptxExporter
+
+    return [TableXlsxExporter(), HtmlDocxExporter(), DeckPptxExporter()]

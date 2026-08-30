@@ -29,12 +29,18 @@ export const INSPECTOR_MARK = "langchain-canvas";
  *  With `assetBaseUrl`, the inspector also resolves canvas-asset references
  *  (`src="assets/…"` / `src="sources/…"`) for display: the original relative
  *  src is kept in `data-lcx-src` and restored on every serialization, so the
- *  stored document never sees a resolved URL. */
-export function withInspector(html: string, assetBaseUrl?: string): string {
+ *  stored document never sees a resolved URL.
+ *
+ *  With `slideId` (deck context only), a structural insert/duplicate/group
+ *  command mints a fresh `node-{slideId}-{uuid8}` `data-node-id` for the new
+ *  or newly-addressable element, so `canvas.node_patch` can target it without
+ *  waiting for a full deck reload. */
+export function withInspector(html: string, assetBaseUrl?: string, slideId?: string): string {
   let out = withViewport(html);
-  const config = assetBaseUrl
-    ? `<script data-lcx>window.__LCX_ASSET_BASE=${JSON.stringify(assetBaseUrl)}</script>`
-    : "";
+  const configVars: string[] = [];
+  if (assetBaseUrl) configVars.push(`window.__LCX_ASSET_BASE=${JSON.stringify(assetBaseUrl)}`);
+  if (slideId) configVars.push(`window.__LCX_SLIDE_ID=${JSON.stringify(slideId)}`);
+  const config = configVars.length ? `<script data-lcx>${configVars.join(";")}</script>` : "";
   const injection = `<style data-lcx>${INSPECTOR_CSS}</style>${config}<script data-lcx>${INSPECTOR_SCRIPT}</script>`;
   const marker = "</body>";
   const at = out.lastIndexOf(marker);
@@ -87,6 +93,15 @@ const INSPECTOR_SCRIPT = `
 (function () {
   var MARK = ${JSON.stringify(INSPECTOR_MARK)};
   var STYLE_PROPS = ${JSON.stringify(STYLE_PROPS)};
+  var SLIDE_ID = window.__LCX_SLIDE_ID || "";
+  // Deck-only: a structural edit that adds or duplicates an element needs a
+  // fresh, addressable id so canvas.node_patch can target it later. Plain
+  // (non-deck) documents have no slide id, so nothing is minted for them.
+  function uuid8() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID().slice(0, 8);
+    return Math.random().toString(16).slice(2, 10);
+  }
+  function mintNodeId() { return SLIDE_ID ? "node-" + SLIDE_ID + "-" + uuid8() : null; }
   function assign(el, path) {
     if (el.hasAttribute && el.hasAttribute("data-lcx")) return; // skip injected style/script
     el.setAttribute("data-cid", path);
@@ -150,7 +165,7 @@ const INSPECTOR_SCRIPT = `
     return clone.outerHTML;
   }
   function emitEdit(el) {
-    parent.postMessage({ source: MARK, type: "node_edit", cid: el.getAttribute("data-cid"), html: canonicalHtml(el) }, "*");
+    parent.postMessage({ source: MARK, type: "node_edit", cid: el.getAttribute("data-cid"), nodeId: el.getAttribute("data-node-id"), html: canonicalHtml(el) }, "*");
   }
   // A structural change (insert/delete/move) shifts every cid, so we save the
   // whole document: clone <html>, drop the injected inspector nodes, scrub the
@@ -344,7 +359,7 @@ const INSPECTOR_SCRIPT = `
     }
     function selectSummary(el) {
       return { cid: el.getAttribute("data-cid"), selector: selectorFor(el), tag: el.tagName.toLowerCase(),
-               text: (el.textContent || "").trim().slice(0, 60) };
+               text: (el.textContent || "").trim().slice(0, 60), nodeId: el.getAttribute("data-node-id") };
     }
 
     document.addEventListener("mouseover", function (e) {
@@ -402,6 +417,8 @@ const INSPECTOR_SCRIPT = `
       parent.postMessage({
         source: MARK, type: "select",
         cid: t.getAttribute("data-cid"),
+        nodeId: t.getAttribute("data-node-id"),
+        slideId: SLIDE_ID || undefined,
         selector: selectorFor(t),
         tag: t.tagName.toLowerCase(),
         text: (t.textContent || "").trim().slice(0, 80),
@@ -617,6 +634,8 @@ const INSPECTOR_SCRIPT = `
       // Structural edits — mutate the tree, then persist the whole document.
       if (d.type === "insert") {
         var block = newBlock(d.block || "p");
+        var mintedInsertId = mintNodeId();
+        if (mintedInsertId) block.setAttribute("data-node-id", mintedInsertId);
         var anchor = d.cid ? byCid(d.cid) : null;
         if (anchor && anchor.parentNode && anchor.parentNode !== document.documentElement) {
           anchor.parentNode.insertBefore(block, anchor.nextSibling);
@@ -645,7 +664,16 @@ const INSPECTOR_SCRIPT = `
         for (var g = 0; g < cids.length; g++) { var m = byCid(cids[g]); if (m) members.push(m); }
         if (members.length < 2) return;
         var gid = "g" + (groupSeq++);
-        for (var w = 0; w < members.length; w++) members[w].setAttribute("data-group-id", gid);
+        for (var w = 0; w < members.length; w++) {
+          members[w].setAttribute("data-group-id", gid);
+          // A member with no address yet (content authored before node ids
+          // existed on it) gets one now, so it stays individually editable
+          // inside the new group.
+          if (!members[w].getAttribute("data-node-id")) {
+            var mintedGroupId = mintNodeId();
+            if (mintedGroupId) members[w].setAttribute("data-node-id", mintedGroupId);
+          }
+        }
         clearSelected();
         emitDoc();
         return;
@@ -667,6 +695,10 @@ const INSPECTOR_SCRIPT = `
       if (d.type === "duplicate") {
         var copy = target.cloneNode(true);
         scrub(copy);
+        // A clone carries the source's data-node-id verbatim — mint a fresh one
+        // so the copy is independently addressable instead of colliding with it.
+        var mintedDupId = mintNodeId();
+        if (mintedDupId) copy.setAttribute("data-node-id", mintedDupId);
         target.parentNode.insertBefore(copy, target.nextSibling);
         emitDoc();
       } else if (d.type === "delete") {

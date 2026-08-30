@@ -134,12 +134,18 @@ export default function ChatPage() {
     [threadId, applyEvent],
   );
 
-  /** Store file suffix per structured (JSON-envelope) artifact type. */
+  /** Store file suffix per structured (JSON-envelope) artifact type. A
+   *  canonical deck (`type: "slides"`, `data: {html}`) is raw HTML, not a
+   *  JSON envelope — it has no entry here; see `DECK_HTML_SUFFIX` below. */
   const ENVELOPE_SUFFIX: Record<string, string> = {
     table: ".table.json",
     chart: ".chart.json",
-    slides: ".slides.json",
   };
+
+  /** The canonical deck dialect's file suffix — mirrors
+   *  `langchain_canvas.deck.model.SLIDES_HTML_SUFFIX` on the Python side,
+   *  which `replay.py` matches ahead of every plain `.html` check. */
+  const DECK_HTML_SUFFIX = ".slides.html";
 
   /** Store path for an artifact's working copy (the id when already a path). */
   const artifactPath = (artifactId: string, suffix: string) =>
@@ -147,17 +153,19 @@ export default function ChatPage() {
       ? artifactId
       : `${artifactId.replace(/[^a-zA-Z0-9._-]/g, "-")}${suffix}`;
 
-  // Persist hand edits as described commits. Pages save raw html; documents
-  // save their markdown as text (sources/*.md previews write back to the
-  // source file); table/chart/slides save the artifact envelope to a typed
-  // JSON file. An emitter-only artifact materializes a working copy on its
-  // first hand edit.
+  // Persist hand edits as described commits. Pages save raw html; a deck
+  // saves its raw `.slides.html` (materializing that suffix on first hand
+  // edit if the artifact wasn't already stored there); documents save their
+  // markdown as text (sources/*.md previews write back to the source file);
+  // table/chart save the artifact envelope to a typed JSON file.
   const handleSave = useCallback<CanvasSaveHandler>(
     async ({ artifactId, artifact, baseRevision }) => {
       const html = (artifact.data as { html?: string }).html;
+      const isDeck = artifact.type === "slides" || artifact.meta?.kind === "deck";
       const envelopeSuffix = ENVELOPE_SUFFIX[artifact.type];
       if (typeof html === "string") {
-        await postSave(artifactId, { html, baseRevision, path: artifactId });
+        const path = isDeck ? artifactPath(artifactId, DECK_HTML_SUFFIX) : artifactId;
+        await postSave(artifactId, { html, baseRevision, path });
       } else if (envelopeSuffix) {
         await postSave(artifactId, {
           artifact: { type: artifact.type, title: artifact.title, data: artifact.data },

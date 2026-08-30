@@ -97,12 +97,46 @@ class CanvasNodePatch(_Event):
 
     An O(1) surgical edit: the client resolves `cid` against the source HTML and
     swaps that element's outer HTML for `html`, instead of resending the page.
+
+    `slide_id`/`node_id` are set for deck artifacts, where the durable edit
+    address is `(deckId, slideId, nodeId)` — `cid` stays screen-only and is
+    never persisted; the server-side persist path requires `node_id`.
     """
 
     type: Literal["canvas.node_patch"] = "canvas.node_patch"
     id: str
     cid: str
     html: str
+    slide_id: str | None = None
+    node_id: str | None = None
+
+
+class SlideStatus(_Event):
+    """Report one slide's pipeline stage during deck conversion.
+
+    Emitted per slide (`extracting -> generating -> verifying -> complete` or
+    `degraded`) so the client can show progress and let completed slides be
+    edited without waiting on the rest of the deck.
+    """
+
+    type: Literal["canvas.slide_status"] = "canvas.slide_status"
+    id: str
+    slide_id: str
+    stage: Literal["extracting", "generating", "verifying", "complete", "degraded"]
+    detail: str | None = None
+
+
+class CanvasSlidePatch(_Event):
+    """Replace one slide's template HTML in a deck artifact.
+
+    Transmits a single slide over the wire instead of resending the whole
+    deck (`data.html`) through `canvas.patch`.
+    """
+
+    type: Literal["canvas.slide_patch"] = "canvas.slide_patch"
+    id: str
+    slide_id: str
+    template_html: str
 
 
 class CanvasReplace(_Event):
@@ -154,6 +188,8 @@ CanvasEvent = Union[
     CanvasAppend,
     CanvasPatch,
     CanvasNodePatch,
+    SlideStatus,
+    CanvasSlidePatch,
     CanvasReplace,
     CanvasStatus,
     CanvasCommit,
