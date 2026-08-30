@@ -37,6 +37,8 @@ class Configuration:
     model_max_retries: int
     canvas_data_dir: Path
     cors_origins: list[str]
+    deck_batch_size: int = 10
+    deck_writer_concurrency: int = 10
 
     def __post_init__(self) -> None:
         if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
@@ -50,13 +52,16 @@ class Configuration:
         log handler exists; import-time logging has none under uvicorn)."""
         logger.info(
             "Configuration loaded: main_model=%s writer_model=%s fallback_model=%s "
-            "model_max_retries=%s canvas_data_dir=%s cors_origins=%s",
+            "model_max_retries=%s canvas_data_dir=%s cors_origins=%s "
+            "deck_batch_size=%s deck_writer_concurrency=%s",
             self.main_model,
             self.writer_model,
             self.fallback_model,
             self.model_max_retries,
             self.canvas_data_dir,
             self.cors_origins,
+            self.deck_batch_size,
+            self.deck_writer_concurrency,
         )
 
     @classmethod
@@ -76,6 +81,14 @@ class Configuration:
             ).split(",")
             if origin.strip()
         ]
+        deck_batch_size = int(os.environ.get("DECK_BATCH_SIZE", "10"))
+        if deck_batch_size < 1:
+            raise ValueError("DECK_BATCH_SIZE must be >= 1")
+        deck_writer_concurrency = int(
+            os.environ.get("DECK_WRITER_CONCURRENCY", "10")
+        )
+        if deck_writer_concurrency < 1:
+            raise ValueError("DECK_WRITER_CONCURRENCY must be >= 1")
         return cls(
             main_model=main_model,
             writer_model=writer_model,
@@ -83,6 +96,8 @@ class Configuration:
             model_max_retries=model_max_retries,
             canvas_data_dir=canvas_data_dir,
             cors_origins=cors_origins,
+            deck_batch_size=deck_batch_size,
+            deck_writer_concurrency=deck_writer_concurrency,
         )
 
 

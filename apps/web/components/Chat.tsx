@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArtifactCard, type ChatMessage } from "@braincrew-lab/langchain-canvas";
+import { ArtifactCard, type ActiveTool, type ChatMessage } from "@braincrew-lab/langchain-canvas";
 
 interface ChatProps {
   messages: ChatMessage[];
@@ -12,9 +12,20 @@ interface ChatProps {
   onReset?: () => void;
   /** Clickable example prompts shown in the empty state. */
   suggestions?: string[];
+  /** The agent tool currently running — drives the status line under the typing indicator. */
+  activeTool?: ActiveTool | null;
 }
 
-export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, suggestions = [] }: ChatProps) {
+export function Chat({
+  messages,
+  isStreaming,
+  error,
+  onSend,
+  onStop,
+  onReset,
+  suggestions = [],
+  activeTool,
+}: ChatProps) {
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -61,11 +72,24 @@ export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, su
           // long-running write_slide run), not just before the first token arrives —
           // otherwise a silent gap after text reads as a hang.
           const showTyping = message.role === "assistant" && isStreaming && isLastMessage;
+          const statusLabel =
+            showTyping && activeTool
+              ? activeTool.slideId
+                ? `${activeTool.name} · ${activeTool.slideId} ${activeTool.stage === "verifying" ? "저장·검토 중…" : "작성 중…"}`
+                : `${activeTool.name} 실행 중…`
+              : null;
           return (
             <div key={message.id} className={`msg msg--${message.role}`}>
               <div className={`bubble bubble--${message.role}`}>
                 {message.text}
-                {showTyping && <span className="bubble__typing" />}
+                {showTyping &&
+                  (statusLabel ? (
+                    <span className="bubble__status" role="status" aria-live="polite">
+                      {statusLabel}
+                    </span>
+                  ) : (
+                    <span className="bubble__typing" />
+                  ))}
               </div>
               {Array.from(new Set(message.artifactIds)).map((id) => <ArtifactCard key={id} artifactId={id} />)}
             </div>

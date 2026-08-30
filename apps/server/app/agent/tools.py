@@ -53,6 +53,15 @@ from langchain_canvas.replay import (
 from langchain_canvas.store import CanvasFileNotFoundError, CanvasStoreError
 
 from .configuration import config
+from .deck_batch import (
+    SlideSpec,
+    _strip_code_fence,
+    _text_of,
+    build_slide_prompt,
+    format_batch_result,
+    generate_slide_bodies,
+    invoke_writer_with_retry,
+)
 from .render import render_slide
 from .store import (
     DECK_PATH,
@@ -72,21 +81,6 @@ from .store import (
 _DECK_TOOLS = create_deck_tools(STORE)
 _DECK_TOOLS_BY_NAME = {t.name: t for t in _DECK_TOOLS}
 _edit_deck_slide = _DECK_TOOLS_BY_NAME["edit_deck_slide"]
-
-
-def _text_of(chunk: object) -> str:
-    content = getattr(chunk, "content", "")
-    return content if isinstance(content, str) else ""
-
-
-def _strip_code_fence(text: str) -> str:
-    """Drop a leading ```html / trailing ``` fence if the model wrapped its output."""
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[-1]
-        if stripped.endswith("```"):
-            stripped = stripped[: stripped.rfind("```")]
-    return stripped.strip()
 
 
 def thread_id(runtime: ToolRuntime) -> str:
@@ -158,12 +152,14 @@ def _template_fragment(slide_id: str, title: str | None, body_html: str) -> str:
     return f"<template{attrs}>\n{body_html}\n</template>"
 
 
-def _emit_slide_status(runtime: ToolRuntime, path: str, slide_id: str, stage: str) -> None:
+def _emit_slide_status(
+    runtime: ToolRuntime, path: str, slide_id: str, stage: str, detail: str | None = None
+) -> None:
     writer = getattr(runtime, "stream_writer", None)
     if writer is None:
         return
     writer(
-        SlideStatus(id=path, slide_id=slide_id, stage=stage).model_dump(
+        SlideStatus(id=path, slide_id=slide_id, stage=stage, detail=detail).model_dump(
             by_alias=True, exclude_none=True
         )
     )
@@ -217,11 +213,13 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
 def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolRuntime) -> str:
     """Write one slide of the deck as canonical slide HTML and check its layout.
 
-    `path` and `slide_id` come from plan_deck's listing (or list_deck_slides
-    for a deck already on the canvas). `brief` is what the slide should say —
-    include the key content, and note it is slide N of M so the design fits
-    its role (cover, content, closing). Fix any ERROR the layout check below
-    reports with read_deck_slide + edit_deck_slide before moving on.
+    Single-slide retry/fix tool — use write_slides to write a deck's slides
+    in batches; call write_slide only to retry or fix one slide. `path` and
+    `slide_id` come from plan_deck's listing (or list_deck_slides for a deck
+    already on the canvas). `brief` is what the slide should say — include
+    the key content, and note it is slide N of M so the design fits its role
+    (cover, content, closing). Fix any ERROR the layout check below reports
+    with read_deck_slide + edit_deck_slide before moving on.
     """
     try:
         tid = thread_id(runtime)
@@ -238,18 +236,16 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
     except DeckParseError as exc:
         return f"Error: {exc}."
 
+    _emit_slide_status(runtime, path, slide_id, "generating")
     try:
-        model = init_chat_model(config.writer_model)
-        prompt = (
-            "Create one presentation slide's markup as a single "
-            '<section class="slide">...</section> fragment — no <html>/<body>/'
-            f"<style> wrapper.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
+        body_html = invoke_writer_with_retry(
+            config.writer_model, build_slide_prompt(brief), max_retries=config.model_max_retries
         )
-        body_html = _strip_code_fence(_text_of(model.invoke(prompt)))
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
         return f"Error: {exc}"
     fragment = _template_fragment(slide_id, title, body_html)
 
+    _emit_slide_status(runtime, path, slide_id, "verifying")
     result = _edit_deck_slide.func(
         path=path, slide_id=slide_id, template_html=fragment, revision=got.revision, runtime=runtime
     )
@@ -259,13 +255,124 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
     try:
         slide = read_slide(STORE.read(tid, path).content, slide_id)
     except (DeckParseError, CanvasStoreError) as exc:
+        _emit_slide_status(runtime, path, slide_id, "complete")
         return f"{result}\n(layout check skipped: {exc})"
     try:
         metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
         report = _slide_layout_report(f"{path}#{slide_id}", metrics)
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        _emit_slide_status(runtime, path, slide_id, "complete")
         return f"{result}\n(layout check skipped: {exc})"
+    _emit_slide_status(runtime, path, slide_id, "complete")
     return f"{result}\n{report}"
+
+
+@tool
+def write_slides(
+    path: str, slide_ids: list[str], titles: list[str], briefs: list[str], runtime: ToolRuntime
+) -> str:
+    """Write up to a batch of slides of a deck in one call, generating their
+    bodies concurrently.
+
+    `slide_ids`, `titles`, and `briefs` are parallel lists — same length,
+    same order — one entry per slide to write. `path` and the slide ids come
+    from plan_deck's listing (or list_deck_slides for a deck already on the
+    canvas). Each brief is what that slide should say — include the key
+    content, and note it is slide N of M so the design fits its role (cover,
+    content, closing). Slides are generated in parallel but committed to the
+    canvas one at a time, in list order. Fix any ERROR the per-slide layout
+    check reports with read_deck_slide + edit_deck_slide before the next
+    batch; a slide reported as Error was not written and must be included
+    again in a later write_slides (or write_slide) call.
+    """
+    if not slide_ids or not titles or not briefs:
+        return "Error: slide_ids, titles, and briefs must not be empty."
+    if not (len(slide_ids) == len(titles) == len(briefs)):
+        return (
+            "Error: slide_ids, titles, and briefs must be the same length "
+            f"(got {len(slide_ids)}, {len(titles)}, {len(briefs)})."
+        )
+    if len(slide_ids) > config.deck_batch_size:
+        return (
+            f"Error: write_slides accepts at most {config.deck_batch_size} slides per call "
+            f"(got {len(slide_ids)}); split into batches."
+        )
+
+    try:
+        tid = thread_id(runtime)
+    except ValueError as exc:
+        return f"Error: {exc}"
+    try:
+        got = STORE.read(tid, path)
+    except CanvasFileNotFoundError:
+        return f"No deck {path} exists yet. Call plan_deck first."
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+    try:
+        deck = parse_deck(got.content)
+    except DeckParseError as exc:
+        return f"Error: {exc}."
+
+    specs = [
+        SlideSpec(slide_id=sid, title=title, brief=brief)
+        for sid, title, brief in zip(slide_ids, titles, briefs, strict=True)
+    ]
+    outcomes = generate_slide_bodies(
+        specs,
+        invoke_writer=lambda prompt: invoke_writer_with_retry(
+            config.writer_model, prompt, max_retries=config.model_max_retries
+        ),
+        concurrency=config.deck_writer_concurrency,
+        on_start=lambda sid: _emit_slide_status(runtime, path, sid, "generating"),
+    )
+
+    for spec, outcome in zip(specs, outcomes, strict=True):
+        if outcome.error:
+            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            continue
+
+        _emit_slide_status(runtime, path, spec.slide_id, "verifying")
+        try:
+            revision = STORE.read(tid, path).revision
+        except CanvasStoreError as exc:
+            outcome.error = str(exc)
+            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            continue
+
+        fragment = _template_fragment(spec.slide_id, spec.title, outcome.body_html or "")
+        edit_result = _edit_deck_slide.func(
+            path=path,
+            slide_id=spec.slide_id,
+            template_html=fragment,
+            revision=revision,
+            runtime=runtime,
+        )
+        if edit_result.startswith("Error:"):
+            outcome.error = edit_result.removeprefix("Error: ")
+            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            continue
+
+        try:
+            slide = read_slide(STORE.read(tid, path).content, spec.slide_id)
+        except (DeckParseError, CanvasStoreError) as exc:
+            outcome.layout_report = f"(layout check skipped: {exc})"
+            _emit_slide_status(runtime, path, spec.slide_id, "complete")
+            continue
+        try:
+            metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
+            outcome.layout_report = _slide_layout_report(f"{path}#{spec.slide_id}", metrics)
+        except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+            outcome.layout_report = f"(layout check skipped: {exc})"
+        _emit_slide_status(runtime, path, spec.slide_id, "complete")
+
+    success_count = sum(1 for outcome in outcomes if not outcome.error)
+    try:
+        final_revision = STORE.read(tid, path).revision
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+    lines = format_batch_result(path, outcomes).splitlines()
+    lines[0] = f"Wrote {success_count}/{len(specs)} slides to {path} (revision {final_revision})."
+    return "\n".join(lines)
 
 
 @tool
@@ -516,6 +623,7 @@ CANVAS_TOOLS = [
     ),
     plan_deck,
     write_slide,
+    write_slides,
     convert_slide,
     write_report,
     build_chart,

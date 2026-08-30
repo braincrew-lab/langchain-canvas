@@ -7,4 +7,4 @@
 export { CanvasProvider, useCanvasStore, useCanvasStoreApi } from "../store/context";
 export type { CanvasProviderProps } from "../store/context";
 export { createCanvasStore } from "../store/store";
-export type { CanvasStore, ChatMessage, IframeCommand, UserEditHandler } from "../store/store";
+export type { CanvasStore, ChatMessage, IframeCommand, UserEditHandler, ActiveTool } from "../store/store";

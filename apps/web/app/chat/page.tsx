@@ -63,6 +63,7 @@ export default function ChatPage() {
   const stream = useCanvasStream({ transport, endpoint: `${SERVER}/api/chat`, threadId });
   const applyEvents = useCanvasStore((s) => s.applyEvents);
   const applyEvent = useCanvasStore((s) => s.applyEvent);
+  const activeTool = useCanvasStore((s) => s.activeTool);
 
   // Hydrate: rebuild the stored canvas (artifacts + described versions) on load.
   useEffect(() => {
@@ -235,6 +236,7 @@ export default function ChatPage() {
           onStop={stream.stop}
           onReset={stream.reset}
           suggestions={SUGGESTIONS}
+          activeTool={activeTool}
         />
       </section>
       <section className="app__canvas">

@@ -89,3 +89,43 @@ def test_from_env_reads_main_writer_fallback_and_data_dir(
     assert config.writer_model == "anthropic:claude-haiku-4-5"
     assert config.fallback_model == "anthropic:claude-sonnet-4-5-20250929"
     assert config.canvas_data_dir == tmp_path
+
+
+def test_from_env_deck_defaults_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("DECK_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("DECK_WRITER_CONCURRENCY", raising=False)
+
+    config = Configuration.from_env()
+
+    assert config.deck_batch_size == 10
+    assert config.deck_writer_concurrency == 10
+
+
+def test_from_env_deck_batch_size_reads_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("DECK_BATCH_SIZE", "4")
+    monkeypatch.setenv("DECK_WRITER_CONCURRENCY", "6")
+
+    config = Configuration.from_env()
+
+    assert config.deck_batch_size == 4
+    assert config.deck_writer_concurrency == 6
+
+
+def test_from_env_deck_batch_size_zero_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("DECK_BATCH_SIZE", "0")
+
+    with pytest.raises(ValueError, match="DECK_BATCH_SIZE"):
+        Configuration.from_env()
+
+
+def test_from_env_deck_writer_concurrency_zero_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("DECK_WRITER_CONCURRENCY", "0")
+
+    with pytest.raises(ValueError, match="DECK_WRITER_CONCURRENCY"):
+        Configuration.from_env()

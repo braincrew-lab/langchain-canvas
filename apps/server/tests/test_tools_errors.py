@@ -173,7 +173,7 @@ def test_write_slide_render_raises_degrades_layout_check(
     slide_id = parse_deck(STORE.read(thread_id, path).content).slides[0].slide_id
 
     monkeypatch.setattr(
-        "app.agent.tools.init_chat_model",
+        "app.agent.deck_batch.init_chat_model",
         lambda *_a, **_k: SimpleNamespace(
             invoke=lambda _prompt: SimpleNamespace(content='<section class="slide">Body</section>')
         ),

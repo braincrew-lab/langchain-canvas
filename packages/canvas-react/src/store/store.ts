@@ -48,6 +48,15 @@ export interface ChatMessage {
   artifactIds?: string[];
 }
 
+/** The agent tool currently running, driving the status line above the chat input. */
+export interface ActiveTool {
+  toolCallId: string;
+  name: string;
+  /** Set while a deck slide is generating/verifying under this tool call. */
+  slideId?: string;
+  stage?: "generating" | "verifying";
+}
+
 /** A command the editing UI forwards to the active html artifact's iframe. */
 export interface IframeCommand {
   artifactId: string;
@@ -103,6 +112,8 @@ export interface CanvasStore {
    *  export menu uses it to inline them. Null = no file endpoint (references
    *  stay unresolved, everything else behaves as before). */
   assetBaseUrl: string | null;
+  /** The agent tool currently running (drives the status line above chat input). */
+  activeTool: ActiveTool | null;
 
   // actions
   applyEvent: (event: StreamEvent) => void;
@@ -147,6 +158,7 @@ const initialState = () => ({
   saveFlusher: null as (() => Promise<void>) | null,
   onUserEdit: null as UserEditHandler | null,
   assetBaseUrl: null as string | null,
+  activeTool: null as ActiveTool | null,
 });
 
 /** Create an isolated canvas store. */
@@ -263,7 +275,7 @@ function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, ge
         error: null,
       })),
 
-    setStreaming: (value) => set({ isStreaming: value }),
+    setStreaming: (value) => set(value ? { isStreaming: value } : { isStreaming: value, activeTool: null }),
     setBusy: (value) => set({ isBusy: value }),
     setActiveArtifact: (id) => set((state) => ({ canvas: { ...state.canvas, activeId: id } })),
     setSelections: (selections) => set({ selections }),
@@ -304,16 +316,27 @@ function reduceEvent(state: CanvasStore, event: StreamEvent): CanvasStore {
     if (event.type === "canvas.create") {
       return { ...state, canvas, messages: linkArtifact(state.messages, event.artifact.id) };
     }
+    if (event.type === "canvas.slide_status" && state.activeTool) {
+      const activeTool =
+        event.stage === "generating" || event.stage === "verifying"
+          ? { ...state.activeTool, slideId: event.slideId, stage: event.stage }
+          : { toolCallId: state.activeTool.toolCallId, name: state.activeTool.name };
+      return { ...state, canvas, activeTool };
+    }
     return { ...state, canvas };
   }
   switch (event.type) {
     case "message.delta":
       return { ...state, messages: appendDelta(state.messages, event.messageId, event.text) };
     case "error":
-      return { ...state, error: event.message };
+      return { ...state, error: event.message, activeTool: null };
     case "done":
-      return { ...state, isStreaming: false };
-    // message.end / tool.* — no store change in the reference UI.
+      return { ...state, isStreaming: false, activeTool: null };
+    case "tool.start":
+      return { ...state, activeTool: { toolCallId: event.toolCallId, name: event.name } };
+    case "tool.end":
+      return state.activeTool?.toolCallId === event.toolCallId ? { ...state, activeTool: null } : state;
+    // message.end — no store change in the reference UI.
     default:
       return state;
   }

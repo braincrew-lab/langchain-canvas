@@ -23,7 +23,7 @@ export * from "./transports";
 
 // store + hooks
 export { CanvasProvider, useCanvasStore, useCanvasStoreApi, createCanvasStore } from "./hooks/useCanvasStore";
-export type { CanvasStore, ChatMessage, IframeCommand, UserEditHandler, CanvasProviderProps } from "./hooks/useCanvasStore";
+export type { CanvasStore, ChatMessage, IframeCommand, UserEditHandler, CanvasProviderProps, ActiveTool } from "./hooks/useCanvasStore";
 export { useCanvasStream } from "./hooks/useCanvasStream";
 export type { UseCanvasStreamOptions } from "./hooks/useCanvasStream";
 export { useCanvasReplay } from "./hooks/useCanvasReplay";

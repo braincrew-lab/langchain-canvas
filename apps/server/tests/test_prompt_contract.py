@@ -23,3 +23,14 @@ def test_system_prompt_documents_the_slide_id_form() -> None:
 def test_system_prompt_routes_slide_fixes_through_deck_tools() -> None:
     assert "read_deck_slide" in SYSTEM_PROMPT
     assert "edit_deck_slide" in SYSTEM_PROMPT
+
+
+def test_system_prompt_documents_write_slides_batching() -> None:
+    assert "write_slides" in SYSTEM_PROMPT
+    assert "batches" in SYSTEM_PROMPT
+
+
+def test_system_prompt_orders_write_slides_before_write_slide_only() -> None:
+    assert SYSTEM_PROMPT.index("write_slides") < SYSTEM_PROMPT.index(
+        "write_slide only"
+    )

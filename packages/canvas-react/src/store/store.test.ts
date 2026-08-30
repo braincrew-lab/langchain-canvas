@@ -188,3 +188,112 @@ describe("undo is an edit of one file", () => {
     await store.getState().flushSaves(); // nothing registered is fine
   });
 });
+
+describe("activeTool status line", () => {
+  it("sets activeTool on tool.start", () => {
+    const store = createCanvasStore();
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides" });
+  });
+
+  it("tracks slide_status generating while updating the artifact's slideStatus meta", () => {
+    const store = createCanvasStore();
+    const deckHtml = '<!doctype html><html><body><template data-slide-id="slide-003"><h1>A</h1></template></body></html>';
+    store.getState().applyEvent({ type: "canvas.create", artifact: deckArtifact("d1", deckHtml) });
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+
+    store.getState().applyEvent({
+      type: "canvas.slide_status",
+      id: "d1",
+      slideId: "slide-003",
+      stage: "generating",
+    });
+
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides", slideId: "slide-003", stage: "generating" });
+    const meta = store.getState().canvas.artifacts.d1?.meta as { slideStatus?: Record<string, { stage: string }> };
+    expect(meta.slideStatus?.["slide-003"]?.stage).toBe("generating");
+  });
+
+  it("keeps slideId through verifying, then clears slideId/stage (keeping name) on complete", () => {
+    const store = createCanvasStore();
+    const deckHtml = '<!doctype html><html><body><template data-slide-id="slide-003"><h1>A</h1></template></body></html>';
+    store.getState().applyEvent({ type: "canvas.create", artifact: deckArtifact("d1", deckHtml) });
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+    store.getState().applyEvent({ type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "generating" });
+
+    store.getState().applyEvent({ type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "verifying" });
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides", slideId: "slide-003", stage: "verifying" });
+
+    store.getState().applyEvent({ type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "complete" });
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides" });
+  });
+
+  it("stays null on slide_status with no activeTool, but still updates artifact meta", () => {
+    const store = createCanvasStore();
+    const deckHtml = '<!doctype html><html><body><template data-slide-id="slide-003"><h1>A</h1></template></body></html>';
+    store.getState().applyEvent({ type: "canvas.create", artifact: deckArtifact("d1", deckHtml) });
+
+    store.getState().applyEvent({ type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "generating" });
+
+    expect(store.getState().activeTool).toBeNull();
+    const meta = store.getState().canvas.artifacts.d1?.meta as { slideStatus?: Record<string, { stage: string }> };
+    expect(meta.slideStatus?.["slide-003"]?.stage).toBe("generating");
+  });
+
+  it("clears activeTool on matching tool.end; leaves it on mismatched id", () => {
+    const store = createCanvasStore();
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+
+    store.getState().applyEvent({ type: "tool.end", toolCallId: "c2", ok: true });
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides" });
+
+    store.getState().applyEvent({ type: "tool.end", toolCallId: "c1", ok: true });
+    expect(store.getState().activeTool).toBeNull();
+  });
+
+  it("clears activeTool on done and error", () => {
+    const store = createCanvasStore();
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+    store.getState().applyEvent({ type: "done" });
+    expect(store.getState().activeTool).toBeNull();
+
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c2", name: "write_slides" });
+    store.getState().applyEvent({ type: "error", message: "boom" });
+    expect(store.getState().activeTool).toBeNull();
+  });
+
+  it("clears activeTool on setStreaming(false) and reset()", () => {
+    const store = createCanvasStore();
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+    store.getState().setStreaming(false);
+    expect(store.getState().activeTool).toBeNull();
+
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c2", name: "write_slides" });
+    store.getState().reset();
+    expect(store.getState().activeTool).toBeNull();
+  });
+
+  it("a second tool.start fully replaces activeTool with no stale slideId leak", () => {
+    const store = createCanvasStore();
+    const deckHtml = '<!doctype html><html><body><template data-slide-id="slide-003"><h1>A</h1></template></body></html>';
+    store.getState().applyEvent({ type: "canvas.create", artifact: deckArtifact("d1", deckHtml) });
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c1", name: "write_slides" });
+    store.getState().applyEvent({ type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "generating" });
+
+    store.getState().applyEvent({ type: "tool.start", toolCallId: "c2", name: "write_slides" });
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c2", name: "write_slides" });
+  });
+
+  it("applyEvents batches tool.start + slide_status and reflects slideId in one write", () => {
+    const store = createCanvasStore();
+    const deckHtml = '<!doctype html><html><body><template data-slide-id="slide-003"><h1>A</h1></template></body></html>';
+    store.getState().applyEvent({ type: "canvas.create", artifact: deckArtifact("d1", deckHtml) });
+
+    store.getState().applyEvents([
+      { type: "tool.start", toolCallId: "c1", name: "write_slides" },
+      { type: "canvas.slide_status", id: "d1", slideId: "slide-003", stage: "generating" },
+    ]);
+
+    expect(store.getState().activeTool).toEqual({ toolCallId: "c1", name: "write_slides", slideId: "slide-003", stage: "generating" });
+  });
+});

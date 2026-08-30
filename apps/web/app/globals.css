@@ -247,6 +247,14 @@ body {
   50% { opacity: 1; }
 }
 
+.bubble__status {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--cv-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
 /* --- schema explorer (home) --------------------------------------------------- */
 
 .explorer {
