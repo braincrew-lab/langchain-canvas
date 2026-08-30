@@ -10,6 +10,13 @@
 
 import type { Artifact } from "../protocol/artifacts";
 import type { CanvasEvent } from "../protocol/events";
+import { patchDeckNode, patchDeckSlide } from "./deck";
+
+/** One slide's pipeline-stage record, stored at `artifact.meta.slideStatus[slideId]`. */
+export interface DeckSlideStatus {
+  stage: "extracting" | "generating" | "verifying" | "complete" | "degraded";
+  detail?: string;
+}
 
 export interface CanvasState {
   /** Current (latest-version) artifact per id. */
@@ -49,9 +56,30 @@ export function reduceCanvas(state: CanvasState, event: CanvasEvent): CanvasStat
       const current = state.artifacts[event.id];
       const html = (current?.data as { html?: string } | undefined)?.html;
       if (!current || typeof html !== "string") return state;
-      const next = applyNodePatch(html, event.cid, event.html);
+      const next =
+        event.slideId && event.nodeId
+          ? applyDeckNodePatch(html, event.slideId, event.nodeId, event.html)
+          : applyNodePatch(html, event.cid, event.html);
       const data = { ...(current.data as Record<string, unknown>), html: next };
       return updateLive(state, { ...current, data });
+    }
+
+    case "canvas.slide_patch": {
+      const current = state.artifacts[event.id];
+      const html = (current?.data as { html?: string } | undefined)?.html;
+      if (!current || typeof html !== "string") return state;
+      const next = applyDeckSlidePatch(html, event.slideId, event.templateHtml);
+      const data = { ...(current.data as Record<string, unknown>), html: next };
+      return updateLive(state, { ...current, data });
+    }
+
+    case "canvas.slide_status": {
+      const current = state.artifacts[event.id];
+      if (!current) return state;
+      const meta = current.meta ?? {};
+      const slideStatus = { ...(meta.slideStatus as Record<string, DeckSlideStatus> | undefined) };
+      slideStatus[event.slideId] = { stage: event.stage, detail: event.detail };
+      return replaceInPlace(state, { ...current, meta: { ...meta, slideStatus } });
     }
 
     case "canvas.replace":
@@ -205,6 +233,29 @@ function applyNodePatch(html: string, cid: string, fragment: string): string {
     return `<!doctype html>\n${doc.documentElement.outerHTML}`;
   } catch {
     // A malformed patch must never crash the reducer (and the whole app with it).
+    return html;
+  }
+}
+
+/**
+ * Delegate a deck node edit to {@link patchDeckNode} (template-string-scoped,
+ * never a document-level `querySelector`). `patchDeckNode` throws on a stale
+ * slide/node id — caught here so the reducer keeps `applyNodePatch`'s
+ * no-crash-on-a-bad-patch contract: leave the deck untouched rather than throw.
+ */
+function applyDeckNodePatch(html: string, slideId: string, nodeId: string, fragment: string): string {
+  try {
+    return patchDeckNode(html, slideId, nodeId, fragment);
+  } catch {
+    return html;
+  }
+}
+
+/** Delegate a slide-level replace to {@link patchDeckSlide}, same no-crash contract. */
+function applyDeckSlidePatch(html: string, slideId: string, templateHtml: string): string {
+  try {
+    return patchDeckSlide(html, slideId, templateHtml);
+  } catch {
     return html;
   }
 }

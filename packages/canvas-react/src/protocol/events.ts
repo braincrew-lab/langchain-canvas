@@ -57,12 +57,42 @@ export interface CanvasPatch {
  * Replace a single element (by its `data-cid` tree path) inside an `html`
  * artifact with new outer HTML — an O(1) surgical edit that avoids resending the
  * whole page. The reconciler resolves the `cid` path against the source HTML.
+ *
+ * `slideId`/`nodeId` are set for deck artifacts, where the durable edit
+ * address is `(deckId, slideId, nodeId)` — `cid` stays screen-only.
  */
 export interface CanvasNodePatch {
   type: "canvas.node_patch";
   id: string;
   cid: string;
   html: string;
+  slideId?: string;
+  nodeId?: string;
+}
+
+/**
+ * Report one slide's pipeline stage during deck conversion (extract ->
+ * generate -> verify), so the client can show progress and let completed
+ * slides be edited without waiting on the rest of the deck.
+ */
+export interface SlideStatus {
+  type: "canvas.slide_status";
+  id: string;
+  slideId: string;
+  stage: "extracting" | "generating" | "verifying" | "complete" | "degraded";
+  detail?: string;
+}
+
+/**
+ * Replace one slide's template HTML in a deck artifact — transmits a single
+ * slide over the wire instead of resending the whole deck through
+ * `canvas.patch`.
+ */
+export interface CanvasSlidePatch {
+  type: "canvas.slide_patch";
+  id: string;
+  slideId: string;
+  templateHtml: string;
 }
 
 /** Replace wholesale — the reconciler snapshots a new version. */
@@ -113,6 +143,8 @@ export type CanvasEvent =
   | CanvasAppend
   | CanvasPatch
   | CanvasNodePatch
+  | SlideStatus
+  | CanvasSlidePatch
   | CanvasReplace
   | CanvasStatus
   | CanvasCommit;

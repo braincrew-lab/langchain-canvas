@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 
-import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
+import { isLegacySlidesData, type Artifact, type HtmlData, type SlidesData } from "../protocol/artifacts";
 import { downloadBlob, slugify } from "../export/download";
 import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
 import { printToPdf } from "../export/pdf";
@@ -18,6 +18,13 @@ import { useCanvasStore } from "../hooks/useCanvasStore";
 
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
 const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
+
+/** The deck's `*.slides.html` source, or `null` for the legacy `{ slides }`
+ *  shape (which the renderer already shows as a read-only card, so there is
+ *  nothing meaningful to print). */
+function deckHtmlOf(data: SlidesData): string | null {
+  return isLegacySlidesData(data) || typeof data.html !== "string" ? null : data.html;
+}
 
 interface ExportMenuProps {
   artifact: Artifact;
@@ -62,7 +69,8 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
 
   const exportPdf = async () => {
     if (artifact.type === "slides") {
-      printToPdf(slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title));
+      const deckHtml = deckHtmlOf((await prepare()).data as SlidesData);
+      if (deckHtml != null) printToPdf(slidesToPrintHtml(deckHtml, artifact.title));
     } else if (artifact.type === "html") {
       const ratio = artifact.meta?.ratio as string | undefined;
       const html = ((await prepare()).data as HtmlData).html;
@@ -78,12 +86,16 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
   };
 
   const openInTab = async () => {
-    const html =
-      artifact.type === "html"
-        ? (((await prepare()).data as HtmlData).html)
-        : artifact.type === "slides"
-          ? slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title)
-          : await (async () => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, await prepareHtml(h)); })();
+    let html: string | null;
+    if (artifact.type === "html") {
+      html = ((await prepare()).data as HtmlData).html;
+    } else if (artifact.type === "slides") {
+      const deckHtml = deckHtmlOf((await prepare()).data as SlidesData);
+      html = deckHtml == null ? null : slidesToPrintHtml(deckHtml, artifact.title);
+    } else {
+      const rendered = getRenderedHtml();
+      html = rendered == null ? null : toStandaloneHtml(artifact.title, await prepareHtml(rendered));
+    }
     if (html == null) return;
     const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     window.open(url, "_blank", "noopener");

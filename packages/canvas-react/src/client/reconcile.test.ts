@@ -169,6 +169,89 @@ describe("reduceCanvas", () => {
   });
 });
 
+describe("deck events (canvas.node_patch with slideId/nodeId, canvas.slide_patch, canvas.slide_status)", () => {
+  /** Two slides, one of them (s3) byte-identical to s1 — the regression the
+   *  document-level `applyNodePatch`/`resolveCid` (reconcile.ts:196-210)
+   *  cannot pass: a document-level query would never even resolve a `cid`
+   *  inside a `<template>` (its content is a DocumentFragment, not part of
+   *  `document.body`), so an id-scoped path is required, not merely id-aware
+   *  matching among visible content. */
+  const deckHtml = () =>
+    [
+      '<html data-ratio="16:9"><head><title>D</title></head><body>',
+      '<template data-slide-id="s1"><p data-node-id="n1">one</p></template>',
+      '<template data-slide-id="s2"><p data-node-id="n1">one</p></template>',
+      "</body></html>",
+    ].join("\n");
+
+  const deckArtifact = (html: string): Artifact =>
+    ({ id: "d1", type: "slides", title: "Deck", version: 1, status: "complete", data: { html } }) as Artifact;
+
+  it("canvas.node_patch with slideId/nodeId actually changes the deck's bytes (no silent no-op)", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: deckArtifact(deckHtml()) });
+    const before = (s.artifacts.d1.data as { html: string }).html;
+    s = reduceCanvas(s, {
+      type: "canvas.node_patch",
+      id: "d1",
+      cid: "e-0",
+      html: '<p data-node-id="n1">CHANGED</p>',
+      slideId: "s1",
+      nodeId: "n1",
+    });
+    const after = (s.artifacts.d1.data as { html: string }).html;
+    expect(after).not.toBe(before); // the RED this test guards against: a silent no-op
+    expect(after).toContain('<template data-slide-id="s1"><p data-node-id="n1">CHANGED</p></template>');
+    // The other slide's byte-identical node must be untouched — id scoping,
+    // not content matching.
+    expect(after).toContain('<template data-slide-id="s2"><p data-node-id="n1">one</p></template>');
+  });
+
+  it("canvas.node_patch without slideId/nodeId still uses the cid path (non-deck html unaffected)", () => {
+    const html = '<html><body><h1 data-cid="e-0">Old</h1></body></html>';
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: doc({ type: "html", data: { html } }) });
+    s = reduceCanvas(s, { type: "canvas.node_patch", id: "a1", cid: "e-0", html: "<h1>New</h1>" });
+    expect((s.artifacts.a1.data as { html: string }).html).toContain("New");
+  });
+
+  it("canvas.node_patch leaves the deck untouched on a stale slideId/nodeId (no crash)", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: deckArtifact(deckHtml()) });
+    const before = (s.artifacts.d1.data as { html: string }).html;
+    s = reduceCanvas(s, {
+      type: "canvas.node_patch",
+      id: "d1",
+      cid: "e-0",
+      html: "<p>x</p>",
+      slideId: "s1",
+      nodeId: "ghost",
+    });
+    expect((s.artifacts.d1.data as { html: string }).html).toBe(before);
+  });
+
+  it("canvas.slide_patch replaces one slide's template, leaving the other untouched", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: deckArtifact(deckHtml()) });
+    s = reduceCanvas(s, {
+      type: "canvas.slide_patch",
+      id: "d1",
+      slideId: "s2",
+      templateHtml: '<template data-slide-id="s2"><h1>New slide</h1></template>',
+    });
+    const after = (s.artifacts.d1.data as { html: string }).html;
+    expect(after).toContain('<template data-slide-id="s2"><h1>New slide</h1></template>');
+    expect(after).toContain('<template data-slide-id="s1"><p data-node-id="n1">one</p></template>');
+  });
+
+  it("canvas.slide_status records per-slide stage/detail in artifact.meta without touching history", () => {
+    let s = reduceCanvas(emptyCanvasState(), { type: "canvas.create", artifact: deckArtifact(deckHtml()) });
+    s = reduceCanvas(s, { type: "canvas.slide_status", id: "d1", slideId: "s1", stage: "generating" });
+    s = reduceCanvas(s, { type: "canvas.slide_status", id: "d1", slideId: "s2", stage: "degraded", detail: "render failed" });
+    expect(s.artifacts.d1.meta?.slideStatus).toEqual({
+      s1: { stage: "generating", detail: undefined },
+      s2: { stage: "degraded", detail: "render failed" },
+    });
+    expect(s.history.d1).toHaveLength(1); // status is not a version-bumping edit
+  });
+});
+
 describe("mergePatch (RFC 7386)", () => {
   it("merges objects recursively", () => {
     expect(mergePatch({ a: 1, b: { c: 2 } }, { b: { d: 3 } })).toEqual({ a: 1, b: { c: 2, d: 3 } });

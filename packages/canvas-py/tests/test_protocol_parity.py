@@ -20,12 +20,16 @@ from pathlib import Path
 from pydantic.alias_generators import to_camel
 
 from langchain_canvas.protocol import artifacts as py
+from langchain_canvas.protocol import events as py_events
 
 TS_PATH = (
     Path(__file__).resolve().parents[2] / "canvas-react" / "src" / "protocol" / "artifacts.ts"
 )
+EVENTS_TS_PATH = TS_PATH.parent / "events.ts"
 
-# pydantic model -> TS interface, one row per shape on the wire.
+# pydantic model -> TS interface, one row per artifact-data shape on the wire.
+# Every interface exported by TS_PATH (artifacts.ts) must appear here —
+# test_parser_sees_every_interface enforces that.
 PAIRS: list[tuple[type, str]] = [
     (py.HtmlData, "HtmlData"),
     (py.DocumentData, "DocumentData"),
@@ -35,17 +39,28 @@ PAIRS: list[tuple[type, str]] = [
     (py.ChartData, "ChartData"),
     (py.TableColumn, "TableColumn"),
     (py.TableData, "TableData"),
-    (py.SlideElement, "SlideElement"),
-    (py.SlidePage, "SlidePage"),
-    (py.Slide, "Slide"),
-    (py.SlidesData, "SlidesData"),
+    # SlidesData on the TS side is `{ html: string }` (the canonical
+    # `.slides.html` deck dialect — see `client/deck.ts`), the same shape
+    # as `HtmlData` — no separate pydantic class for it.
+    (py.HtmlData, "SlidesData"),
     (py.Artifact, "Artifact"),
 ]
 
+# pydantic model -> TS interface, one row per event shape on the wire (from
+# EVENTS_TS_PATH / events.ts). Unlike PAIRS above, this is not required to
+# cover every interface events.ts exports (the chat/control families are
+# untouched by this contract) — only the deck-protocol events this task adds
+# or changes: SlideStatus, CanvasSlidePatch, and the extended CanvasNodePatch.
+EVENT_PAIRS: list[tuple[type, str]] = [
+    (py_events.CanvasNodePatch, "CanvasNodePatch"),
+    (py_events.SlideStatus, "SlideStatus"),
+    (py_events.CanvasSlidePatch, "CanvasSlidePatch"),
+]
 
-def _ts_interfaces() -> dict[str, dict[str, str]]:
+
+def _ts_interfaces(ts_path: Path = TS_PATH) -> dict[str, dict[str, str]]:
     """interface name -> {field name -> type expression}, comments stripped."""
-    source = TS_PATH.read_text()
+    source = ts_path.read_text()
     source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
     source = re.sub(r"//.*", "", source)
     interfaces: dict[str, dict[str, str]] = {}
@@ -129,12 +144,30 @@ def test_parser_sees_every_interface():
     assert set(_ts_interfaces()) == {ts_name for _, ts_name in PAIRS}
 
 
+def test_event_parser_sees_the_deck_protocol_interfaces():
+    # events.ts carries the whole chat/canvas/control event family; this
+    # contract only requires the deck-protocol events EVENT_PAIRS names to be
+    # present and parseable — full coverage of every event is out of scope.
+    event_interfaces = _ts_interfaces(EVENTS_TS_PATH)
+    expected = {ts_name for _, ts_name in EVENT_PAIRS}
+    missing = expected - set(event_interfaces)
+    assert not missing, f"events.ts is missing interfaces: {sorted(missing)}"
+
+
 def test_field_names_match_both_ways():
     interfaces = _ts_interfaces()
+    event_interfaces = _ts_interfaces(EVENTS_TS_PATH)
     problems: list[str] = []
     for model, ts_name in PAIRS:
         py_names = set(_py_fields(model))
         ts_names = set(interfaces[ts_name])
+        for missing in sorted(ts_names - py_names):
+            problems.append(f"{ts_name}.{missing} exists in TS but not in Python")
+        for missing in sorted(py_names - ts_names):
+            problems.append(f"{ts_name}.{missing} exists in Python but not in TS")
+    for model, ts_name in EVENT_PAIRS:
+        py_names = set(_py_fields(model))
+        ts_names = set(event_interfaces[ts_name])
         for missing in sorted(ts_names - py_names):
             problems.append(f"{ts_name}.{missing} exists in TS but not in Python")
         for missing in sorted(py_names - ts_names):
@@ -144,9 +177,21 @@ def test_field_names_match_both_ways():
 
 def test_string_literal_unions_match():
     interfaces = _ts_interfaces()
+    event_interfaces = _ts_interfaces(EVENTS_TS_PATH)
     problems: list[str] = []
     for model, ts_name in PAIRS:
         ts_fields = interfaces[ts_name]
+        for wire_name, annotation in _py_fields(model).items():
+            if wire_name not in ts_fields:
+                continue  # field-name drift is the other test's job
+            py_values = _py_literals(annotation)
+            ts_values = _ts_literals(ts_fields[wire_name])
+            if py_values is not None and ts_values is not None and py_values != ts_values:
+                problems.append(
+                    f"{ts_name}.{wire_name}: py {sorted(py_values)} != ts {sorted(ts_values)}"
+                )
+    for model, ts_name in EVENT_PAIRS:
+        ts_fields = event_interfaces[ts_name]
         for wire_name, annotation in _py_fields(model).items():
             if wire_name not in ts_fields:
                 continue  # field-name drift is the other test's job

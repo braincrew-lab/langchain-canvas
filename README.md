@@ -185,17 +185,15 @@ you want** — a table wrapped in `html` renders as a web page, not a grid. One
 | ---------- | ----------------- | ----------------------------------------------------- |
 | `html`     | web page (iframe) | `{ html }`                                             |
 | `document` | Word-style doc    | `{ format: "markdown", content }`                     |
-| `slides`   | PowerPoint deck   | `{ slides: [{ layout, title, bullets, … }] }`         |
+| `slides`   | PowerPoint deck   | `{ html }` — one `*.slides.html` document, `<template data-slide-id>` per slide |
 | `table`    | Excel-style grid  | `{ columns: [{ key, label }], rows: [{ … }] }`        |
 | `chart`    | line/bar/area/pie | `{ chart, xKey, rows, series: [{ key, label }] }`     |
 
 ```json
 { "type": "canvas.create", "artifact": {
   "id": "deck-1", "type": "slides", "title": "Pitch", "version": 1, "status": "complete",
-  "data": { "slides": [
-    { "layout": "title",   "title": "AI for business", "subtitle": "2026 outlook" },
-    { "layout": "content", "title": "Why now", "bullets": ["Cheaper models", "Real ROI"] }
-  ] }
+  "data": { "html": "<!doctype html><html data-lcx-dialect=\"1\" data-ratio=\"16:9\">…<body><template data-slide-id=\"slide-001\">…</template></body></html>" },
+  "meta": { "kind": "deck", "ratio": "16:9" }
 } }
 ```
 

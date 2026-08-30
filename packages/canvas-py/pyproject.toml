@@ -37,6 +37,7 @@ ingestion = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
     "ruff>=0.6",
     "mypy>=1.10",
     "openpyxl>=3.1",

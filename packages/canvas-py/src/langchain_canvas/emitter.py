@@ -30,10 +30,10 @@ ephemeral renders; make it on purpose.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Literal, Protocol
 from uuid import uuid4
 
-from .protocol.artifacts import Artifact, ChartOptions, ChartSeries, Slide, TableColumn
+from .protocol.artifacts import Artifact, ChartOptions, ChartSeries, TableColumn
 from .protocol.events import (
     CanvasCommit,
     CanvasAppend,
@@ -41,7 +41,9 @@ from .protocol.events import (
     CanvasNodePatch,
     CanvasPatch,
     CanvasReplace,
+    CanvasSlidePatch,
     CanvasStatus,
+    SlideStatus,
     _Event,
 )
 
@@ -103,18 +105,28 @@ class Canvas:
         artifact = Artifact(id=artifact_id, type="html", title="", data={"html": ""})
         return HtmlHandle(self, artifact)
 
-    def open_slides(
+    def open_deck(
         self,
         title: str,
         *,
-        slides: list[Slide] | list[dict[str, Any]] | None = None,
         id: str | None = None,
-    ) -> "SlidesHandle":
-        """Open a slide deck — renders as an HTML deck, exports to .pptx."""
-        norm = [s.model_dump(exclude_none=True) if isinstance(s, Slide) else s for s in (slides or [])]
-        artifact = Artifact(id=id or _new_id("deck"), type="slides", title=title, data={"slides": norm})
+        ratio: str = "16:9",
+    ) -> "DeckHandle":
+        """Open a canonical HTML deck (`*.slides.html` dialect).
+
+        Renders as an HTML deck; slide content streams in through
+        ``DeckHandle.patch_slide`` — the whole deck is never resent over the
+        wire (see ``canvas.slide_patch``).
+        """
+        artifact = Artifact(
+            id=id or _new_id("deck"),
+            type="slides",
+            title=title,
+            data={"html": ""},
+            meta={"kind": "deck", "ratio": ratio},
+        )
         self._emit(CanvasCreate(artifact=artifact))
-        return SlidesHandle(self, artifact)
+        return DeckHandle(self, artifact)
 
     def open_document(self, title: str, *, id: str | None = None) -> "DocumentHandle":
         artifact = Artifact(
@@ -285,10 +297,61 @@ class TableHandle(_Handle):
         return self
 
 
-class SlidesHandle(_Handle):
-    """A slide deck whose slides can be filled in progressively."""
+class DeckHandle(_Handle):
+    """A canonical HTML deck (`*.slides.html`). Slides stream/patch individually.
 
-    def set_slides(self, slides: list[Slide] | list[dict[str, Any]]) -> "SlidesHandle":
-        norm = [s.model_dump(exclude_none=True) if isinstance(s, Slide) else s for s in slides]
-        self._canvas._emit(CanvasPatch(id=self.id, patch={"slides": norm}))
+    Persisting deck edits to a ``CanvasStore`` is the caller's job — this
+    handle is wire-only (see the module docstring).
+    """
+
+    def set_deck_html(self, html: str) -> "DeckHandle":
+        """Replace the whole deck body in one shot (e.g. right after opening)."""
+        self._canvas._emit(CanvasPatch(id=self.id, patch={"html": html}))
         return self
+
+    def patch_slide(self, slide_id: str, template_html: str) -> "DeckHandle":
+        """Replace one slide's template HTML — never resends the whole deck."""
+        self._canvas._emit(
+            CanvasSlidePatch(id=self.id, slide_id=slide_id, template_html=template_html)
+        )
+        return self
+
+    def slide_status(
+        self,
+        slide_id: str,
+        stage: Literal["extracting", "generating", "verifying", "complete", "degraded"],
+        *,
+        detail: str | None = None,
+    ) -> "DeckHandle":
+        """Report one slide's pipeline stage for progress / degraded UI."""
+        self._canvas._emit(SlideStatus(id=self.id, slide_id=slide_id, stage=stage, detail=detail))
+        return self
+
+    def patch_node(self, slide_id: str, node_id: str, html: str) -> "DeckHandle":
+        """Surgically replace one node, addressed by `(slideId, nodeId)`.
+
+        `cid` mirrors `node_id` on the wire event for shape compatibility with
+        the screen-only `HtmlHandle.patch_node` path — the durable persist
+        address for a deck node is `(slideId, nodeId)`, not `cid`.
+        """
+        self._canvas._emit(
+            CanvasNodePatch(id=self.id, cid=node_id, html=html, slide_id=slide_id, node_id=node_id)
+        )
+        return self
+
+    def commit(
+        self,
+        description: str,
+        revision: str | None = None,
+        *,
+        amends: str | None = None,
+    ) -> None:
+        """Promote the deck's current state to a described version snapshot.
+
+        Slide-conversion commits chain the first commit's id via ``amends``
+        so a burst of per-slide saves reads as one work unit on the version
+        rail, instead of one rail entry per slide.
+        """
+        self._canvas._emit(
+            CanvasCommit(id=self.id, description=description, revision=revision, amends=amends)
+        )

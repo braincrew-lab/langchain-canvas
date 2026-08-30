@@ -7,14 +7,17 @@ A store file maps to a wire artifact by its path suffix:
   the title comes from the first ``# `` heading)
 - ``.table.json``  → ``table`` artifact
 - ``.chart.json``  → ``chart`` artifact
-- ``.slides.json`` → ``slides`` artifact
+- :data:`SLIDES_SUFFIX` → read-only ``file`` card (the legacy pre-dialect
+  deck envelope — no editing or export tool reads it anymore; existing
+  threads keep it visible instead of losing it silently on reload)
 - ``sources/*``    → text formats preview as document/html artifacts; every
   other upload becomes a ``file`` artifact (see :func:`source_preview_events`)
 
-The three ``.json`` forms share one JSON envelope — ``{"type": ..., "title":
-..., "data": ...}`` — written by the save endpoints / tools and
-readable/editable by agents as plain JSON. Text-natured artifacts (pages,
-documents) store their content raw so line-targeted edits stay possible.
+The two remaining ``.json`` envelope forms (table / chart) share one JSON
+envelope — ``{"type": ..., "title": ..., "data": ...}`` — written by the save
+endpoints / tools and readable/editable by agents as plain JSON. Text-natured
+artifacts (pages, documents) store their content raw so line-targeted edits
+stay possible.
 
 One commit maps to one small event sequence: a ``canvas.create``
 (+ ``complete`` status) the first time the file appears, a ``canvas.patch``
@@ -40,6 +43,8 @@ from .converters import (
     converter_for,
     default_converters,
 )
+from .deck import SLIDES_HTML_SUFFIX as DECK_HTML_SUFFIX
+from .deck import DeckParseError, parse_deck
 from .document_ops import DOCUMENT_OP_SUFFIXES
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import BinaryContentError, CanvasStore, CanvasStoreError, fold_history
@@ -51,6 +56,9 @@ SLIDES_SUFFIX = ".slides.json"
 DOCUMENT_SUFFIX = ".md"
 
 ARTIFACT_SUFFIXES: tuple[str, ...] = (
+    # The deck dialect's suffix must precede ".html" — both end a
+    # ".slides.html" path, and this tuple is matched first-match-wins.
+    DECK_HTML_SUFFIX,
     ".html",
     DOCUMENT_SUFFIX,
     TABLE_SUFFIX,
@@ -62,16 +70,16 @@ ARTIFACT_SUFFIXES: tuple[str, ...] = (
 _ENVELOPE_SUFFIX_FOR: dict[str, str] = {
     "table": TABLE_SUFFIX,
     "chart": CHART_SUFFIX,
-    "slides": SLIDES_SUFFIX,
 }
 
 def display_title(path: str) -> str:
     """What a person should read on the tab for a canvas file at ``path``.
 
-    ``.slides.json`` says "this is a deck the canvas owns" to the store and
-    the exporters; to the person looking at their presentation it says they
-    are editing a JSON file. The machine keeps the path; the tab gets the
-    name the file was given.
+    :data:`~langchain_canvas.deck.SLIDES_HTML_SUFFIX` says "this is a deck
+    the canvas owns" to the store and the exporters; to the person looking
+    at their presentation it says they are editing a file named after their
+    deck. The machine keeps the path; the tab gets the name the file was
+    given.
     """
     name = path.rsplit("/", 1)[-1]
     for suffix in ARTIFACT_SUFFIXES:
@@ -131,22 +139,16 @@ def encode_chart(title: str, data: dict[str, Any]) -> str:
     return _encode_envelope("chart", title, data)
 
 
-def encode_slides(title: str, data: dict[str, Any]) -> str:
-    """The ``.slides.json`` file content for one slides artifact.
-
-    ``data`` is the wire ``SlidesData`` shape (``slides``).
-    """
-    return _encode_envelope("slides", title, data)
-
-
 def encode_artifact(artifact: dict[str, Any], path: str) -> str:
     """Store file content for one structured-artifact save, validated.
 
     ``artifact`` is the ``{type, title?, data}`` envelope a client posts for a
-    hand edit. Accepts the JSON-envelope types (table / chart / slides) and
-    requires ``path`` to end with the matching suffix; raises ``ValueError``
-    with an honest reason otherwise, so save endpoints can turn it into a 422.
-    Document edits are plain text saves to a ``.md`` path — no envelope.
+    hand edit. Accepts the JSON-envelope types (table / chart) and requires
+    ``path`` to end with the matching suffix; raises ``ValueError`` with an
+    honest reason otherwise, so save endpoints can turn it into a 422.
+    Document edits are plain text saves to a ``.md`` path — no envelope. A
+    ``.slides.html`` deck saves through the deck-specific tools instead
+    (``edit_deck_slide``); a bare ``html`` save covers the whole-deck path.
 
     A table save with a grid editor state (``data["sheet"]``) also projects
     that state's data rectangle into ``rows`` before encoding, so stored
@@ -197,6 +199,46 @@ def _document_title(content: str) -> str | None:
     return None
 
 
+def _readonly_file_card_events(
+    path: str, content: str, *, is_new: bool, revision: str, description: str
+) -> list[dict]:
+    """Wire events for a legacy pre-dialect deck, as a plain ``file`` card.
+
+    The shape (``{slides, page, template}``) it used to carry has no renderer
+    left — this shows the file exists, at its stored size, rather than
+    dropping it silently on reload (see :func:`_file_preview_events`, the
+    same read-only shape a binary upload gets).
+    """
+    name = path.rsplit("/", 1)[-1]
+    data: dict[str, Any] = {
+        "path": path,
+        "name": name,
+        "mediaType": "application/json",
+        "size": len(content.encode("utf-8")),
+        "cover": None,
+        "excerpt": None,
+        "detail": "legacy slide deck — read-only",
+    }
+    events: list[dict] = []
+    if is_new:
+        events.append(
+            CanvasCreate(
+                artifact=Artifact(id=path, type="file", title=name, data=data)
+            ).model_dump(by_alias=True, exclude_none=True)
+        )
+        events.append(
+            CanvasStatus(id=path, status="complete").model_dump(by_alias=True, exclude_none=True)
+        )
+    else:
+        events.append(CanvasPatch(id=path, patch=data).model_dump(by_alias=True))
+    events.append(
+        CanvasCommit(id=path, description=description, revision=revision).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+    return events
+
+
 def events_for_commit(
     path: str,
     content: str,
@@ -213,10 +255,18 @@ def events_for_commit(
     a whole-content patch. Both end with the described ``canvas.commit`` so
     the client records the version. Paths without an artifact mapping (see
     :data:`ARTIFACT_SUFFIXES`) — and malformed envelope (``.table.json`` /
-    ``.chart.json`` / ``.slides.json``) content — produce no events.
+    ``.chart.json``) content — produce no events. A path ending in
+    :data:`SLIDES_SUFFIX` (the legacy pre-dialect deck envelope) always
+    hydrates as a read-only ``file`` card, regardless of what it parses as —
+    there is no editing or export tool left that reads its
+    ``{slides, page, template}`` shape.
     """
     if path.startswith(SOURCES_PREFIX):
         return _source_preview_events(
+            path, content, is_new=is_new, revision=revision, description=description
+        )
+    if path.endswith(SLIDES_SUFFIX):
+        return _readonly_file_card_events(
             path, content, is_new=is_new, revision=revision, description=description
         )
     # Envelope types share one decode path; the patch lists every data key so a
@@ -225,20 +275,29 @@ def events_for_commit(
     envelope_keys = {
         TABLE_SUFFIX: ("table", ("columns", "rows", "sheet")),
         CHART_SUFFIX: ("chart", ("chart", "rows", "xKey", "series", "options", "echartsOption")),
-        # page/template ride along so the editor draws the deck's real page
-        # (the create event carries them, but only for the first revision —
-        # a later skin attach arrives as a patch).
-        SLIDES_SUFFIX: ("slides", ("slides", "page", "template")),
     }
     envelope = next((v for suffix, v in envelope_keys.items() if path.endswith(suffix)), None)
-    if envelope is not None:
+    if path.endswith(DECK_HTML_SUFFIX):
+        # Raw HTML, like the ".html" branch below — not a JSON envelope. The
+        # deck dialect is a single document, so no merge-patch shape is
+        # needed for a whole-content patch; slide-scoped edits ride the
+        # separate ``canvas.slide_patch`` event instead (see deck module).
+        artifact_type = "slides"
+        artifact_data: dict[str, Any] = {"html": content}
+        patch: dict[str, Any] = {"html": content}
+        try:
+            ratio = parse_deck(content).ratio
+        except DeckParseError:
+            ratio = None
+        meta = {**(meta or {}), "kind": "deck", "ratio": ratio}
+    elif envelope is not None:
         payload = _envelope_payload(content)
         if payload is None:
             return []
         file_title, data = payload
         artifact_type, patch_keys = envelope
-        artifact_data: dict[str, Any] = data
-        patch: dict[str, Any] = {key: data.get(key) for key in patch_keys}
+        artifact_data = data
+        patch = {key: data.get(key) for key in patch_keys}
         # The file carries its own title (hosts' title_for conventions typically
         # fall back to the path, which must not shadow it).
         title = file_title or title

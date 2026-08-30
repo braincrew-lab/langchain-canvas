@@ -218,7 +218,7 @@ function CanvasPanel({
 
       {showSelection && onEditElement && (
         <>
-          {active.type === "html" && selections.length === 1 && (
+          {(active.type === "html" || active.meta?.kind === "deck") && selections.length === 1 && (
             <StylePanel key={selections[0].cid} selection={selections[0]} />
           )}
           <SelectionBar selections={selections} onEdit={onEditElement} onClear={() => setSelections([])} />

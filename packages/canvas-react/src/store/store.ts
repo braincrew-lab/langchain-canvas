@@ -33,6 +33,7 @@ function editedArtifactId(event: StreamEvent): string | null {
     case "canvas.append":
     case "canvas.patch":
     case "canvas.node_patch":
+    case "canvas.slide_patch":
       return event.id;
     default:
       return null;

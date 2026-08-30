@@ -19,11 +19,12 @@ STORE = FileCanvasStore(DATA_DIR)
 # The demo maps one page per thread; the artifact id doubles as the file path.
 PAGE_PATH = "index.html"
 
-# A slide deck is a manifest plus one HTML file per slide.
-MANIFEST_PATH = "manifest.json"
-
-# Renderer hints for a slide file: fixed 16:9 canvas, labeled as a slide.
-SLIDE_META = {"kind": "slide", "ratio": "16:9"}
+# The one canonical deck a thread's scratch authoring pipeline
+# (`plan_deck`/`write_slide`) creates and edits. Ratio for a scratch deck is
+# always 16:9 — only an imported `.pptx` (`open_deck_for_editing`) picks its
+# ratio from the source file's declared page size.
+DECK_PATH = "deck.slides.html"
+DECK_RATIO = "16:9"
 
 # Fixed slide canvas in CSS pixels (16:9).
 SLIDE_WIDTH = 1280
@@ -33,11 +34,6 @@ SLIDE_HEIGHT = 720
 def _slug(title: str, fallback: str) -> str:
     slug = "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-")
     return "-".join(part for part in slug.split("-") if part)[:40] or fallback
-
-
-def slide_path(index: int, title: str) -> str:
-    """File name for slide `index` (1-based): ``01-<slug>.html``."""
-    return f"{index:02d}-{_slug(title, 'slide')}.html"
 
 
 def artifact_path(title: str, suffix: str) -> str:

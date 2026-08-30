@@ -168,43 +168,33 @@ def test_chart_file_replays_as_chart_artifact() -> None:
     assert create["artifact"]["data"]["options"] == {"title": "Quarterly"}
 
 
-def test_slides_file_replays_as_slides_artifact() -> None:
-    from langchain_canvas import encode_slides
+def test_legacy_slides_json_hydrates_as_readonly_file_card() -> None:
+    """An existing thread's `.slides.json` deck must not vanish on reload.
 
+    The pre-dialect `{slides, page, template}` shape has no renderer left —
+    it now hydrates as a plain read-only ``file`` card (see
+    :mod:`langchain_canvas.replay`'s module docstring), the same shape a
+    binary upload gets, instead of the old `slides` artifact type.
+    """
     store = InMemoryCanvasStore()
-    data = {"slides": [{"layout": "title", "title": "Hello", "padding": 6}]}
-    store.write("t", "deck.slides.json", encode_slides("Pitch", data), "Build deck")
+    legacy = '{"type": "slides", "title": "Pitch", "data": {"slides": [{"title": "Hello"}]}}'
+    store.write("t", "deck.slides.json", legacy, "Build deck")
 
     events = hydrate_events(store, "t")
     create = next(e for e in events if e["type"] == "canvas.create")
-    assert create["artifact"]["type"] == "slides"
-    assert create["artifact"]["title"] == "Pitch"
-    assert create["artifact"]["data"]["slides"][0]["padding"] == 6
+    assert create["artifact"]["type"] == "file"
+    assert create["artifact"]["id"] == "deck.slides.json"
+    assert create["artifact"]["data"]["name"] == "deck.slides.json"
+    assert create["artifact"]["data"]["detail"] == "legacy slide deck — read-only"
 
-
-def test_slides_patch_carries_page_and_template() -> None:
-    """A later skin attach must reach the editor: page/template ride patches."""
-    from langchain_canvas import encode_slides
-
-    store = InMemoryCanvasStore()
-    store.write("t", "deck.slides.json", encode_slides("Pitch", {"slides": [{}]}), "Build deck")
-    skinned = {
-        "slides": [{}],
-        "page": {"widthIn": 10.0, "heightIn": 7.5},
-        "template": "sources/brand.pptx",
-    }
-    store.write("t", "deck.slides.json", encode_slides("Pitch", skinned), "Attach skin")
-
+    # A later edit still patches the file card — never re-emits a `slides`
+    # artifact with the old shape.
+    store.write(
+        "t", "deck.slides.json", legacy.replace("Hello", "Hi"), "Edit deck", base_revision="v1"
+    )
     events = hydrate_events(store, "t")
     patch = next(e for e in events if e["type"] == "canvas.patch")
-    assert patch["patch"]["page"] == {"widthIn": 10.0, "heightIn": 7.5}
-    assert patch["patch"]["template"] == "sources/brand.pptx"
-    # A deck without them patches null so the client's mergePatch deletes stale keys.
-    store.write("t", "deck.slides.json", encode_slides("Pitch", {"slides": [{}]}), "Drop skin")
-    events = hydrate_events(store, "t")
-    last_patch = [e for e in events if e["type"] == "canvas.patch"][-1]
-    assert last_patch["patch"]["page"] is None
-    assert last_patch["patch"]["template"] is None
+    assert patch["patch"]["name"] == "deck.slides.json"
 
 
 def test_markdown_file_replays_as_document_with_heading_title() -> None:
@@ -271,7 +261,9 @@ def test_encode_artifact_validates_type_data_and_suffix() -> None:
 
     with pytest.raises(ValueError, match="JSON envelopes"):
         encode_artifact({"type": "document", "data": {}}, "doc.md")
+    with pytest.raises(ValueError, match="JSON envelopes"):
+        encode_artifact({"type": "slides", "data": {"slides": []}}, "deck.slides.json")
     with pytest.raises(ValueError, match="data object"):
-        encode_artifact({"type": "slides"}, "deck.slides.json")
-    with pytest.raises(ValueError, match=r"must end with \.slides\.json"):
-        encode_artifact({"type": "slides", "data": {"slides": []}}, "deck.json")
+        encode_artifact({"type": "chart"}, "rev.chart.json")
+    with pytest.raises(ValueError, match=r"must end with \.chart\.json"):
+        encode_artifact({"type": "chart", "data": {"chart": "bar"}}, "rev.json")

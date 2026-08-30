@@ -52,7 +52,6 @@ export {
   DocumentRenderer,
   ChartRenderer,
   TableRenderer,
-  SlidesRenderer,
   FileRenderer,
 } from "./components/renderers";
 

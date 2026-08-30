@@ -402,13 +402,14 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
 
       if (data.type === "select") {
         setSelections([
-          { artifactId: artifact.id, cid: data.cid, selector: data.selector, tag: data.tag, text: data.text, outerHtml: data.outerHtml, styles: data.styles, isGroup: data.isGroup },
+          { artifactId: artifact.id, cid: data.cid, nodeId: data.nodeId ?? undefined, slideId: data.slideId, selector: data.selector, tag: data.tag, text: data.text, outerHtml: data.outerHtml, styles: data.styles, isGroup: data.isGroup },
         ]);
       } else if (data.type === "multi_select") {
         setSelections(
           (data.items ?? []).map((it: any) => ({
             artifactId: artifact.id,
             cid: it.cid,
+            nodeId: it.nodeId ?? undefined,
             selector: it.selector,
             tag: it.tag,
             text: it.text,

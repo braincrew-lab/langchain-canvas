@@ -18,15 +18,29 @@ jobs:
 
       # Scoped to the store module for now: the rest of src has pre-existing
       # findings (mostly auto-fixable) that deserve their own cleanup PR.
-      # Widen to `src tests` once that lands.
+      # Widen to `src tests` once that lands. The new deck module is
+      # ruff-clean from its first commit, so it is in scope from day one.
       - name: Lint
-        run: uv run --extra dev ruff check src/langchain_canvas/store src/langchain_canvas/tools.py tests
+        run: uv run --extra dev ruff check src/langchain_canvas/store src/langchain_canvas/tools.py src/langchain_canvas/deck tests
 
       - name: Typecheck
         run: uv run --extra dev mypy src
 
       - name: Test
-        run: uv run --extra dev pytest tests -q
+        run: uv run --extra dev pytest tests -q --timeout=10
+
+  server-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Test
+        run: uv run --extra dev pytest tests -q --timeout=10
 
   build:
     runs-on: ubuntu-latest

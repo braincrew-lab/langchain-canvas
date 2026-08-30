@@ -10,8 +10,6 @@ from .artifacts import (
     DocumentData,
     FileData,
     HtmlData,
-    Slide,
-    SlidesData,
     TableColumn,
     TableData,
 )
@@ -46,8 +44,6 @@ __all__ = [
     "ChartOptions",
     "TableColumn",
     "TableData",
-    "Slide",
-    "SlidesData",
     # events
     "MessageDelta",
     "MessageEnd",

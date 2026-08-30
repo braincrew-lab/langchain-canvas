@@ -12,38 +12,68 @@ A tool only ever talks to ``Canvas``; it never sees the wire protocol.
 
 from __future__ import annotations
 
+import html as html_lib
+from pathlib import Path
+
 from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
-
-import json
-import re
-from pathlib import Path
 
 from langchain_canvas import (
     Canvas,
     create_asset_tool,
     create_canvas_tools,
     create_check_table_tool,
+    create_deck_tools,
     create_export_tool,
     encode_chart,
     encode_table,
     formula_guidance,
 )
+from langchain_canvas.converters import UnsafeArchiveError
+from langchain_canvas.deck import (
+    Deck,
+    DeckParseError,
+    SlideTemplate,
+    TextIntegrityError,
+    baseline_slide_html,
+    ensure_text_equality,
+    extract_slides,
+    extracted_text,
+    parse_deck,
+    read_slide,
+    serialize_deck,
+)
 from langchain_canvas.protocol import ChartSeries, TableColumn
-from langchain_canvas.replay import CHART_SUFFIX, DOCUMENT_SUFFIX, TABLE_SUFFIX
+from langchain_canvas.protocol.events import SlideStatus
+from langchain_canvas.replay import (
+    CHART_SUFFIX,
+    DOCUMENT_SUFFIX,
+    TABLE_SUFFIX,
+    events_for_commit,
+)
+from langchain_canvas.store import CanvasFileNotFoundError, CanvasStoreError
 
+from .render import render_slide
 from .store import (
-    MANIFEST_PATH,
+    DECK_PATH,
+    DECK_RATIO,
     PAGE_PATH,
     SLIDE_HEIGHT,
-    SLIDE_META,
     SLIDE_WIDTH,
     STORE,
     artifact_path,
-    slide_path,
 )
 
 _WRITER_MODEL = "anthropic:claude-sonnet-4-5-20250929"
+
+# The SDK's slide-granular deck tools (open/read/edit/list) — convert_slide
+# and write_slide reuse `edit_deck_slide`'s sanitize -> validate -> patch ->
+# write(base_revision=...) -> broadcast pipeline directly (via `.func`,
+# passing through the same `runtime`) instead of re-implementing it, so a
+# fix to that pipeline in the SDK is not silently missed here.
+_DECK_TOOLS = create_deck_tools(STORE)
+_DECK_TOOLS_BY_NAME = {t.name: t for t in _DECK_TOOLS}
+_edit_deck_slide = _DECK_TOOLS_BY_NAME["edit_deck_slide"]
 
 
 def _text_of(chunk: object) -> str:
@@ -111,51 +141,209 @@ DECK_STYLE = f"""The slide is a fixed {SLIDE_WIDTH}x{SLIDE_HEIGHT} canvas. Hard 
 - Return ONLY the HTML document."""
 
 
+def _template_fragment(slide_id: str, title: str | None, body_html: str) -> str:
+    """The ``<template data-slide-id="...">...</template>`` fragment
+    ``edit_deck_slide`` expects for `template_html`.
+
+    Mirrors the SDK's own slide serialization format (`deck.model`'s private
+    `_serialize_slide`) — `edit_deck_slide` re-parses this through
+    `parse_deck`, so exact byte-for-byte parity is not required, only a
+    well-formed single `<template data-slide-id=...>` fragment.
+    """
+    attrs = f' data-slide-id="{html_lib.escape(slide_id, quote=True)}"'
+    if title:
+        attrs += f' data-slide-title="{html_lib.escape(title, quote=True)}"'
+    return f"<template{attrs}>\n{body_html}\n</template>"
+
+
+def _emit_slide_status(runtime: ToolRuntime, path: str, slide_id: str, stage: str) -> None:
+    writer = getattr(runtime, "stream_writer", None)
+    if writer is None:
+        return
+    writer(
+        SlideStatus(id=path, slide_id=slide_id, stage=stage).model_dump(
+            by_alias=True, exclude_none=True
+        )
+    )
+
+
 @tool
 def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
-    """Start a slide deck: save its manifest (title + one file per slide).
+    """Start a slide deck: create an empty canonical deck with one slide per title.
 
-    Call this once before writing slides. It assigns each slide a file name
-    (01-....html, 02-....html, ...) and saves manifest.json. Then call
-    write_slide for each file, in order.
+    Call this once before writing slides. Creates `deck.slides.html` with
+    `len(slide_titles)` empty slides, ids `slide-001`, `slide-002`, ... in
+    order. Then call write_slide for each slide id, in order.
     """
+    tid = thread_id(runtime)
+    if any(info.path == DECK_PATH for info in STORE.list_files(tid)):
+        return (
+            f"Error: {DECK_PATH} already exists on this canvas. Edit it with "
+            "read_deck_slide/edit_deck_slide, or export it before starting a new one."
+        )
     slides = [
-        {"file": slide_path(i, slide_title), "title": slide_title}
+        SlideTemplate(
+            slide_id=f"slide-{i:03d}",
+            title=slide_title,
+            style_css="",
+            body_html='<section class="slide"></section>',
+        )
         for i, slide_title in enumerate(slide_titles, start=1)
     ]
-    manifest = {"title": title, "slides": slides}
-    commit = STORE.write(
-        thread_id(runtime),
-        MANIFEST_PATH,
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        f"Plan deck: {title} ({len(slides)} slides)",
-        actor="agent",
+    content = serialize_deck(Deck(title=title, ratio=DECK_RATIO, source=None, slides=slides))
+    description = f"Plan deck: {title} ({len(slides)} slides)"
+    commit = STORE.write(tid, DECK_PATH, content, description, actor="agent")
+
+    writer = getattr(runtime, "stream_writer", None)
+    if writer is not None:
+        for event in events_for_commit(
+            DECK_PATH, content, is_new=True, revision=commit.revision, description=description
+        ):
+            writer(event)
+
+    listing = "\n".join(f"- {s.slide_id}: {s.title}" for s in slides)
+    return (
+        f"Deck planned at {DECK_PATH} (revision {commit.revision}). "
+        f"Write these slides in order:\n{listing}"
     )
-    listing = "\n".join(f"- {s['file']}: {s['title']}" for s in slides)
-    return f"Deck planned (revision {commit.revision}). Write these slides in order:\n{listing}"
 
 
 @tool
-def write_slide(file: str, title: str, brief: str, runtime: ToolRuntime) -> str:
-    """Write one slide of the deck as a self-contained HTML file and show it.
+def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolRuntime) -> str:
+    """Write one slide of the deck as canonical slide HTML and check its layout.
 
-    `file` must be a file name from plan_deck. `brief` is what the slide should
-    say — include the key content, and note it is slide N of M so the design
-    fits its role (cover, content, closing). After writing, run
-    check_slide_layout on the file and fix any problems before moving on.
+    `path` and `slide_id` come from plan_deck's listing (or list_deck_slides
+    for a deck already on the canvas). `brief` is what the slide should say —
+    include the key content, and note it is slide N of M so the design fits
+    its role (cover, content, closing). Fix any ERROR the layout check below
+    reports with read_deck_slide + edit_deck_slide before moving on.
     """
-    canvas = Canvas.from_runtime(runtime)
-    slide = canvas.open_html(title=title, id=file, meta=SLIDE_META)
+    tid = thread_id(runtime)
+    try:
+        got = STORE.read(tid, path)
+    except CanvasFileNotFoundError:
+        return f"No deck {path} exists yet. Call plan_deck first."
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+    try:
+        deck = parse_deck(got.content)
+    except DeckParseError as exc:
+        return f"Error: {exc}."
 
     model = init_chat_model(_WRITER_MODEL)
-    prompt = f"Create one presentation slide as a single HTML document.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
-    html = _strip_code_fence(_text_of(model.invoke(prompt)))
-    description = f"Write slide: {title[:50]}"
-    commit = STORE.write(thread_id(runtime), file, html, description, actor="agent")
-    slide.set_html(html)
-    slide.complete()
-    slide.commit(description, revision=commit.revision)
-    return f"Wrote {file} (revision {commit.revision}). Now run check_slide_layout('{file}')."
+    prompt = (
+        "Create one presentation slide's markup as a single "
+        '<section class="slide">...</section> fragment — no <html>/<body>/'
+        f"<style> wrapper.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
+    )
+    body_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    fragment = _template_fragment(slide_id, title, body_html)
+
+    result = _edit_deck_slide.func(
+        path=path, slide_id=slide_id, template_html=fragment, revision=got.revision, runtime=runtime
+    )
+    if result.startswith("Error:"):
+        return result
+
+    try:
+        slide = read_slide(STORE.read(tid, path).content, slide_id)
+    except (DeckParseError, CanvasStoreError) as exc:
+        return f"{result}\n(layout check skipped: {exc})"
+    metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
+    report = _slide_layout_report(f"{path}#{slide_id}", metrics)
+    return f"{result}\n{report}"
+
+
+@tool
+def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
+    """Convert one imported deck slide from its raw extracted layout into a
+    polished slide, verifying the result once it lands.
+
+    Re-extracts the deck's source `.pptx`, rebuilds `slide_id`'s baseline
+    markup, and asks the writer model to improve it in one shot: reposition,
+    restyle, and rebalance the layout, but never add, remove, or reword any
+    of the extracted text. If the model's revision fails that check, the
+    slide's current (baseline) content is left untouched and reported
+    degraded — call convert_slide again to retry; it always re-corrects from
+    the same baseline, so repeated calls are idempotent. On success the
+    slide is saved (edit_deck_slide) and checked once for layout problems.
+    """
+    tid = thread_id(runtime)
+    try:
+        got = STORE.read(tid, path)
+    except CanvasFileNotFoundError:
+        return f"No deck {path} exists yet. Use open_deck_for_editing first."
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+
+    try:
+        deck = parse_deck(got.content)
+    except DeckParseError as exc:
+        return f"Error: {exc}."
+    if not deck.source:
+        return f"Error: {path} has no source .pptx — convert_slide only applies to imported decks."
+
+    index = next((i for i, s in enumerate(deck.slides) if s.slide_id == slide_id), None)
+    if index is None:
+        return f"Error: {path} has no slide {slide_id!r}."
+
+    try:
+        source_bytes = STORE.read_bytes(tid, deck.source).data
+    except CanvasFileNotFoundError as exc:
+        return f"Error: {exc}."
+    except CanvasStoreError as exc:
+        return f"Error: {exc}."
+
+    try:
+        extractions = extract_slides(source_bytes, path=deck.source)
+    except UnsafeArchiveError as exc:
+        return f"Error: {exc}."
+    if index >= len(extractions):
+        return f"Error: {deck.source} no longer has a slide matching {slide_id!r}."
+    extraction = extractions[index]
+
+    baseline_html = baseline_slide_html(extraction, slide_id=slide_id, ratio=deck.ratio)
+    baseline_texts = extracted_text(extraction)
+
+    model = init_chat_model(_WRITER_MODEL)
+    prompt = (
+        "Improve this presentation slide's layout — reposition, restyle, and "
+        "rebalance the boxes below — without adding, removing, or rewording "
+        f"any of its text.\n\n{DECK_STYLE}\n\nBaseline markup:\n{baseline_html}\n\n"
+        'Return ONLY the corrected <section class="slide">...</section> markup.'
+    )
+    corrected_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+
+    try:
+        ensure_text_equality(baseline_texts, corrected_html)
+    except TextIntegrityError:
+        _emit_slide_status(runtime, path, slide_id, "degraded")
+        return (
+            f"Slide {slide_id} is degraded: the model's revision dropped or reworded "
+            "extracted text, so it was rejected and the slide's current content was kept. "
+            "Call convert_slide again to retry."
+        )
+
+    fragment = _template_fragment(slide_id, deck.slides[index].title, corrected_html)
+    result = _edit_deck_slide.func(
+        path=path, slide_id=slide_id, template_html=fragment, revision=got.revision, runtime=runtime
+    )
+    if result.startswith("Error:"):
+        return result
+
+    metrics, _ = render_slide(corrected_html, ratio=deck.ratio)
+    report = _slide_layout_report(f"{path}#{slide_id}", metrics)
+    return f"{result}\n{report}"
+
+
+def _slide_layout_report(label: str, metrics: dict) -> str:
+    # Deferred import: verify.py imports `thread_id` from this module at its
+    # own module scope, so importing verify.py back at this module's top
+    # level would be circular. By call time both modules are already fully
+    # loaded (build.py imports both), so this import is a cheap cache hit.
+    from .verify import _layout_report
+
+    return _layout_report(label, metrics)
 
 
 @tool
@@ -268,11 +456,6 @@ def build_table(
 build_table.description += "\n\n" + formula_guidance()
 
 
-def _slide_meta_for(path: str) -> dict | None:
-    # Deck slide files follow the NN-slug.html naming from slide_path().
-    return SLIDE_META if re.fullmatch(r"\d{2}-.+\.html", path) else None
-
-
 # The check_table evaluator: the formula CLI built next to the client's
 # formula modules (pnpm build in packages/canvas-react) — same engine, same
 # registered functions, so the check matches what the canvas displays.
@@ -289,7 +472,8 @@ _FORMULA_CLI = (
 # the same primitives it ships, so a break in them shows up here first.
 CANVAS_TOOLS = [
     build_page,
-    *create_canvas_tools(STORE, meta_for=_slide_meta_for),
+    *create_canvas_tools(STORE),
+    *_DECK_TOOLS,
     create_asset_tool(STORE),
     create_export_tool(STORE),
     create_check_table_tool(
@@ -297,6 +481,7 @@ CANVAS_TOOLS = [
     ),
     plan_deck,
     write_slide,
+    convert_slide,
     write_report,
     build_chart,
     build_table,

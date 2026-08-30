@@ -122,23 +122,15 @@ type TableData = {
   },
   slides: {
     type: "slides",
-    pyCall: `deck = canvas.open_slides(title="Q4 Review")
-deck.set_slides([
-    Slide(title="Q4 in review", bullets=["Revenue up 24% QoQ", …]),
-    Slide(title="Next quarter", bullets=["Ship the mobile app", …]),
-])
+    pyCall: `deck = canvas.open_deck(title="Q4 Review", ratio="16:9")
+deck.set_deck_html(deck_html)
+deck.patch_slide("slide-001", slide_template_html)
 deck.complete()`,
-    schema: `// type: "slides"
-type Slide = {
-  layout?: "title" | "content" | "section";
-  title?: string;
-  subtitle?: string;   // title / section layouts
-  bullets?: string[];  // content layout
-  notes?: string;      // speaker notes → .pptx notes pane
-};
-type SlidesData = { slides: Slide[] };`,
+    schema: `// type: "slides" — a *.slides.html document, one
+// <template data-slide-id> per slide (see docs/02-protocol.md)
+type SlidesData = { html: string };`,
     props: [
-      { name: "slides", type: "Slide[]", required: true, desc: "Ordered slides. Each has a layout (title / content / section), title, optional subtitle/bullets, and speaker notes. Renders as an editable deck (add / duplicate / delete) and exports to .pptx." },
+      { name: "html", type: "string", required: true, desc: "The whole deck document: one <template data-slide-id> per slide. Renders as an editable deck (add / duplicate / delete) and exports to .pptx." },
     ],
   },
 };

@@ -99,79 +99,6 @@ class TableData(_CamelModel):
     sheet: list[dict[str, object]] | None = None
 
 
-class SlideElement(_CamelModel):
-    id: str
-    type: Literal["text", "image", "shape"]
-    x: float
-    y: float
-    w: float
-    h: float
-    text: str | None = None
-    src: str | None = None
-    font_size: float | None = None
-    bold: bool | None = None
-    color: str | None = None
-    align: Literal["left", "center", "right"] | None = None
-    shape: Literal["rect", "ellipse", "line"] | None = None  # for `type: "shape"`
-    fill: str | None = None  # fill (rect/ellipse) or stroke (line) color
-    # A shape can be drawn by its outline alone — an empty box around content is
-    # a common annotation, and with only `fill` it renders as nothing at all.
-    stroke: str | None = None  # outline color, independent of fill
-    stroke_width: float | None = Field(default=None, ge=0)  # outline weight in px
-    # Text metrics the box cannot imply. Without the face, line breaks land in
-    # different places than the file they came from.
-    font_family: str | None = None
-    line_height: float | None = Field(default=None, gt=0)  # multiple of font size
-    vertical_align: Literal["top", "middle", "bottom"] | None = None
-    # A highlighted heading reads as a coloured band behind the words; without
-    # it the band disappears and the heading looks like ordinary text.
-    highlight: str | None = None
-    space_before: float | None = Field(default=None, ge=0)  # px above the text
-    space_after: float | None = Field(default=None, ge=0)  # px below the text
-
-
-class Slide(_CamelModel):
-    layout: Literal["title", "content", "section", "image", "two-column", "blank"] | None = None
-    elements: list[SlideElement] = Field(default_factory=list)
-    title: str | None = None
-    subtitle: str | None = None
-    bullets: list[str] = Field(default_factory=list)
-    bullets2: list[str] = Field(default_factory=list)
-    image: str | None = None
-    background: str | None = None
-    text_color: str | None = None
-    notes: str | None = None
-    # Content padding as a percent of the slide width — a safe margin around the
-    # free canvas, applied in the editor, present view, thumbnails, and export.
-    # Bounded below 50: at 50 the content span (1 - 2*pad) hits zero, past it
-    # coordinates flip — there is no valid deck in that range.
-    padding: float | None = Field(default=None, ge=0, lt=50)
-
-
-class SlidePage(_CamelModel):
-    """The deck's page size in inches — the coordinate space percent
-    geometry refers to. Absent means the classic 16:9 canvas (10 x 5.625).
-    When a template skin is attached, tools fill this with the skin's real
-    page so the editor, the preview, and the exported file agree on one
-    aspect ratio."""
-
-    width_in: float = Field(gt=0)
-    height_in: float = Field(gt=0)
-
-
-class SlidesData(_CamelModel):
-    """A slide deck; renders as an HTML deck and exports to .pptx."""
-
-    slides: list[Slide] = Field(default_factory=list)
-    page: SlidePage | None = None
-    # Optional pptx skin: a canvas reference (``sources/brand.pptx``) whose
-    # master and layouts the pptx export builds on, so the original's logos,
-    # backgrounds, and headers survive the trip. The canvas preview does not
-    # render the skin — it applies at export time only. Missing or unreadable
-    # skins degrade to the blank-layout export.
-    template: str | None = None
-
-
 class FileData(_CamelModel):
     """A stored canvas file shown as itself — a window onto the store, not a copy.
 
@@ -193,8 +120,10 @@ class FileData(_CamelModel):
 
 
 # The union of every known artifact data shape. `data` on the wire is one of
-# these; the discriminator lives on the enclosing `Artifact.type`.
-ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, SlidesData, FileData]
+# these; the discriminator lives on the enclosing `Artifact.type`. A `slides`
+# artifact (the canonical `*.slides.html` deck dialect) carries the same
+# `{html}` shape as `HtmlData` — no separate deck data class.
+ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, FileData]
 
 
 # --- the envelope every artifact shares -----------------------------------------

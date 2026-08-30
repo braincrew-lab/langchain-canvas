@@ -22,6 +22,11 @@ export interface ElementSelection {
   styles?: Record<string, string>;
   /** True when the element is a group wrapper (offers "Ungroup"). */
   isGroup?: boolean;
+  /** The element's `data-node-id`, when addressable independently of `cid`
+   *  (deck artifacts, or content authored with node ids). */
+  nodeId?: string;
+  /** The deck slide the element belongs to, when the artifact is a deck. */
+  slideId?: string;
 }
 
 /**

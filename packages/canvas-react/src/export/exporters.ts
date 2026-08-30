@@ -11,15 +11,14 @@
  *
  * `docx` is loaded via **dynamic import** so it never touches the main bundle —
  * only the code path a user actually clicks pulls it in. Spreadsheets and decks
- * export through the Python side (`TableXlsxExporter`, `SlidesPptxExporter`),
+ * export through the Python side (`TableXlsxExporter`, `DeckPptxExporter`),
  * which keeps a deck's template skin and its fonts; the browser has no
  * equivalent, and reading a workbook well takes more than a browser should
  * carry.
  */
 
-import type { Artifact, DocumentData, SlidesData, TableData } from "../protocol/artifacts";
-import { resolveElements } from "../client/slideElements";
-import { deckPage, PAGE_DPI } from "../client/slidePage";
+import type { Artifact, DocumentData, TableData } from "../protocol/artifacts";
+import { parseDeckHtml } from "../client/deck";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -116,85 +115,38 @@ async function documentToDocx(data: DocumentData): Promise<BlobPart> {
   return Packer.toBlob(doc);
 }
 
+/** Print pixel dimensions for a fixed-aspect slide ratio (16:9 → 1280×720,
+ *  4:3 → 960×720) — shared by the single-slide and deck print paths so both
+ *  land on the same page size. */
+function slidePixelSize(ratio: string | undefined): { w: number; h: number } {
+  return { w: ratio === "4:3" ? 960 : 1280, h: 720 };
+}
+
 /**
- * A print-ready HTML document with one landscape page per slide — fed to the
- * browser's print pipeline to produce a multi-page PDF. Elements keep their
- * percentage geometry, so pages match the on-canvas layout exactly.
- *
- * The page is the deck's own page at `PAGE_DPI`, which is the density
- * `fontSize` is stored at — so stored px are CSS px here and text needs no
- * scaling at all. Viewport units would resolve against whatever box the
- * printing frame happens to have, which is how the same document came out
- * one size in the print preview and another in the saved file.
+ * A print-ready HTML document with one page per slide of a canonical
+ * `*.slides.html` deck — fed to the browser's print pipeline to produce a
+ * multi-page PDF. Each slide's own `styleCss`/`bodyHtml` (from
+ * {@link parseDeckHtml}) is rendered inside its own sized, page-breaking
+ * `<section>`, then the whole document is passed through
+ * {@link htmlSlideToPrintHtml} for the shared `@page` sizing and print-color
+ * rules — the same finishing pass a single fixed-slide `html` artifact gets.
  */
-export function slidesToPrintHtml(data: SlidesData, title: string): string {
-  const slides = data.slides.length ? data.slides : [{ title: "Empty deck" }];
-  const page = deckPage(data);
-  const pw = Math.round(page.widthIn * PAGE_DPI);
-  const ph = Math.round(page.heightIn * PAGE_DPI);
-  const pages = slides
-    .map((slide) => {
-      const bg = slide.background ?? "#ffffff";
-      const fg = slide.textColor ?? "#1f2328";
-      const els = resolveElements(slide, page)
-        .map((el) => {
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
-          if (el.type === "text") {
-            // box is numeric; colours and the face are escaped individually — the
-            // composed style string is then safe to place in the attribute as-is.
-            const style = [
-              box,
-              `font-size:${el.fontSize ?? 24}px`,
-              `font-weight:${el.bold ? 700 : 400}`,
-              `color:${escapeAttr(el.color ?? fg)}`,
-              `text-align:${escapeAttr(el.align ?? "left")}`,
-              "white-space:pre-wrap",
-              el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
-              el.lineHeight ? `line-height:${el.lineHeight}` : "",
-              el.highlight ? `background:${escapeAttr(el.highlight)}` : "",
-              el.spaceBefore ? `padding-top:${el.spaceBefore}px` : "",
-              el.spaceAfter ? `padding-bottom:${el.spaceAfter}px` : "",
-              // The box is the text's frame, so sitting text in the middle or at
-              // the foot of it is a column laid out along the box height.
-              el.verticalAlign
-                ? `display:flex;flex-direction:column;justify-content:${
-                    el.verticalAlign === "middle" ? "center" : el.verticalAlign === "bottom" ? "flex-end" : "flex-start"
-                  }`
-                : "",
-            ]
-              .filter(Boolean)
-              .join(";");
-            return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
-          }
-          if (el.type === "shape") {
-            // A box drawn by its outline alone carries no fill — painting one
-            // would hide whatever the border is meant to frame.
-            const fill = escapeAttr(el.fill ?? (el.stroke ? "transparent" : fg));
-            const radius = el.shape === "ellipse" ? "50%" : el.shape === "line" ? "2px" : "8px";
-            const outline = el.stroke
-              ? `;border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}`
-              : "";
-            return `<div class="el" style="${box};background:${fill};border-radius:${radius}${outline}"></div>`;
-          }
-          const src = safeSrc(el.src);
-          return src ? `<img class="el" style="${box}" src="${escapeAttr(src)}"/>` : "";
-        })
-        .join("");
-      const pad = slide.padding ?? 0;
-      const inner = pad ? `<div style="position:absolute;inset:${pad}%">${els}</div>` : els;
-      return `<section class="slide" style="background:${escapeAttr(bg)}">${inner}</section>`;
+export function slidesToPrintHtml(deckHtml: string, title: string): string {
+  const deck = parseDeckHtml(deckHtml);
+  const { w, h } = slidePixelSize(deck.ratio);
+  const slides = deck.slides.length
+    ? deck.slides
+    : [{ slideId: "empty", title: "Empty deck", styleCss: "", bodyHtml: "" }];
+  const sections = slides
+    .map((slide, i) => {
+      const style = slide.styleCss ? `<style>${slide.styleCss}</style>` : "";
+      const isLast = i === slides.length - 1;
+      const box = `width:${w}px;height:${h}px;position:relative;overflow:hidden` + (isLast ? "" : ";page-break-after:always");
+      return `<section class="cv-print-slide" style="${box}">${style}${slide.bodyHtml}</section>`;
     })
     .join("");
-
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(title)}</title><style>
-    @page { size: ${pw}px ${ph}px; margin: 0; }
-    * { margin: 0; box-sizing: border-box; }
-    ${PRINT_COLOR_CSS}
-    body { font-family: Inter, Arial, sans-serif; }
-    .slide { position: relative; width: ${pw}px; height: ${ph}px; overflow: hidden; page-break-after: always; }
-    .el { position: absolute; overflow: hidden; line-height: 1.25; }
-    img.el { object-fit: contain; }
-  </style></head><body>${pages}</body></html>`;
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(title)}</title></head><body>${sections}</body></html>`;
+  return htmlSlideToPrintHtml(doc, deck.ratio);
 }
 
 /**
@@ -205,8 +157,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
  * A4-portrait page and clips it — this makes the PDF one clean, full-bleed slide.
  */
 export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
-  const w = ratio === "4:3" ? 960 : 1280;
-  const h = 720;
+  const { w, h } = slidePixelSize(ratio);
   const style =
     `<style>@page{size:${w}px ${h}px;margin:0}` +
     `${PRINT_COLOR_CSS}` +
@@ -222,17 +173,6 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
 
 function escapeXml(value: string): string {
   return String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
-}
-
-/** Escape a value destined for a double-quoted attribute (quotes included). */
-function escapeAttr(value: string): string {
-  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
-
-/** Allow only inert image URL schemes; reject javascript:/vbscript:/etc. */
-function safeSrc(src: string | undefined): string {
-  const s = (src ?? "").trim();
-  return /^(data:image\/|https?:\/\/|\/)/i.test(s) ? s : "";
 }
 
 function csvCell(value: string): string {

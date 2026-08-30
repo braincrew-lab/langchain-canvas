@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Artifact, SlidesData } from "../protocol/artifacts";
+import type { Artifact } from "../protocol/artifacts";
 import {
   ASSET_REFERENCE_PREFIXES,
   fetchAssetDataUri,
@@ -144,27 +144,24 @@ describe("inlineArtifactAssets", () => {
     expect(a.data).toEqual({ html: `<img src="assets/logo.png">` }); // input untouched
   });
 
-  it("inlines slide image elements and the image-layout image", async () => {
+  it("inlines a canonical deck's html source (same as an html artifact)", async () => {
     stubFetch(["assets/logo.png"]);
     const a = artifact("slides", {
-      slides: [
-        {
-          layout: "blank",
-          elements: [
-            { id: "e1", type: "image", x: 0, y: 0, w: 40, h: 30, src: "assets/logo.png" },
-            { id: "e2", type: "text", x: 0, y: 50, w: 40, h: 10, text: "hi" },
-          ],
-        },
-        { layout: "image", image: "assets/logo.png" },
-        { layout: "image", image: "data:image/png;base64,AA==" },
-      ],
+      html: `<!doctype html><html><body><template data-slide-id="s1"><img src="assets/logo.png"></template></body></html>`,
     });
     const out = await inlineArtifactAssets(a, BASE);
-    const slides = (out.data as SlidesData).slides;
-    expect(slides[0].elements?.[0].src).toBe(PNG_URI);
-    expect(slides[0].elements?.[1]).toEqual({ id: "e2", type: "text", x: 0, y: 50, w: 40, h: 10, text: "hi" });
-    expect(slides[1].image).toBe(PNG_URI);
-    expect(slides[2].image).toBe("data:image/png;base64,AA==");
+    expect((out.data as { html: string }).html).toContain(PNG_URI);
+    expect(a.data).toEqual({
+      html: `<!doctype html><html><body><template data-slide-id="s1"><img src="assets/logo.png"></template></body></html>`,
+    }); // input untouched
+  });
+
+  it("leaves a legacy { slides: [...] } deck untouched — nothing to inline into", async () => {
+    stubFetch(["assets/logo.png"]);
+    const a = artifact("slides", {
+      slides: [{ layout: "image", image: "assets/logo.png" }],
+    });
+    expect(await inlineArtifactAssets(a, BASE)).toBe(a);
   });
 
   it("leaves other artifact types untouched", async () => {

@@ -27,13 +27,12 @@ under ``langchain_canvas.store``.
 from .agent import create_canvas_agent
 from .assets import ASSET_REFERENCE_PREFIXES, inline_canvas_assets
 from .converters import ConvertedSource, PageRenderable, SourceConverter, default_converters
-from .emitter import Canvas, ChartHandle, DocumentHandle, SlidesHandle, TableHandle
+from .emitter import Canvas, ChartHandle, DeckHandle, DocumentHandle, TableHandle
 from .exporters import ExportedFile, Exporter, default_exporters
 from .formulas import SUPPORTED_FORMULA_FUNCTIONS, formula_guidance
 from .replay import (
     encode_artifact,
     encode_chart,
-    encode_slides,
     encode_table,
     hydrate_events,
     source_preview_events,
@@ -56,6 +55,7 @@ __all__ = [
     "SUPPORTED_FORMULA_FUNCTIONS",
     "CanvasStore",
     "ConvertedSource",
+    "DeckHandle",
     "DocumentHandle",
     "ExportedFile",
     "Exporter",
@@ -65,7 +65,6 @@ __all__ = [
     "PageRenderable",
     "SourceConverter",
     "TableHandle",
-    "SlidesHandle",
     "create_asset_tool",
     "create_canvas_agent",
     "create_canvas_tools",
@@ -78,7 +77,6 @@ __all__ = [
     "default_exporters",
     "encode_artifact",
     "encode_chart",
-    "encode_slides",
     "encode_table",
     "formula_guidance",
     "hydrate_events",

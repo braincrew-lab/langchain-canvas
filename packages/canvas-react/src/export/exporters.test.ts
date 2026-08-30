@@ -1,92 +1,52 @@
 import { describe, expect, it } from "vitest";
 
-import type { SlidesData, TableData } from "../protocol/artifacts";
+import type { TableData } from "../protocol/artifacts";
 import { dataExporters, slidesToPrintHtml, toStandaloneHtml } from "./exporters";
-import { DEFAULT_SLIDE_PAGE_IN, PAGE_DPI } from "../client/slidePage";
 
-describe("slidesToPrintHtml (safe export)", () => {
-  it("renders one page per slide", () => {
-    const deck: SlidesData = { slides: [{ title: "A" }, { title: "B" }, { title: "C" }] };
-    const html = slidesToPrintHtml(deck, "Deck");
-    expect(html.match(/class="slide"/g)).toHaveLength(3);
+/** A canonical `*.slides.html` document with one slide per `bodies` entry. */
+function deckHtml(ratio: string, ...bodies: string[]): string {
+  const templates = bodies
+    .map((body, i) => `<template data-slide-id="s${i + 1}">${body}</template>`)
+    .join("\n");
+  return `<!doctype html><html data-ratio="${ratio}"><head><title>Deck</title></head><body>${templates}</body></html>`;
+}
+
+describe("slidesToPrintHtml (deck HTML -> print HTML)", () => {
+  it("renders one page per slide, in slide order", () => {
+    const html = slidesToPrintHtml(deckHtml("16:9", "<h1>A</h1>", "<h1>B</h1>", "<h1>C</h1>"), "Deck");
+    expect(html.match(/class="cv-print-slide"/g)).toHaveLength(3);
+    expect(html.indexOf(">A<")).toBeLessThan(html.indexOf(">B<"));
+    expect(html.indexOf(">B<")).toBeLessThan(html.indexOf(">C<"));
   });
 
-  // The page is the deck's own page at the density fontSize is stored at, so a
-  // stored px is a CSS px on the printed page and text needs no scaling.
-  it.each([
-    ["the classic page when the deck has no page", undefined, DEFAULT_SLIDE_PAGE_IN],
-    ["the deck page when one is set (4:3 skin)", { widthIn: 10, heightIn: 7.5 }, { widthIn: 10, heightIn: 7.5 }],
-    ["a wide 16:9 deck page", { widthIn: 13.333, heightIn: 7.5 }, { widthIn: 13.333, heightIn: 7.5 }],
-  ])("prints on %s", (_label, page, expected) => {
-    const html = slidesToPrintHtml({ slides: [{ title: "A" }], ...(page ? { page } : {}) }, "Deck");
-    const w = Math.round(expected.widthIn * PAGE_DPI);
-    const h = Math.round(expected.heightIn * PAGE_DPI);
-    expect(html).toContain(`@page { size: ${w}px ${h}px; margin: 0; }`);
-    expect(html).toContain(`width: ${w}px; height: ${h}px;`);
+  it("page-breaks after every slide except the last", () => {
+    const html = slidesToPrintHtml(deckHtml("16:9", "<h1>A</h1>", "<h1>B</h1>"), "Deck");
+    expect(html.match(/page-break-after:always/g)).toHaveLength(1);
   });
 
-  it("prints stored font px unscaled — no viewport units, which resolve against the printing frame", () => {
-    const deck: SlidesData = {
-      slides: [{ elements: [{ id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "A", fontSize: 18.7 }] }],
-    };
-    const html = slidesToPrintHtml(deck, "Deck");
-    expect(html).toContain("font-size:18.7px");
-    expect(html).not.toMatch(/font-size:[^;"]*vw/);
+  it("sizes a 16:9 deck to 1280x720 (via htmlSlideToPrintHtml)", () => {
+    const html = slidesToPrintHtml(deckHtml("16:9", "<h1>A</h1>"), "Deck");
+    expect(html).toContain("@page{size:1280px 720px;margin:0}");
+    expect(html).toContain("width:1280px;height:720px");
   });
 
-  it("writes the text metrics the model carries", () => {
-    const deck: SlidesData = {
-      slides: [{
-        elements: [{
-          id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "A",
-          fontFamily: "Pretendard", lineHeight: 1.4, highlight: "#ff0000",
-          spaceBefore: 6, spaceAfter: 4, verticalAlign: "middle",
-        }],
-      }],
-    };
-    const html = slidesToPrintHtml(deck, "Deck");
-    expect(html).toContain("font-family:Pretendard");
-    expect(html).toContain("line-height:1.4");
-    expect(html).toContain("background:#ff0000");
-    expect(html).toContain("padding-top:6px");
-    expect(html).toContain("padding-bottom:4px");
-    expect(html).toContain("justify-content:center");
+  it("sizes a 4:3 deck to 960x720", () => {
+    const html = slidesToPrintHtml(deckHtml("4:3", "<h1>A</h1>"), "Deck");
+    expect(html).toContain("@page{size:960px 720px;margin:0}");
+    expect(html).toContain("width:960px;height:720px");
   });
 
-  it("draws a shape that has only an outline as an outline, with no fill", () => {
-    const deck: SlidesData = {
-      slides: [{
-        elements: [{ id: "s", type: "shape", shape: "rect", x: 0, y: 0, w: 50, h: 10, stroke: "#c00000", strokeWidth: 3 }],
-      }],
-    };
-    const html = slidesToPrintHtml(deck, "Deck");
-    expect(html).toContain("border:3px solid #c00000");
-    expect(html).toContain("background:transparent");
+  it("keeps each slide's own styleCss scoped to its own section", () => {
+    const html = slidesToPrintHtml(
+      deckHtml("16:9", "<style>.title{color:red}</style><h1 class=\"title\">A</h1>", "<h1>B</h1>"),
+      "Deck",
+    );
+    expect(html).toContain(".title{color:red}");
   });
 
-  it("escapes text so an artifact can't inject markup", () => {
-    const deck: SlidesData = {
-      slides: [{ elements: [{ id: "t", type: "text", x: 0, y: 0, w: 50, h: 10, text: "<script>alert(1)</script>" }] }],
-    };
-    const html = slidesToPrintHtml(deck, "x");
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
-  });
-
-  it("drops a javascript: image src and can't break out of the attribute", () => {
-    const deck: SlidesData = {
-      slides: [{ elements: [{ id: "i", type: "image", x: 0, y: 0, w: 50, h: 50, src: 'javascript:alert(1)' }] }],
-    };
-    const html = slidesToPrintHtml(deck, "x");
-    expect(html).not.toContain("javascript:");
-  });
-
-  it("escapes a quote-breakout attempt in an image src", () => {
-    const deck: SlidesData = {
-      slides: [{ elements: [{ id: "i", type: "image", x: 0, y: 0, w: 50, h: 50, src: 'https://x/"><script>evil()</script>' }] }],
-    };
-    const html = slidesToPrintHtml(deck, "x");
-    expect(html).not.toContain("<script>evil()</script>");
+  it("renders a single empty-state page for a deck with no slides", () => {
+    const html = slidesToPrintHtml(deckHtml("16:9"), "Deck");
+    expect(html.match(/class="cv-print-slide"/g)).toHaveLength(1);
   });
 });
 
@@ -155,15 +115,12 @@ describe("htmlSlideToPrintHtml", () => {
 import { PRINT_COLOR_CSS } from "./exporters";
 
 describe("printed background colours", () => {
-  // A slide draws its shapes as div backgrounds, so a print that drops
+  // A slide draws its shapes as CSS backgrounds, so a print that drops
   // backgrounds drops the shapes and keeps only the text.
   it("every route into the print pipeline asks for exact colours", () => {
-    const deck: SlidesData = {
-      slides: [{ elements: [{ id: "s", type: "shape", shape: "rect", fill: "#111827", x: 0, y: 0, w: 50, h: 50 }] }],
-    };
     const slideHtml = `<!doctype html><html><head></head><body><div class="slide-container"></div></body></html>`;
     for (const html of [
-      slidesToPrintHtml(deck, "Deck"),
+      slidesToPrintHtml(deckHtml("16:9", `<div style="background:#111827"></div>`), "Deck"),
       htmlSlideToPrintHtml(slideHtml, "16:9"),
       toStandaloneHtml("Report", "<p>hi</p>"),
     ]) {

@@ -113,20 +113,14 @@ type TableData = {
 // verify their formulas with the `check_table` tool (create_check_table_tool),
 // which runs the same engine through a one-shot Node CLI (dist/formula-cli.js).
 
-// type: "slides"
-type SlidesData = { slides: Slide[] };
-type Slide = {
-  layout?: "title" | "content" | "section" | "image" | "two-column" | "blank";
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  bullets2?: string[];   // right column for "two-column"
-  image?: string;        // data: or https URL, for "image"
-  background?: string;   // hex
-  textColor?: string;    // hex
-  notes?: string;        // speaker notes → exported to the .pptx notes pane
-  elements?: SlideElement[]; // free-positioned items for the "blank" layout
-};
+// type: "slides" — a slide deck, one `*.slides.html` document. The
+// document is the source of truth: its <body> holds one
+// `<template data-slide-id="…">` per slide, so a one-slide edit never
+// rewrites bytes belonging to any other slide (see `client/deck.ts::
+// parseDeckHtml` / `langchain_canvas.deck`). `meta.ratio` ("16:9" / "4:3")
+// tells the renderer the deck's fixed aspect. Slide-scoped edits stream as
+// the separate `canvas.slide_patch` event, never a whole-deck resend.
+type SlidesData = HtmlData; // identical `{ html }` shape
 ```
 
 New artifact types are added by (1) defining a data shape here, (2) mirroring it
@@ -169,11 +163,8 @@ Stream the body token-by-token with `canvas.append` at path `content`:
 { "type": "canvas.create", "artifact": {
   "id": "deck-1", "type": "slides", "title": "Pitch", "version": 1,
   "status": "complete",
-  "data": { "slides": [
-    { "layout": "title",   "title": "AI for business", "subtitle": "2026 outlook" },
-    { "layout": "content", "title": "Why now", "bullets": ["Cheaper models", "Better tools", "Real ROI"] },
-    { "layout": "image",   "title": "Architecture", "image": "https://…/diagram.png", "notes": "walk through the flow" }
-  ] }
+  "data": { "html": "<!doctype html><html data-lcx-dialect=\"1\" data-ratio=\"16:9\">…<body><template data-slide-id=\"slide-001\"><section class=\"slide\">…</section></template></body></html>" },
+  "meta": { "kind": "deck", "ratio": "16:9" }
 } }
 ```
 
@@ -208,14 +199,15 @@ Stream the body token-by-token with `canvas.append` at path `content`:
 ```
 
 From Python, prefer the emitters — they set `type` and shape for you:
-`canvas.open_html`, `canvas.open_document`, `canvas.open_slides`,
+`canvas.open_html`, `canvas.open_document`, `canvas.open_deck`,
 `canvas.open_table`, `canvas.open_chart` (see `03-getting-started.md`).
 
 Emitters are **wire-only**: they draw on the connected client and persist
 nothing, so an artifact that is only emitted disappears on reload. To make it
 survive, write it to the canvas store as a file — `.html` (page), `.md`
-(document), `.table.json` / `.chart.json` / `.slides.json` (JSON envelopes) —
-and the standard replay path rebuilds it. Emitting without persisting is a
+(document), `.table.json` / `.chart.json` (JSON envelopes), `.slides.html`
+(deck, raw HTML) — and the standard replay path rebuilds it. Emitting without
+persisting is a
 valid choice for ephemeral renders; make it on purpose.
 
 ## Rendering HTML you already have — the substrate approach

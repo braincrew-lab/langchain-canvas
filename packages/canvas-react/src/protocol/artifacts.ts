@@ -90,83 +90,32 @@ export interface TableData {
   sheet?: Array<Record<string, unknown>>;
 }
 
-/** A freely-positioned element on a "blank" slide (percent geometry, 0–100). */
-export interface SlideElement {
-  id: string;
-  type: "text" | "image" | "shape";
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  text?: string;
-  src?: string;
-  fontSize?: number;
-  bold?: boolean;
-  color?: string;
-  align?: "left" | "center" | "right";
-  /** Shape kind for `type: "shape"`. */
-  shape?: "rect" | "ellipse" | "line";
-  /** Fill (rect/ellipse) or stroke (line) color for a shape. */
-  fill?: string;
-  /** Outline color, independent of fill — a box drawn by its border alone. */
-  stroke?: string;
-  /** Outline weight in px, like `fontSize`. */
-  strokeWidth?: number;
-  /** Type face; without it line breaks land elsewhere than in the source file. */
-  fontFamily?: string;
-  /** Line box as a multiple of the font size. */
-  lineHeight?: number;
-  /** Where text sits in its box. */
-  verticalAlign?: "top" | "middle" | "bottom";
-  /** Colour band behind the words, the way a highlighter marks a heading. */
-  highlight?: string;
-  /** Space above the text, in px. */
-  spaceBefore?: number;
-  /** Space below the text, in px. */
-  spaceAfter?: number;
-}
-
-export interface Slide {
-  /** title · content (bullets) · section · image · two-column · blank (free canvas). */
-  layout?: "title" | "content" | "section" | "image" | "two-column" | "blank";
-  /** Freely-positioned elements for the "blank" layout. */
-  elements?: SlideElement[];
-  title?: string;
-  subtitle?: string;
-  bullets?: string[];
-  /** Right-hand bullets for the "two-column" layout. */
-  bullets2?: string[];
-  /** Image (data: URL or https URL) for the "image" layout. */
-  image?: string;
-  /** Slide background color (hex). */
-  background?: string;
-  /** Slide text color (hex). */
-  textColor?: string;
-  /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
-  notes?: string;
-  /** Content padding as a percent of the slide width (a safe margin around the
-   *  free canvas). Applied in the editor, present view, thumbnails, and export. */
-  padding?: number;
-}
-
-/** The deck's page size in inches — the coordinate space percent geometry
- *  refers to. Absent means the classic 16:9 canvas (10 x 5.625). When a
- *  template skin is attached, tools fill this with the skin's real page so
- *  the editor, the preview, and the exported file agree on one aspect
- *  ratio. */
-export interface SlidePage {
-  widthIn: number;
-  heightIn: number;
-}
-
+/**
+ * A slide deck — one `*.slides.html` document (see `client/deck.ts::parseDeckHtml`).
+ * The document is the source of truth: its `<body>` holds one
+ * `<template data-slide-id="…">` per slide, so a one-slide edit never
+ * rewrites bytes belonging to any other slide.
+ */
 export interface SlidesData {
-  slides: Slide[];
-  page?: SlidePage;
-  /** Optional pptx skin: a canvas reference ("sources/brand.pptx") whose
-   *  master and layouts the pptx export builds on. Export-time only — the
-   *  canvas preview does not render the skin; a missing or unreadable skin
-   *  degrades to the blank-layout export. */
-  template?: string;
+  html: string;
+}
+
+/**
+ * The pre-deck-dialect shape (`{ slides: [...] }`, `page`, `template`) that a
+ * legacy structured-elements deck used to carry. A canonical `deck.slides.html`
+ * artifact's `data` is `SlidesData` (`{ html }`); this guard tells the two
+ * apart so a renderer can fall back to a read-only card instead of treating
+ * stale legacy data as deck HTML.
+ */
+export function isLegacySlidesData(
+  data: unknown,
+): data is { slides: unknown[]; page?: unknown; template?: string } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "slides" in data &&
+    Array.isArray((data as { slides: unknown }).slides)
+  );
 }
 
 /**
