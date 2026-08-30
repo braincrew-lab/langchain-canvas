@@ -157,6 +157,10 @@ function findElementByAttr(html: string, attrName: string, attrValue: string): E
 // --- slide template (de)serialization --------------------------------------------
 
 const STYLE_RE = /^\s*<style(?:\s[^>]*)?>([\s\S]*?)<\/style>/i;
+// Unanchored variant: a slide document's <head> carries <meta charset> before
+// the <style>, so the ^-anchored STYLE_RE (which enforces style-first inside a
+// <template>) would miss it. Used only when reading style out of a full <head>.
+const HEAD_STYLE_RE = /<style(?:\s[^>]*)?>([\s\S]*?)<\/style>/i;
 
 function buildSlideTemplate(templateOuterHtml: string, slideId: string): DeckSlideTemplate {
   const openTag = templateOuterHtml.match(/^<template\b([^>]*)>/i);
@@ -321,7 +325,7 @@ export function extractTemplateFromSlideDoc(slideDoc: string, slideId: string): 
   }
   const title = readAttr(bodyAttrs, "data-slide-title");
   const headMatch = slideDoc.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i);
-  const styleMatch = headMatch ? headMatch[1].match(STYLE_RE) : null;
+  const styleMatch = headMatch ? headMatch[1].match(HEAD_STYLE_RE) : null;
   const styleCss = styleMatch ? styleMatch[1].trim() : "";
   return serializeSlideTemplate({ slideId, title, styleCss, bodyHtml: bodyHtml.trim() });
 }
