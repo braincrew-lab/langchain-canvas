@@ -70,3 +70,20 @@ def test_a_table_is_one_line_with_its_grid_and_first_row() -> None:
     outline = deck_outline(content)
     assert outline is not None
     assert '[s1] 1 elements: t3 table 2x3 80x40 "Item | Q1 | Q2"' in outline
+
+
+def test_the_outline_says_which_boxes_grow_or_shrink() -> None:
+    deck = encode_slides("d", {"slides": [{"elements": [
+        {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 50, "h": 10, "fontSize": 24,
+         "text": "grows", "autofit": "shape"},
+        {"id": "e1", "type": "text", "x": 5, "y": 20, "w": 50, "h": 10, "fontSize": 24,
+         "text": "shrinks", "autofit": "text"},
+        {"id": "e2", "type": "text", "x": 5, "y": 40, "w": 50, "h": 10, "fontSize": 24,
+         "text": "fixed"},
+    ]}]})
+    out = deck_outline(deck)
+    assert out is not None
+    assert 'e0 text 24px grows 50x10 "grows"' in out
+    assert 'e1 text 24px shrinks 50x10 "shrinks"' in out
+    assert 'e2 text 24px 50x10 "fixed"' in out
+    assert "`grows` marks a box that takes its text's height" in out

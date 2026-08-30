@@ -1116,6 +1116,10 @@ def create_canvas_tools(
           slide you placed by hand next to the ones you did not, and
           keeps a deck from carrying eight sizes nobody chose. Nothing
           under 14px is readable on the canvas or a projector.
+          A text box's `autofit` says what happens when the words outgrow
+          it: `shape` grows the box to hold them, `text` shrinks the type
+          to fit, `none` (the default) leaves the overflow for the deck
+          check to name.
           A `table` is `{"id": "t1", "type": "table", "x": 10, "y": 25,
           "w": 80, "h": 40, "rows": [["Item", "Q1"], ["Sales", "120"]],
           "header": true, "stroke": "#9E9E9E", "fontSize": 18}` — the
@@ -2134,6 +2138,13 @@ def create_deck_tools(
         stays small enough to read whole. Tables, charts and grouped shapes
         do not come across — read the upload itself to see those.
 
+        Text boxes that grow with their text in the original keep doing so
+        (`autofit: "shape"`, shown as `grows` in the outline); ones that
+        shrink their type keep that too (`"text"`, shown as `shrinks`). The
+        rest are fixed: words that run longer than the box show up as an
+        overflow in the deck check. Where new words do not fit a fixed box,
+        shorten them, set `autofit`, or ask the user which they prefer.
+
         This is how an uploaded deck is revised: read the copy, then change
         its text with `edit_canvas`. Changing the words keeps the look. Do
         not write a new deck from scratch for a revision — it would carry
@@ -2209,9 +2220,25 @@ def create_deck_tools(
             for element in slide.get("elements", [])
             if element.get("type") == "table"
         )
+        grows = sum(
+            1
+            for slide in deck.get("slides", [])
+            for element in slide.get("elements", [])
+            if element.get("type") == "text" and element.get("autofit") == "shape"
+        )
+        shrinks = sum(
+            1
+            for slide in deck.get("slides", [])
+            for element in slide.get("elements", [])
+            if element.get("type") == "text" and element.get("autofit") == "text"
+        )
         extras = []
         if tables:
             extras.append(f"{tables} table(s) as table elements (rows editable)")
+        if grows:
+            extras.append(f"{grows} text box(es) grow with their text (autofit: shape)")
+        if shrinks:
+            extras.append(f"{shrinks} text box(es) shrink their type to fit (autofit: text)")
         if charts:
             extras.append(f"{charts} chart(s) as pictures (not editable)")
         if charts_dropped:
@@ -2222,8 +2249,11 @@ def create_deck_tools(
             f"under {ASSETS_PREFIX}{_deck_stem(target)}/, revision {commit.revision})."
             f"{carried} Read {target}, then change its text with edit_canvas — the fonts, "
             "colours and positions came from the original, so changing the words "
-            f"keeps the look. Export it to pptx when done; {source} keeps the "
-            "user's original."
+            "keeps the look. A box that grows takes the height its words need (mind "
+            "the page bottom and what sits below it); a fixed box does not — when "
+            "new words run longer than its placeholder, shorten them, set `autofit`, "
+            f"or ask the user which they prefer. Export it to pptx when done; {source} "
+            "keeps the user's original."
         )
 
     def _charts_as_pictures(

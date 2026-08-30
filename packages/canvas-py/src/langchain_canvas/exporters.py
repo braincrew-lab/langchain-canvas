@@ -30,6 +30,7 @@ from .converters import ensure_archive_within_limits
 from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
 from .slide_layout import BULLET_PREFIX, resolve_elements
 from .slide_table import table_grid
+from .slide_text import fit_scale, grown_height_pct
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -841,13 +842,42 @@ class SlidesPptxExporter:
             for element in _resolved_slide_elements(slide_model, deck.page):
                 left, top, width, height = inch_box(element)
                 if element.type == "text":
+                    fit = element.autofit or "none"
+                    words = element.text or ""
+                    font_px = element.font_size or _DEFAULT_FONT_PX
+                    if fit == "shape":
+                        # The box grows with its text, as it did in the file
+                        # it came from. The height written is the grown one,
+                        # so a viewer that does not re-fit on open still
+                        # shows every line.
+                        grown = grown_height_pct(
+                            words, font_px, element.w, element.h, element.line_height
+                        )
+                        if grown > element.h:
+                            _, _, _, height = inch_box(element.model_copy(update={"h": grown}))
                     box = slide.shapes.add_textbox(left, top, width, height)
                     frame = box.text_frame
                     frame.word_wrap = True
-                    # Boxes are measured to hold their own text, so nothing
-                    # needs shrinking — and shrink-to-fit is what made two
-                    # bullets of the same size render at different sizes.
-                    frame.auto_size = MSO_AUTO_SIZE.NONE
+                    if fit == "shape":
+                        frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+                    elif fit == "text":
+                        # The type shrinks to its box. PowerPoint re-fits
+                        # when the text is next edited; the scale written
+                        # here is what shows until then.
+                        frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+                        shrink = fit_scale(
+                            words, font_px, element.w, element.h, element.line_height
+                        )
+                        if shrink < 1.0:
+                            frame._bodyPr.find(qn("a:normAutofit")).set(
+                                "fontScale", str(int(round(shrink * 100000)))
+                            )
+                    else:
+                        # Boxes are measured to hold their own text, so
+                        # nothing needs shrinking — and shrink-to-fit is what
+                        # made two bullets of the same size render at
+                        # different sizes.
+                        frame.auto_size = MSO_AUTO_SIZE.NONE
                     frame.margin_left = frame.margin_right = Emu(0)
                     frame.margin_top = frame.margin_bottom = Emu(0)
                     # Where the text sits inside its box. Left unset, a box

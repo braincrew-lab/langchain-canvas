@@ -147,6 +147,13 @@ class SlideElement(_CamelModel):
     highlight: str | None = None
     space_before: float | None = Field(default=None, ge=0)  # px above the text
     space_after: float | None = Field(default=None, ge=0)  # px below the text
+    # What happens when the words outgrow the box, the way PowerPoint's
+    # autofit settles it: `shape` grows the box to hold the text, `text`
+    # shrinks the type to stay inside, `none` (the default) does neither and
+    # the deck check names the overflow. Four in ten text boxes of the decks
+    # people upload grow with their text; without this field every one of
+    # them arrived frozen at the height of its placeholder.
+    autofit: Literal["shape", "text", "none"] | None = None
     # A table (`type: "table"`): the words as a grid of strings, row-major,
     # and the table's look in the fields above (`stroke` draws the grid,
     # `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the

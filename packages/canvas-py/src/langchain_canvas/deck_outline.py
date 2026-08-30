@@ -36,7 +36,9 @@ def _element_line(element: dict[str, Any]) -> str:
         size_note = f" {size:g}px" if isinstance(size, (int, float)) else ""
         text = element.get("text")
         shown = f' "{_head(text)}"' if isinstance(text, str) and text.strip() else " (empty)"
-        return f"{ident} text{size_note} {box}{shown}"
+        fit = element.get("autofit")
+        fit_note = " grows" if fit == "shape" else " shrinks" if fit == "text" else ""
+        return f"{ident} text{size_note}{fit_note} {box}{shown}"
     if kind == "table":
         rows = element.get("rows")
         if isinstance(rows, list) and rows and isinstance(rows[0], list):
@@ -93,6 +95,7 @@ def deck_outline(content: str) -> str | None:
         lines.append(f"[s{number}] structured: {', '.join(parts) if parts else 'empty'}")
     lines.append(
         "Each id above is the element's \"id\" in the JSON below — search for it to edit "
-        "that element's text (a table's text is its rows); keep its fontSize and box unless asked."
+        "that element's text (a table's text is its rows); keep its fontSize and box unless asked. "
+        "`grows` marks a box that takes its text's height; `shrinks` one whose type fits the box."
     )
     return "\n".join(lines)

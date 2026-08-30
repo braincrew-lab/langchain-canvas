@@ -839,3 +839,39 @@ def test_slides_pptx_table_without_a_grid_line_declares_no_lines():
     ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     edge = frame.table.cell(0, 0)._tc.tcPr.find(f"{ns}lnT")
     assert edge is not None and edge.find(f"{ns}noFill") is not None
+
+
+def test_slides_pptx_a_growing_box_is_written_grown_and_keeps_growing():
+    """A box that grows with its text lands at the height its words need,
+    flagged to keep growing — so a viewer that does not re-fit on open still
+    shows every line, and one that does agrees."""
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    long_text = "가나다라마바사아자차카타파하 " * 8
+    content = _deck([{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 10, "w": 40, "h": 5, "fontSize": 24,
+         "text": long_text, "autofit": "shape"},
+        {"id": "b", "type": "text", "x": 5, "y": 60, "w": 40, "h": 5, "fontSize": 24,
+         "text": long_text},
+    ]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    shapes = [s for s in next(iter(deck.slides)).shapes if s.has_text_frame]
+    grown, fixed = shapes[0], shapes[1]
+    assert grown.text_frame.auto_size == MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    assert fixed.text_frame.auto_size == MSO_AUTO_SIZE.NONE
+    assert grown.height > fixed.height * 3
+
+
+def test_slides_pptx_shrinking_type_is_written_with_its_scale():
+    from pptx.enum.text import MSO_AUTO_SIZE
+    from pptx.oxml.ns import qn
+
+    content = _deck([{"elements": [
+        {"id": "a", "type": "text", "x": 5, "y": 10, "w": 40, "h": 5, "fontSize": 24,
+         "text": "가나다라마바사아자차카타파하 " * 8, "autofit": "text"},
+    ]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    box = next(s for s in next(iter(deck.slides)).shapes if s.has_text_frame)
+    assert box.text_frame.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    fit = box.text_frame._bodyPr.find(qn("a:normAutofit"))
+    assert 25000 <= int(fit.get("fontScale")) < 100000

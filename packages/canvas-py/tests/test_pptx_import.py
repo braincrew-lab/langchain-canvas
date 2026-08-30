@@ -997,3 +997,31 @@ def test_a_text_outline_comes_across_as_stroke_and_goes_back_out() -> None:
     run = box.text_frame.paragraphs[0].runs[0]
     line = run.font._rPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}ln")
     assert line is not None and line.get("w") == "19050"
+
+
+# --- autofit comes across --------------------------------------------------------------
+
+
+def test_a_box_that_grows_with_its_text_comes_across_as_such() -> None:
+    """Forty-five of forty-five text boxes in one uploaded deck grew with
+    their text; the copy froze every one at its placeholder's height, and a
+    body written longer than the placeholder ran past the box."""
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    def build(slide: Any) -> None:
+        grows = _textbox(slide, "grows", top=Inches(1))
+        grows.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+        shrinks = _textbox(slide, "shrinks", top=Inches(2.5))
+        shrinks.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        fixed = _textbox(slide, "fixed", top=Inches(4))
+        fixed.text_frame.auto_size = MSO_AUTO_SIZE.NONE
+        # python-pptx's fresh textbox says spAutoFit on its own; a box whose
+        # file says nothing at all has no autofit element.
+        unsaid = _textbox(slide, "unsaid", top=Inches(5.5))
+        unsaid.text_frame.auto_size = None
+
+    by_text = {e["text"]: e for e in _elements(pptx_to_slides(_deck(build)))}
+    assert by_text["grows"]["autofit"] == "shape"
+    assert by_text["shrinks"]["autofit"] == "text"
+    assert "autofit" not in by_text["fixed"]
+    assert "autofit" not in by_text["unsaid"]

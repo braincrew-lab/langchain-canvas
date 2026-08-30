@@ -794,6 +794,9 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
         return None
 
     out: dict[str, Any] = {"text": shape.text_frame.text}
+    fit = _autofit(shape.text_frame)
+    if fit:
+        out["autofit"] = fit
     paragraphs = list(shape.text_frame.paragraphs)
     runs = [run for paragraph in paragraphs for run in paragraph.runs]
     if runs:
@@ -885,6 +888,18 @@ def _line_height(paragraphs: list[Any]) -> float | None:
     """
     values = {p.line_spacing for p in paragraphs if isinstance(p.line_spacing, float)}
     return round(values.pop(), 3) if len(values) == 1 else None
+
+
+def _autofit(frame: Any) -> str | None:
+    """How the box and its text negotiate when the words outgrow the box.
+
+    A box that grows with its text comes across as ``shape``; type that
+    shrinks to its box as ``text``. A frame that says neither stays silent
+    rather than becoming ``none``, so a deck carries only what its file set.
+    """
+    mode = getattr(frame, "auto_size", None)
+    name = str(getattr(mode, "name", "")).upper()
+    return {"SHAPE_TO_FIT_TEXT": "shape", "TEXT_TO_FIT_SHAPE": "text"}.get(name)
 
 
 def _vertical_align(frame: Any) -> str | None:

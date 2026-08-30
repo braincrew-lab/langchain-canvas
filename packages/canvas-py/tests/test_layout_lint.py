@@ -793,3 +793,60 @@ def test_a_table_without_rows_is_refused_and_a_cells_unknown_key_is_named() -> N
     odd = {**bare, "rows": [["a"]], "cells": [{"r": 0, "c": 0, "colour": "#fff"}]}
     warnings = lint_slides_data({"slides": [{"elements": [odd]}]})
     assert any('cell: "colour"' in w for w in warnings)
+
+
+# --- autofit: a box that grows, type that shrinks ---------------------------------------
+
+
+def test_a_growing_box_is_not_an_overflow() -> None:
+    """The same title as above, in a box that grows with its text: nothing
+    runs past anything, so the finding that told the model to shorten the
+    words — which it did, six times, on the wrong slide — is gone."""
+    data = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 12, "autofit": "shape",
+         "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
+    ]}]}
+    assert not [w for w in lint_slides_data(data) if "run past" in w]
+
+
+def test_a_growing_box_that_reaches_off_the_page_is_named_with_its_grown_bottom() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "body", "type": "text", "x": 5, "y": 80, "w": 30, "h": 5, "autofit": "shape",
+         "text": "가나다라마바사아자차카타파하 " * 12, "fontSize": 24}
+    ]}]}
+    found = [w for w in lint_slides_data(data) if "grows with its text" in w]
+    assert len(found) == 1
+    assert "line(s)" in found[0] and "y + h = " in found[0] and "off the page" in found[0]
+
+
+def test_a_growing_box_that_stays_on_the_page_is_silent() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "body", "type": "text", "x": 5, "y": 10, "w": 60, "h": 5, "autofit": "shape",
+         "text": "가나다라마바사아자차카타파하 " * 4, "fontSize": 24}
+    ]}]}
+    assert not [w for w in lint_slides_data(data) if "grows" in w or "run past" in w]
+
+
+def test_shrinking_type_is_not_an_overflow_until_it_shrinks_below_readable() -> None:
+    fits = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 12, "autofit": "text",
+         "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
+    ]}]}
+    assert not [w for w in lint_slides_data(fits) if "run past" in w or "shrinks" in w]
+    tiny = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 20, "h": 4, "autofit": "text",
+         "text": "가나다라마바사아자차카타파하 " * 10, "fontSize": 24}
+    ]}]}
+    found = [w for w in lint_slides_data(tiny) if "shrinks to fit its box" in w]
+    assert len(found) == 1 and "below the 14px" in found[0]
+
+
+def test_a_growing_box_that_did_not_grow_is_named_once_by_the_off_page_check() -> None:
+    """Seen on a skin: a footer at y + h = 105 that grows with its one line
+    was named twice — as off the page, and as grown off the page."""
+    data = {"slides": [{"elements": [
+        {"id": "foot", "type": "text", "x": 5, "y": 100, "w": 30, "h": 5.2, "autofit": "shape",
+         "text": "footer", "fontSize": 12}
+    ]}]}
+    found = [w for w in lint_slides_data(data) if "off the page" in w]
+    assert len(found) == 1 and "grows" not in found[0]
