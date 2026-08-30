@@ -28,3 +28,28 @@ apps/server/uv.lock
 examples/deepagents-canvas/canvas-data/
 examples/deepagents-canvas/uv.lock
 examples/deepagents-canvas/.langgraph_api/
+# omb — working directories and runtime files
+.omb/
+worktrees/
+# omb — local-only configuration
+.claude/settings.local.json
+CLAUDE.local.md
+# omb — SQLite WAL/SHM (worktree state DB)
+*.db-wal
+*.db-shm
+# omb — harness artifacts (managed by release; do not edit)
+.claude/agents/omb/
+.claude/skills/omb-*/
+.claude/skills/omb/
+.claude/hooks/omb/
+.claude/rules/*
+!.claude/rules/custom/
+.claude/bin/
+.claude/commands/
+.claude/statusline-omb.sh
+# omb — generated Codex compatibility artifacts
+.agents/skills/omb*/
+.Codex/
+.codex/hooks/omb/
+.codex/agents/omb-*.toml
+.omb/compat/

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_canvas import sse_from_agent
@@ -14,6 +14,16 @@ class _Chunk:
     """Minimal stand-in for a streamed message chunk."""
 
     text: str = ""
+    content: str = ""
+    tool_call_chunks: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class _ToolChunk:
+    """Minimal stand-in for a streamed `ToolMessage` chunk."""
+
+    tool_call_id: str
+    status: str = "success"
     content: str = ""
 
 
@@ -53,6 +63,37 @@ async def test_model_text_streams_and_tool_node_chunks_are_dropped() -> None:
     assert deltas == ["Hello", " world"]
     assert [e["type"] for e in events if e["type"].startswith("canvas.")] == ["canvas.commit"]
     assert events[-1]["type"] == "done"
+
+
+async def test_tool_call_emits_tool_start_then_tool_end() -> None:
+    agent = _FakeAgent(
+        [
+            (
+                "messages",
+                (
+                    _Chunk(tool_call_chunks=[{"id": "call_1", "name": "write_page"}]),
+                    {"langgraph_node": "model"},
+                ),
+            ),
+            (
+                "messages",
+                (_ToolChunk(tool_call_id="call_1", status="success"), {"langgraph_node": "tools"}),
+            ),
+            ("messages", (_Chunk(text="Done!"), {"langgraph_node": "model"})),
+        ]
+    )
+    events = await _events(agent)
+    assert [e["type"] for e in events] == [
+        "tool.start",
+        "tool.end",
+        "message.delta",
+        "done",
+    ]
+    assert events[0]["toolCallId"] == "call_1"
+    assert events[0]["name"] == "write_page"
+    assert events[1]["toolCallId"] == "call_1"
+    assert events[1]["ok"] is True
+    assert events[2]["text"] == "Done!"
 
 
 async def test_run_failure_surfaces_as_error_then_done() -> None:

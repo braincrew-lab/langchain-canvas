@@ -55,17 +55,22 @@ export function Chat({ messages, isStreaming, error, onSend, onStop, onReset, su
           </div>
         )}
 
-        {messages.map((message) => (
-          <div key={message.id} className={`msg msg--${message.role}`}>
-            <div className={`bubble bubble--${message.role}`}>
-              {message.text}
-              {message.role === "assistant" && !message.text && !message.artifactIds?.length && (
-                <span className="bubble__typing" />
-              )}
+        {messages.map((message, index) => {
+          const isLastMessage = index === messages.length - 1;
+          // Keep the typing indicator visible through the tool-call phase (e.g. a
+          // long-running write_slide run), not just before the first token arrives —
+          // otherwise a silent gap after text reads as a hang.
+          const showTyping = message.role === "assistant" && isStreaming && isLastMessage;
+          return (
+            <div key={message.id} className={`msg msg--${message.role}`}>
+              <div className={`bubble bubble--${message.role}`}>
+                {message.text}
+                {showTyping && <span className="bubble__typing" />}
+              </div>
+              {Array.from(new Set(message.artifactIds)).map((id) => <ArtifactCard key={id} artifactId={id} />)}
             </div>
-            {Array.from(new Set(message.artifactIds)).map((id) => <ArtifactCard key={id} artifactId={id} />)}
-          </div>
-        ))}
+          );
+        })}
 
         {error && <div className="chat__error">{error}</div>}
       </div>

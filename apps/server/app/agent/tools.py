@@ -17,7 +17,6 @@ from pathlib import Path
 
 from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
-
 from langchain_canvas import (
     Canvas,
     create_asset_tool,
@@ -53,6 +52,7 @@ from langchain_canvas.replay import (
 )
 from langchain_canvas.store import CanvasFileNotFoundError, CanvasStoreError
 
+from .configuration import config
 from .render import render_slide
 from .store import (
     DECK_PATH,
@@ -63,8 +63,6 @@ from .store import (
     STORE,
     artifact_path,
 )
-
-_WRITER_MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
 # The SDK's slide-granular deck tools (open/read/edit/list) — convert_slide
 # and write_slide reuse `edit_deck_slide`'s sanitize -> validate -> patch ->
@@ -108,20 +106,24 @@ def build_page(brief: str, runtime: ToolRuntime) -> str:
     saved to the canvas store (it survives reloads) and the user can edit it by
     hand; always read_canvas before editing it later.
     """
-    canvas = Canvas.from_runtime(runtime)
-    page = canvas.open_html(title=brief[:60], id=PAGE_PATH)
+    try:
+        tid = thread_id(runtime)
+        canvas = Canvas.from_runtime(runtime)
+        page = canvas.open_html(title=brief[:60], id=PAGE_PATH)
 
-    model = init_chat_model(_WRITER_MODEL)
-    prompt = (
-        "Create a single self-contained HTML document (inline <style>, no external "
-        f"resources or scripts) for: {brief}. Return ONLY the HTML."
-    )
-    html = _strip_code_fence(_text_of(model.invoke(prompt)))
-    description = f"Create page: {brief[:50]}"
-    commit = STORE.write(thread_id(runtime), PAGE_PATH, html, description, actor="agent")
-    page.set_html(html)
-    page.complete()
-    page.commit(description, revision=commit.revision)
+        model = init_chat_model(config.writer_model)
+        prompt = (
+            "Create a single self-contained HTML document (inline <style>, no external "
+            f"resources or scripts) for: {brief}. Return ONLY the HTML."
+        )
+        html = _strip_code_fence(_text_of(model.invoke(prompt)))
+        description = f"Create page: {brief[:50]}"
+        commit = STORE.write(tid, PAGE_PATH, html, description, actor="agent")
+        page.set_html(html)
+        page.complete()
+        page.commit(description, revision=commit.revision)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
 
     return (
         f"Built and saved the page (revision {commit.revision}). "
@@ -175,31 +177,34 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
     `len(slide_titles)` empty slides, ids `slide-001`, `slide-002`, ... in
     order. Then call write_slide for each slide id, in order.
     """
-    tid = thread_id(runtime)
-    if any(info.path == DECK_PATH for info in STORE.list_files(tid)):
-        return (
-            f"Error: {DECK_PATH} already exists on this canvas. Edit it with "
-            "read_deck_slide/edit_deck_slide, or export it before starting a new one."
-        )
-    slides = [
-        SlideTemplate(
-            slide_id=f"slide-{i:03d}",
-            title=slide_title,
-            style_css="",
-            body_html='<section class="slide"></section>',
-        )
-        for i, slide_title in enumerate(slide_titles, start=1)
-    ]
-    content = serialize_deck(Deck(title=title, ratio=DECK_RATIO, source=None, slides=slides))
-    description = f"Plan deck: {title} ({len(slides)} slides)"
-    commit = STORE.write(tid, DECK_PATH, content, description, actor="agent")
+    try:
+        tid = thread_id(runtime)
+        if any(info.path == DECK_PATH for info in STORE.list_files(tid)):
+            return (
+                f"Error: {DECK_PATH} already exists on this canvas. Edit it with "
+                "read_deck_slide/edit_deck_slide, or export it before starting a new one."
+            )
+        slides = [
+            SlideTemplate(
+                slide_id=f"slide-{i:03d}",
+                title=slide_title,
+                style_css="",
+                body_html='<section class="slide"></section>',
+            )
+            for i, slide_title in enumerate(slide_titles, start=1)
+        ]
+        content = serialize_deck(Deck(title=title, ratio=DECK_RATIO, source=None, slides=slides))
+        description = f"Plan deck: {title} ({len(slides)} slides)"
+        commit = STORE.write(tid, DECK_PATH, content, description, actor="agent")
 
-    writer = getattr(runtime, "stream_writer", None)
-    if writer is not None:
-        for event in events_for_commit(
-            DECK_PATH, content, is_new=True, revision=commit.revision, description=description
-        ):
-            writer(event)
+        writer = getattr(runtime, "stream_writer", None)
+        if writer is not None:
+            for event in events_for_commit(
+                DECK_PATH, content, is_new=True, revision=commit.revision, description=description
+            ):
+                writer(event)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
 
     listing = "\n".join(f"- {s.slide_id}: {s.title}" for s in slides)
     return (
@@ -218,7 +223,10 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
     its role (cover, content, closing). Fix any ERROR the layout check below
     reports with read_deck_slide + edit_deck_slide before moving on.
     """
-    tid = thread_id(runtime)
+    try:
+        tid = thread_id(runtime)
+    except ValueError as exc:
+        return f"Error: {exc}"
     try:
         got = STORE.read(tid, path)
     except CanvasFileNotFoundError:
@@ -230,13 +238,16 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
     except DeckParseError as exc:
         return f"Error: {exc}."
 
-    model = init_chat_model(_WRITER_MODEL)
-    prompt = (
-        "Create one presentation slide's markup as a single "
-        '<section class="slide">...</section> fragment — no <html>/<body>/'
-        f"<style> wrapper.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
-    )
-    body_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    try:
+        model = init_chat_model(config.writer_model)
+        prompt = (
+            "Create one presentation slide's markup as a single "
+            '<section class="slide">...</section> fragment — no <html>/<body>/'
+            f"<style> wrapper.\n\n{DECK_STYLE}\n\nSlide content: {brief}"
+        )
+        body_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
     fragment = _template_fragment(slide_id, title, body_html)
 
     result = _edit_deck_slide.func(
@@ -249,8 +260,11 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
         slide = read_slide(STORE.read(tid, path).content, slide_id)
     except (DeckParseError, CanvasStoreError) as exc:
         return f"{result}\n(layout check skipped: {exc})"
-    metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
-    report = _slide_layout_report(f"{path}#{slide_id}", metrics)
+    try:
+        metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
+        report = _slide_layout_report(f"{path}#{slide_id}", metrics)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"{result}\n(layout check skipped: {exc})"
     return f"{result}\n{report}"
 
 
@@ -268,7 +282,10 @@ def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
     the same baseline, so repeated calls are idempotent. On success the
     slide is saved (edit_deck_slide) and checked once for layout problems.
     """
-    tid = thread_id(runtime)
+    try:
+        tid = thread_id(runtime)
+    except ValueError as exc:
+        return f"Error: {exc}"
     try:
         got = STORE.read(tid, path)
     except CanvasFileNotFoundError:
@@ -305,14 +322,17 @@ def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
     baseline_html = baseline_slide_html(extraction, slide_id=slide_id, ratio=deck.ratio)
     baseline_texts = extracted_text(extraction)
 
-    model = init_chat_model(_WRITER_MODEL)
-    prompt = (
-        "Improve this presentation slide's layout — reposition, restyle, and "
-        "rebalance the boxes below — without adding, removing, or rewording "
-        f"any of its text.\n\n{DECK_STYLE}\n\nBaseline markup:\n{baseline_html}\n\n"
-        'Return ONLY the corrected <section class="slide">...</section> markup.'
-    )
-    corrected_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    try:
+        model = init_chat_model(config.writer_model)
+        prompt = (
+            "Improve this presentation slide's layout — reposition, restyle, and "
+            "rebalance the boxes below — without adding, removing, or rewording "
+            f"any of its text.\n\n{DECK_STYLE}\n\nBaseline markup:\n{baseline_html}\n\n"
+            'Return ONLY the corrected <section class="slide">...</section> markup.'
+        )
+        corrected_html = _strip_code_fence(_text_of(model.invoke(prompt)))
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
 
     try:
         ensure_text_equality(baseline_texts, corrected_html)
@@ -331,7 +351,10 @@ def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
     if result.startswith("Error:"):
         return result
 
-    metrics, _ = render_slide(corrected_html, ratio=deck.ratio)
+    try:
+        metrics, _ = render_slide(corrected_html, ratio=deck.ratio)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
     report = _slide_layout_report(f"{path}#{slide_id}", metrics)
     return f"{result}\n{report}"
 
@@ -352,22 +375,26 @@ def write_report(topic: str, runtime: ToolRuntime) -> str:
 
     Use this for anything long-form: reports, drafts, explanations, summaries.
     """
-    path = artifact_path(topic, DOCUMENT_SUFFIX)
-    canvas = Canvas.from_runtime(runtime)
-    doc = canvas.open_document(title=f"Report: {topic}", id=path)
+    try:
+        tid = thread_id(runtime)
+        path = artifact_path(topic, DOCUMENT_SUFFIX)
+        canvas = Canvas.from_runtime(runtime)
+        doc = canvas.open_document(title=f"Report: {topic}", id=path)
 
-    model = init_chat_model(_WRITER_MODEL)
-    prompt = f"Write a well-structured markdown report about: {topic}. Use headings and bullet points."
-    chunks: list[str] = []
-    for chunk in model.stream(prompt):
-        text = _text_of(chunk)
-        chunks.append(text)
-        doc.append(text)
-    doc.complete()
+        model = init_chat_model(config.writer_model)
+        prompt = f"Write a well-structured markdown report about: {topic}. Use headings and bullet points."
+        chunks: list[str] = []
+        for chunk in model.stream(prompt):
+            text = _text_of(chunk)
+            chunks.append(text)
+            doc.append(text)
+        doc.complete()
 
-    description = f"Write report: {topic[:50]}"
-    commit = STORE.write(thread_id(runtime), path, "".join(chunks), description, actor="agent")
-    doc.commit(description, revision=commit.revision)
+        description = f"Write report: {topic[:50]}"
+        commit = STORE.write(tid, path, "".join(chunks), description, actor="agent")
+        doc.commit(description, revision=commit.revision)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
     return f"Drafted a report on “{topic}” — saved as {path} (revision {commit.revision})."
 
 
@@ -389,28 +416,32 @@ def build_chart(
         series_label: Legend label for the plotted series.
         chart: One of "bar", "line", "area", "pie".
     """
-    path = artifact_path(title, CHART_SUFFIX)
-    canvas = Canvas.from_runtime(runtime)
-    handle = canvas.open_chart(
-        title=title,
-        chart=chart,
-        x_key="category",
-        series=[ChartSeries(key="value", label=series_label)],
-        id=path,
-    )
-    rows = [{"category": c, "value": v} for c, v in zip(categories, values, strict=False)]
-    handle.set_rows(rows)
-    handle.complete()
+    try:
+        tid = thread_id(runtime)
+        path = artifact_path(title, CHART_SUFFIX)
+        canvas = Canvas.from_runtime(runtime)
+        handle = canvas.open_chart(
+            title=title,
+            chart=chart,
+            x_key="category",
+            series=[ChartSeries(key="value", label=series_label)],
+            id=path,
+        )
+        rows = [{"category": c, "value": v} for c, v in zip(categories, values, strict=False)]
+        handle.set_rows(rows)
+        handle.complete()
 
-    data = {
-        "chart": chart,
-        "xKey": "category",
-        "series": [{"key": "value", "label": series_label}],
-        "rows": rows,
-    }
-    description = f"Build chart: {title[:50]}"
-    commit = STORE.write(thread_id(runtime), path, encode_chart(title, data), description, actor="agent")
-    handle.commit(description, revision=commit.revision)
+        data = {
+            "chart": chart,
+            "xKey": "category",
+            "series": [{"key": "value", "label": series_label}],
+            "rows": rows,
+        }
+        description = f"Build chart: {title[:50]}"
+        commit = STORE.write(tid, path, encode_chart(title, data), description, actor="agent")
+        handle.commit(description, revision=commit.revision)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
     return f"Rendered a {chart} chart “{title}” — saved as {path} (revision {commit.revision})."
 
 
@@ -428,26 +459,30 @@ def build_table(
         columns: Column keys, in display order.
         rows: One dict per row, keyed by column.
     """
-    path = artifact_path(title, TABLE_SUFFIX)
-    norm_columns = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
-    canvas = Canvas.from_runtime(runtime)
-    handle = canvas.open_table(
-        title=title,
-        columns=[TableColumn(**col) for col in norm_columns],
-        id=path,
-    )
-    handle.set_rows(rows)
-    handle.complete()
+    try:
+        tid = thread_id(runtime)
+        path = artifact_path(title, TABLE_SUFFIX)
+        norm_columns = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
+        canvas = Canvas.from_runtime(runtime)
+        handle = canvas.open_table(
+            title=title,
+            columns=[TableColumn(**col) for col in norm_columns],
+            id=path,
+        )
+        handle.set_rows(rows)
+        handle.complete()
 
-    description = f"Build table: {title[:50]}"
-    commit = STORE.write(
-        thread_id(runtime),
-        path,
-        encode_table(title, {"columns": norm_columns, "rows": rows}),
-        description,
-        actor="agent",
-    )
-    handle.commit(description, revision=commit.revision)
+        description = f"Build table: {title[:50]}"
+        commit = STORE.write(
+            tid,
+            path,
+            encode_table(title, {"columns": norm_columns, "rows": rows}),
+            description,
+            actor="agent",
+        )
+        handle.commit(description, revision=commit.revision)
+    except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
+        return f"Error: {exc}"
     return f"Rendered a table “{title}” with {len(rows)} rows — saved as {path} (revision {commit.revision})."
 
 

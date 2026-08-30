@@ -1,3 +1,3 @@
-from .build import build_agent
+from .agent import create_canvas_server_agent
 
-__all__ = ["build_agent"]
+__all__ = ["create_canvas_server_agent"]

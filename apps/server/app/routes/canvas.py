@@ -19,9 +19,6 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
-
 from langchain_canvas import (
     encode_artifact,
     hydrate_events,
@@ -34,6 +31,8 @@ from langchain_canvas.store import (
     CanvasStoreError,
     RevisionMismatchError,
 )
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 from ..agent.store import PAGE_PATH, STORE
 

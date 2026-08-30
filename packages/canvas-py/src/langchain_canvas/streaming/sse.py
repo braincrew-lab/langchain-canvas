@@ -3,14 +3,12 @@
 The agent exposes two streams we care about, and we interleave them onto one
 wire in arrival order:
 
-* ``stream_mode="messages"`` -> assistant token chunks -> ``message.delta`` events.
+* ``stream_mode="messages"`` -> assistant token chunks -> ``message.delta`` events,
+  plus tool lifecycle -> ``tool.start`` (first chunk carrying a given tool call id)
+  and ``tool.end`` (the matching ``ToolMessage`` chunk).
 * ``stream_mode="custom"``   -> whatever tools wrote via ``runtime.stream_writer``.
   Because the emitter already writes *wire-shaped* canvas events, custom payloads
   pass straight through.
-
-Tool lifecycle (``tool.start`` / ``tool.end``) is intentionally not emitted here
-to keep the reference bridge small; add ``"updates"`` to ``stream_mode`` and map
-node transitions if you want it (the protocol already defines those events).
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..protocol.events import DoneEvent, ErrorEvent, MessageDelta
+from ..protocol.events import DoneEvent, ErrorEvent, MessageDelta, ToolEnd, ToolStart
 
 
 def _delta_text(message: Any) -> str:
@@ -58,6 +56,8 @@ async def sse_from_agent(
         inputs: The agent input, e.g. ``{"messages": [{"role": "user", ...}]}``.
         config: Optional LangGraph config (``configurable.thread_id`` for memory).
     """
+    started_tool_call_ids: set[str] = set()
+
     try:
         async for mode, chunk in agent.astream(
             inputs,
@@ -66,6 +66,25 @@ async def sse_from_agent(
         ):
             if mode == "messages":
                 message, meta = chunk
+
+                tool_call_id = getattr(message, "tool_call_id", None)
+                if isinstance(tool_call_id, str):
+                    # A ToolMessage chunk carrying the executed tool's result.
+                    status = getattr(message, "status", None)
+                    yield ToolEnd(tool_call_id=tool_call_id, ok=status != "error").to_sse()
+                    continue
+
+                for call in getattr(message, "tool_call_chunks", None) or []:
+                    call_id = call.get("id") if isinstance(call, dict) else None
+                    call_name = call.get("name") if isinstance(call, dict) else None
+                    if (
+                        isinstance(call_id, str)
+                        and isinstance(call_name, str)
+                        and call_id not in started_tool_call_ids
+                    ):
+                        started_tool_call_ids.add(call_id)
+                        yield ToolStart(tool_call_id=call_id, name=call_name).to_sse()
+
                 # Only the agent's own voice is chat. Chunks from the tools
                 # node are tool results and tool-internal model calls (e.g. a
                 # writer model inside a tool) — relaying them would dump raw

@@ -2,38 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
-from pydantic.alias_generators import to_camel
+from typing import Any
 
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 from langchain_canvas import sse_from_agent
 
-from ..agent.build import build_agent
+from ..agent.schema import ChatRequest, Selection
 
 router = APIRouter()
 
-# One compiled agent for the process; per-request state is keyed by thread_id.
-_agent = build_agent()
 
-
-class Selection(BaseModel):
-    """The element the user selected in an html artifact (camelCase on the wire)."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
-    artifact_id: str
-    cid: str
-    selector: str
-    tag: str
-    text: str | None = None
-    outer_html: str | None = None
-
-
-class ChatRequest(BaseModel):
-    thread_id: str
-    message: str
-    selections: list[Selection] = []
+def get_agent(request: Request) -> Any:
+    """The process-wide compiled agent built by `main.py`'s lifespan."""
+    return request.app.state.agent
 
 
 def _with_selections(message: str, selections: list[Selection]) -> str:
@@ -52,7 +34,9 @@ def _with_selections(message: str, selections: list[Selection]) -> str:
 
 
 @router.post("/api/chat")
-async def chat(request: ChatRequest) -> StreamingResponse:
+async def chat(
+    request: ChatRequest, agent: Any = Depends(get_agent)  # noqa: B008 — FastAPI DI idiom
+) -> StreamingResponse:
     message = request.message
     if request.selections:
         message = _with_selections(message, request.selections)
@@ -61,7 +45,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     config = {"configurable": {"thread_id": request.thread_id}}
 
     return StreamingResponse(
-        sse_from_agent(_agent, inputs, config=config),
+        sse_from_agent(agent, inputs, config=config),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

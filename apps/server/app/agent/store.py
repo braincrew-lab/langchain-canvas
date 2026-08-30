@@ -8,11 +8,11 @@ the agent's next ``read``.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from langchain_canvas import FileCanvasStore
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "canvas-data"
+from .configuration import config
+
+DATA_DIR = config.canvas_data_dir
 
 STORE = FileCanvasStore(DATA_DIR)
 
