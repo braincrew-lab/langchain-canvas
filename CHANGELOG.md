@@ -4,6 +4,57 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Ships as at least a **minor** semver bump — the default theme changes and an
+automatic behavior is removed, even though no exported API signature changes.
+
+### Changed
+- **BREAKING: light is now the default theme, and automatic OS dark mode is
+  gone.** `packages/canvas-react/src/styles/canvas.css` no longer ships a
+  `@media (prefers-color-scheme: dark)` block; the previous dark palette now
+  lives under an explicit `.dark` class scope that the host app opts into
+  (`<html class="dark">`). Apps that relied on the stylesheet following the
+  OS theme automatically will render light-only until they either add the
+  `.dark` class themselves or restore the media query:
+  ```css
+  @media (prefers-color-scheme: dark) {
+    :root:not(.dark) {
+      --cv-bg: #0f1115;
+      --cv-surface: #171a21;
+      --cv-border: #262b36;
+      --cv-text: #e6e8eb;
+      --cv-muted: #9aa4b2;
+      --cv-accent: #818cf8;
+      --cv-accent-weak: #1e2130;
+    }
+  }
+  ```
+  This cannot be restored by overriding `--cv-*` tokens alone — a host must
+  add its own media query (as above) or the `.dark` class.
+- **BREAKING: the color palette was replaced.** Every `--cv-*` color token
+  (`--cv-bg`, `--cv-surface`, `--cv-border`, `--cv-text`, `--cv-muted`,
+  `--cv-accent`, `--cv-accent-weak`, and all newly-added tokens below) now
+  points at a light-first Japanese-Swiss palette (e.g. `--cv-bg: #F9FAFB`,
+  `--cv-accent: #9360FF`) instead of the previous values. Any app pinning a
+  specific hex value through an override is unaffected; anything reading the
+  stylesheet's own defaults will see new colors.
+- **The `--cv-*` token contract grew from ~11 to 27 tokens.** New tokens:
+  `--cv-border-soft`, `--cv-text-secondary`, `--cv-tag-bg`,
+  `--cv-accent-text`, `--cv-accent-border`, `--cv-accent-weak`, `--cv-cta`,
+  `--cv-cta-hover`, `--cv-sidebar-active`, `--cv-sidebar-selected`,
+  `--cv-user-bubble`, `--cv-destructive-text`, `--cv-destructive-light`,
+  `--cv-destructive-border`, `--cv-radius-md`, `--cv-radius-xl`,
+  `--cv-shadow-card`, `--cv-font-display`. An app overriding only the
+  pre-existing tokens keeps working; the new tokens fall back to the
+  package's own defaults unless also overridden.
+- **`--cv-radius` grew from `12px` to `2px`.** Any new rule consuming
+  `var(--cv-radius)` now renders a sharper corner by default; override it to
+  restore the previous look.
+- `--cv-accent` no longer carries an inline fallback literal (e.g.
+  `var(--cv-accent, #6366f1)`) at its consumption sites — the token's own
+  `:root` default is now the single source of truth for the accent color.
+
 ## [0.7.26] — 2026-08-30
 
 ### Added

@@ -458,6 +458,23 @@ function EmptyState({
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="cv-empty">
+      <div className="cv-empty__icon" aria-hidden="true">
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect width="7" height="9" x="3" y="3" rx="1" />
+          <rect width="7" height="5" x="14" y="3" rx="1" />
+          <rect width="7" height="9" x="14" y="12" rx="1" />
+          <rect width="7" height="5" x="3" y="16" rx="1" />
+        </svg>
+      </div>
       <p className="cv-empty__title">Nothing on the canvas yet</p>
       <p className="cv-empty__hint">Ask for a report or a chart — or open a file to edit it here.</p>
       {onOpenFiles && (

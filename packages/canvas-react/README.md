@@ -156,6 +156,83 @@ useEffect(() => { play(scenarios.find((s) => s.id === "table")!.events); }, [pla
 useCanvasStream({ mock: (msg) => (/chart/i.test(msg) ? chartEvents : null) }); // null → hit the endpoint
 ```
 
+## Theming
+
+Light is the default theme, and every color, radius, shadow and font in the stylesheet
+is a CSS variable — retheme by overriding `--cv-*` tokens, no forking required.
+
+```tsx
+import "@braincrew-lab/langchain-canvas/styles.css";
+```
+
+### Tokens
+
+A representative slice of the contract (see
+`packages/canvas-react/src/styles/canvas.css` for the full 27-token list and current
+values):
+
+| Token | Purpose | Light default |
+|---|---|---|
+| `--cv-bg` / `--cv-surface` | Canvas background / card surface | `#F9FAFB` / `#FFFFFF` |
+| `--cv-border` / `--cv-border-soft` | Primary / subtle borders | `#D1D6DB` / `#E5E8EB` |
+| `--cv-text` / `--cv-text-secondary` / `--cv-muted` | Text hierarchy | `#191F28` / `#333D4B` / `#6B7684` |
+| `--cv-tag-bg` | Tag/pill background | `#F2F4F6` |
+| `--cv-accent` / `--cv-accent-weak` / `--cv-accent-text` / `--cv-accent-border` | Accent family (active tabs, badges, focus rings) | `#9360FF` / `#F5F0FF` / `#5232B3` / `#E0D4F5` |
+| `--cv-cta` / `--cv-cta-hover` | Primary call-to-action | `#704BD6` / `#5B3CC4` |
+| `--cv-sidebar-active` / `--cv-sidebar-selected` | Sidebar row states | `#EFE4F7` / `#F7F2FB` |
+| `--cv-user-bubble` | Chat user bubble background | `#191F28` |
+| `--cv-destructive-text` / `--cv-destructive-light` / `--cv-destructive-border` | Destructive actions | `#B91C1C` / `#FEF2F2` / `#FECACA` |
+| `--cv-radius` / `--cv-radius-md` / `--cv-radius-xl` | Corner radii | `2px` / `6px` / `20px` |
+| `--cv-shadow-card` | Card elevation | `0 2px 8px rgba(25,31,40,0.06)` |
+| `--cv-font` / `--cv-font-display` / `--cv-mono` | Typography (see Fonts below) | — |
+
+### Overriding tokens
+
+Set the variables on `:root` (or any ancestor of `<Canvas />`), after the stylesheet import:
+
+```css
+:root {
+  --cv-accent: #2563eb;
+  --cv-radius: 8px;
+}
+```
+
+### Dark mode
+
+Dark is no longer automatic. The dark palette lives under an explicit `.dark` class
+scope — add it to `<html>` (or any ancestor of `<Canvas />`) to activate it:
+
+```html
+<html class="dark">
+```
+
+**Restoring automatic OS dark mode:** the stylesheet previously matched
+`prefers-color-scheme: dark` on its own; that media query was removed so the host
+controls the active theme. If your app relied on it, re-add it in your own
+stylesheet, mirroring the `.dark` overrides:
+
+```css
+@media (prefers-color-scheme: dark) {
+  :root:not(.dark) {
+    --cv-bg: #0f1115;
+    --cv-surface: #171a21;
+    --cv-border: #262b36;
+    --cv-text: #e6e8eb;
+    --cv-muted: #9aa4b2;
+    --cv-accent: #818cf8;
+    --cv-accent-weak: #1e2130;
+  }
+}
+```
+
+### Fonts
+
+`--cv-font`, `--cv-font-display` and `--cv-mono` ship as generic font-stack names
+(`"Pretendard", "Sora", -apple-system, ...` / `"Sora", "Pretendard", ...` /
+`"IBM Plex Mono", Menlo, monospace`) — no font files are bundled with this package.
+Load the named families in your own app, or override the variables with fonts you
+already load, if you want them to actually render.
+
 ## How it works
 
 ```
