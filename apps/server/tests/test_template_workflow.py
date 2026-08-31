@@ -254,7 +254,13 @@ def test_style_request_avoids_full_conversion_and_scratch_writer(
     verified = tools["verify_template_deck"].func(
         path="new-deck.slides.html", revision=write_result["revision"], runtime=runtime
     )
-    assert verified["complete"] is True
+    assert verified["visual_fidelity"]["status"] == "verified", verified
+    assert verified["content"]["status"] == "verified", verified
+    # A verbatim slide has no new authored voice to judge — writing_style is
+    # not_checked (never vacuously verified), so `complete` is correctly
+    # False even though every actually-checked dimension passed.
+    assert verified["writing_style"]["status"] == "not_checked", verified
+    assert verified["complete"] is False
 
 
 def test_reproduction_and_edit_routes_remain_legacy(
@@ -477,3 +483,110 @@ def test_html_generation_counters_distinguish_compile_and_write(
     assert result["status"] == "ok"
     assert result["slide_count"] == 2
     assert reconstruct_calls == 2  # unchanged: writing never re-compiles the source
+
+
+# --- CV-P1-002: PDF node ids are derived from the compiled frame -------------------
+
+
+def _finalize_bindings_all(archetype: dict) -> list[dict]:
+    """Bind every candidate slot/static node — text and image — for finalize."""
+    bindings = [
+        {
+            "archetype_id": archetype["id"],
+            "node_id": slot["node_id"],
+            "disposition": "variable",
+            "slot_key": slot["key"],
+            "role": slot["role"],
+            "required": True,
+        }
+        for slot in archetype["slots"]
+    ]
+    bindings += [
+        {
+            "archetype_id": archetype["id"],
+            "node_id": node["node_id"],
+            "disposition": "retain",
+            "retain_reason": "static",
+        }
+        for node in archetype["static_nodes"]
+    ]
+    return bindings
+
+
+def test_pdf_end_to_end_prepare_finalize_write_verify_with_model_chosen_node_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prepare(pdf) -> finalize -> write -> verify succeeds when the writer
+    model assigns its own ``data-node-id`` values, distinct from the
+    ``text-{i}``/``image-{i}`` ids a prior version of this compiler assumed."""
+    from app.agent.deck_template_verification import verify_template_deck_snapshot
+
+    _patch_measure_slide(monkeypatch)
+    canvas_id = "thread-pdf-node-ids"
+    store = InMemoryCanvasStore()
+    data = text_pdf_source([[("Original title text", 100, 700)]])
+    store.write_bytes(canvas_id, "sources/deck.pdf", data, "Upload")
+
+    def _model_reconstruct(source):
+        # Node ids a real writer model would freely choose — deliberately
+        # not the text-{i}/image-{i} shape this compiler used to assume.
+        nodes = "".join(
+            f'<p data-node-id="model-chosen-node-{i}" data-text-block="true">{t["text"]}</p>'
+            for i, t in enumerate(source.texts)
+        )
+        return f"<section class='slide'>{nodes}</section>", []
+
+    prepared = prepare_template(
+        PrepareRequest(
+            mode="prepare",
+            source="sources/deck.pdf",
+            source_sha256=hashlib.sha256(data).hexdigest(),
+            pages=[1],
+        ),
+        store=store,
+        canvas_id=canvas_id,
+        reconstruct_pdf_page_fn=_model_reconstruct,
+    )
+    assert prepared["status"] == "candidate"
+    archetype = prepared["archetypes"][0]
+    assert archetype["slots"][0]["node_id"] == "model-chosen-node-0"
+
+    finalized = finalize_template(
+        FinalizeRequest(
+            mode="finalize",
+            candidate_ref=ArtifactRef(**prepared["candidate_ref"]),
+            bindings=_finalize_bindings_all(archetype),
+        ),
+        store=store,
+        canvas_id=canvas_id,
+        current_source_sha256=hashlib.sha256(data).hexdigest(),
+    )
+    assert finalized["status"] == "ready"
+
+    write_result = write_deck_from_template(
+        ArtifactRef(**finalized["template_ref"]),
+        "deck.slides.html",
+        "PDF Node Id Deck",
+        [
+            SlideContentRequest(
+                archetype_id=archetype["id"],
+                mode="verbatim",
+                slots={archetype["slots"][0]["key"]: "New title text"},
+            )
+        ],
+        _runtime(canvas_id),
+        store=store,
+        canvas_id=canvas_id,
+        writer_model="unused-model",
+    )
+    assert write_result["status"] == "ok"
+
+    verified = verify_template_deck_snapshot(
+        "deck.slides.html",
+        write_result["revision"],
+        store=store,
+        canvas_id=canvas_id,
+        judge_model="unused-judge-model",
+    )
+    assert verified["visual_fidelity"]["status"] == "verified", verified
+    assert verified["content"]["status"] == "verified", verified

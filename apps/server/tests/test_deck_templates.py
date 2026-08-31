@@ -698,7 +698,14 @@ def test_degraded_reconstruction_never_becomes_ready() -> None:
     store = _store_with("sources/deck.pdf", data)
 
     def _degraded_reconstruct(source: PdfPageSource) -> tuple[str, list[str]]:
-        return "<section class='slide'></section>", ["text_overflow"]
+        # One matching data-text-block node per census text object, so the
+        # only reconstruction issue this test asserts on is the injected
+        # "text_overflow" review finding, not a node-count mismatch.
+        nodes = "".join(
+            f'<p data-node-id="pdf-text-{i}" data-text-block="true">{t["text"]}</p>'
+            for i, t in enumerate(source.texts)
+        )
+        return f"<section class='slide'>{nodes}</section>", ["text_overflow"]
 
     prepared = prepare_template(
         PrepareRequest(mode="prepare", source="sources/deck.pdf", source_sha256=_sha256(data), pages=[1]),
@@ -822,3 +829,366 @@ def test_binding_cannot_mutate_frame_proof_or_budget() -> None:
                 "budget_consumed": {"elapsed_seconds": 0},
             }
         )
+
+
+# --- CV-P1-003: pre-planted content-addressed path cannot launder or block ------------
+
+
+def test_reprepare_after_unrelated_commit_reuses_same_candidate_commit() -> None:
+    """Re-preparing identical inputs after an unrelated commit returns the
+    original compiler commit (idempotent create-only), and still finalizes."""
+    data = _pptx_deck(["Only slide"])
+    store = _store_with("sources/deck.pptx", data)
+
+    first = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    store.write_bytes(CANVAS_ID, "sources/unrelated.pptx", _pptx_deck(["Other"]), "unrelated upload")
+
+    second = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    assert second["candidate_ref"] == first["candidate_ref"]
+
+    archetype = second["archetypes"][0]
+    finalize_result = finalize_template(
+        FinalizeRequest(
+            mode="finalize", candidate_ref=ArtifactRef(**second["candidate_ref"]),
+            bindings=_fully_bound(archetype),
+        ),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert finalize_result["status"] == "ready"
+
+
+def test_preplanted_human_actor_file_does_not_permanently_block_prepare() -> None:
+    """A pre-planted human/agent file at the deterministic candidate path
+    cannot be laundered into trusted compiler output, and does not
+    permanently block templating (no same-canvas DoS)."""
+    data = _pptx_deck(["Only slide"])
+
+    probe_store = InMemoryCanvasStore()
+    probe_store.write_bytes(CANVAS_ID, "sources/deck.pptx", data, "Upload")
+    probe = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=probe_store, canvas_id=CANVAS_ID,
+    )
+    squatted_path = probe["candidate_ref"]["path"]
+
+    store = _store_with("sources/deck.pptx", data)
+    store.write(CANVAS_ID, squatted_path, "not a real candidate manifest", "human plant", actor="human")
+
+    result = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+
+    assert result["status"] == "candidate"
+    ref = ArtifactRef(**result["candidate_ref"])
+    assert ref.path == squatted_path
+    # The squatted content is never adopted — the returned ref names a
+    # fresh compiler-authored revision, which reads back as a valid,
+    # trusted candidate.
+    manifest = require_trusted_artifact(store, CANVAS_ID, ref, expected_status="candidate")
+    assert manifest.source.path == "sources/deck.pptx"
+
+
+# --- EV-P1-002: finalize materializes ready manifest from bindings --------------------
+
+
+def _pptx_deck_with_three_text_nodes() -> bytes:
+    """A title (to bind variable), a legal footer (to retain), and a note (to omit)."""
+    deck = Presentation()
+    deck.slide_width = Inches(13.333)
+    deck.slide_height = Inches(7.5)
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    _explicit_white_background(slide)
+    title_box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    title_box.text_frame.text = "Original Title"
+    legal_box = slide.shapes.add_textbox(Inches(1), Inches(6), Inches(4), Inches(1))
+    legal_box.text_frame.text = "Legal footer text"
+    note_box = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(4), Inches(1))
+    note_box.text_frame.text = "Internal note to omit"
+    buffer = io.BytesIO()
+    deck.save(buffer)
+    return buffer.getvalue()
+
+
+def test_retain_and_omit_bindings_materialize_ready_manifest() -> None:
+    """A retain binding preserves its text verbatim in the ready frame; an
+    omit binding drops the node from both the manifest and the markup; a
+    variable binding becomes the only writer-fillable slot."""
+    from app.agent.deck_template_models import SlideContentRequest
+    from app.agent.deck_template_writer import write_deck_from_template
+
+    data = _pptx_deck_with_three_text_nodes()
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+    title_slot = next(s for s in archetype["slots"] if s["observed_lengths"]["chars"] == len("Original Title"))
+    legal_slot = next(s for s in archetype["slots"] if s["observed_lengths"]["chars"] == len("Legal footer text"))
+    note_slot = next(s for s in archetype["slots"] if s["observed_lengths"]["chars"] == len("Internal note to omit"))
+
+    bindings = [
+        VariableBinding(
+            archetype_id=archetype["id"], node_id=title_slot["node_id"], disposition="variable",
+            slot_key="title", role="title", required=True,
+        ),
+        RetainBinding(
+            archetype_id=archetype["id"], node_id=legal_slot["node_id"], disposition="retain",
+            retain_reason="legal",
+        ),
+        OmitBinding(archetype_id=archetype["id"], node_id=note_slot["node_id"], disposition="omit"),
+    ]
+
+    result = finalize_template(
+        FinalizeRequest(mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]), bindings=bindings),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert result["status"] == "ready"
+
+    ref = ArtifactRef(**result["template_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+    ready_archetype = manifest.archetypes[0]
+
+    assert [slot.key for slot in ready_archetype.slots] == ["title"]
+    retained = next(n for n in ready_archetype.static_nodes if n.node_id == legal_slot["node_id"])
+    assert retained.disposition == "retain"
+    assert retained.retain_reason == "legal"
+    assert not any(n.node_id == note_slot["node_id"] for n in ready_archetype.static_nodes)
+    assert "Internal note to omit" not in ready_archetype.frame_html
+    assert "Legal footer text" in ready_archetype.frame_html
+
+    from types import SimpleNamespace
+
+    write_result = write_deck_from_template(
+        ref,
+        "deck.slides.html",
+        "Retain Omit Deck",
+        [SlideContentRequest(archetype_id=ready_archetype.id, mode="verbatim", slots={"title": "New Title"})],
+        SimpleNamespace(stream_writer=None),
+        store=store, canvas_id=CANVAS_ID, writer_model="unused-model",
+    )
+    assert write_result["status"] == "ok"
+    written = store.read(CANVAS_ID, "deck.slides.html").content
+    assert "Legal footer text" in written
+    assert "Internal note to omit" not in written
+    assert "New Title" in written
+
+
+# --- EV-P1-003: real proof.source_to_frame correspondence -----------------------------
+
+
+def test_finalize_failure_leaves_no_ready_manifest() -> None:
+    """Any finalize failure path (here: an unresolved native table) writes
+    no ready manifest at all."""
+    data = _pptx_deck_with_native_table()
+    store = _store_with("sources/deck.pptx", data)
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+    result = finalize_template(
+        FinalizeRequest(
+            mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]),
+            bindings=_fully_bound(archetype),
+        ),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert result["status"] == "error"
+    assert not any(f.path.endswith(".template.json") for f in store.list_files(CANVAS_ID))
+
+
+def test_unclassified_business_text_blocks_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A source text object the pre-extraction census counted, but that
+    extraction silently dropped, blocks ready — the exact-coverage binding
+    check alone cannot catch this, since it only sees nodes the candidate
+    already has."""
+    data = _pptx_deck_with_text_and_image()
+    store = _store_with("sources/deck.pptx", data)
+
+    import app.agent.deck_templates as deck_templates_module
+
+    original_extract = deck_templates_module.extract_slides
+
+    def _dropping_extract(*args: Any, **kwargs: Any) -> Any:
+        extractions = original_extract(*args, **kwargs)
+        for extraction in extractions:
+            extraction.texts.clear()
+        return extractions
+
+    monkeypatch.setattr(deck_templates_module, "extract_slides", _dropping_extract)
+
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+    assert archetype["slots"] == []  # extraction dropped the census-counted text object
+    image_node = next(n for n in archetype["static_nodes"] if n["node_type"] == "image")
+
+    bindings = [
+        RetainBinding(
+            archetype_id=archetype["id"], node_id=image_node["node_id"], disposition="retain",
+            retain_reason="static",
+        ),
+    ]
+
+    result = finalize_template(
+        FinalizeRequest(mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]), bindings=bindings),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+
+    assert result["status"] == "error"
+    assert result["code"] == "unsupported_template"
+    assert not any(f.path.endswith(".template.json") for f in store.list_files(CANVAS_ID))
+
+
+# --- EV-P1-004: pinned image assets are hash-verified and embedded --------------------
+
+
+def test_asset_overwrite_cannot_change_pinned_render_or_export() -> None:
+    """A retained image's bytes are pinned and embedded as a data URI at
+    finalize time; overwriting the pinned store path afterward cannot
+    change what an already-instantiated frame renders or exports."""
+    from app.agent.deck_template_verification import _asset_and_font_issues
+
+    data = _pptx_deck_with_text_and_image()
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+
+    result = finalize_template(
+        FinalizeRequest(
+            mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]),
+            bindings=_fully_bound(archetype),
+        ),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert result["status"] == "ready"
+
+    ref = ArtifactRef(**result["template_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+    ready_archetype = manifest.archetypes[0]
+
+    assert ready_archetype.assets, "retained image must be pinned as an AssetRef"
+    asset = ready_archetype.assets[0]
+    assert asset.sha256 in ready_archetype.frame_html
+    assert "data:image/" in ready_archetype.frame_html
+
+    store.write_bytes(CANVAS_ID, asset.path, b"tampered bytes", "overwrite attempt", actor="human")
+
+    # The already-materialized ready frame never re-reads the pinned path —
+    # its bytes are already embedded — so neither its content nor
+    # verification's pinned-asset check is affected by the overwrite.
+    assert "data:image/" in ready_archetype.frame_html
+    assert asset.sha256 in ready_archetype.frame_html
+    assert _asset_and_font_issues(ready_archetype, ready_archetype.frame_html) == []
+
+
+# --- EV-P0-001: writing_style is actually populated at finalize -----------------------
+
+
+def test_style_rules_keep_role_evidence_and_unknown_font(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The style-profile stage runs through the shared budget and keeps
+    each rule's role/evidence — including an origin='unknown' (font) rule —
+    all the way into the ready manifest."""
+    from app.agent.deck_template_models import StyleEvidence, StyleProfileResponse, StyleRule
+    import app.agent.deck_templates as deck_templates_module
+
+    data = _pptx_deck(["Only slide"])
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+
+    calls: list[list[dict[str, str]]] = []
+
+    def _fake_invoke(writer_model: str, messages: list[dict[str, str]]) -> "StyleProfileResponse":
+        calls.append(messages)
+        return StyleProfileResponse(
+            rules=[
+                StyleRule(
+                    role="title", property="title_form", value="noun_phrase", origin="observed",
+                    evidence=[StyleEvidence(page=archetype["source_page"], snippet="Only slide")],
+                ),
+                StyleRule(role="title", property="font_family", value="unknown", origin="unknown"),
+            ]
+        )
+
+    monkeypatch.setattr(deck_templates_module, "_invoke_style_profile_model", _fake_invoke)
+
+    result = finalize_template(
+        FinalizeRequest(
+            mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]),
+            bindings=_fully_bound(archetype),
+        ),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert result["status"] == "ready"
+    assert calls, "the style-profile model must have been invoked from the shared budget path"
+
+    ref = ArtifactRef(**result["template_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+    ready_archetype = manifest.archetypes[0]
+    assert len(ready_archetype.writing_style) == 2
+    observed = next(r for r in ready_archetype.writing_style if r.origin == "observed")
+    assert observed.role == "title"
+    assert observed.evidence and observed.evidence[0].snippet == "Only slide"
+    unknown = next(r for r in ready_archetype.writing_style if r.origin == "unknown")
+    assert unknown.property == "font_family"
+
+
+def test_style_profiling_failure_leaves_ready_without_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A style-profile model failure/unavailability leaves an archetype's
+    writing_style empty and never blocks finalize."""
+    import app.agent.deck_templates as deck_templates_module
+
+    data = _pptx_deck(["Only slide"])
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]),
+        store=store, canvas_id=CANVAS_ID,
+    )
+    archetype = prepared["archetypes"][0]
+
+    def _boom(writer_model: str, messages: list[dict[str, str]]) -> Any:
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(deck_templates_module, "_invoke_style_profile_model", _boom)
+
+    result = finalize_template(
+        FinalizeRequest(
+            mode="finalize", candidate_ref=ArtifactRef(**prepared["candidate_ref"]),
+            bindings=_fully_bound(archetype),
+        ),
+        store=store, canvas_id=CANVAS_ID, current_source_sha256=_sha256(data),
+    )
+    assert result["status"] == "ready"
+
+    ref = ArtifactRef(**result["template_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+    assert manifest.archetypes[0].writing_style == []

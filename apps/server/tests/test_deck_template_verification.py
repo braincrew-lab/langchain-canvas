@@ -296,7 +296,11 @@ def test_verbatim_expectations_survive_publication(monkeypatch):
         "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
     )
     assert result["content"]["status"] == "verified", result
-    assert result["complete"] is True
+    # A verbatim instance has no new authored voice to judge — writing_style
+    # is not_checked (never vacuously verified), so `complete` is correctly
+    # False even though the one dimension this test targets (content) passed.
+    assert result["writing_style"]["status"] == "not_checked", result
+    assert result["complete"] is False
 
 
 def test_modified_expectations_and_hash_cannot_self_approve(monkeypatch):

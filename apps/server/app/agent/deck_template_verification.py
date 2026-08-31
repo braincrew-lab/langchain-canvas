@@ -451,12 +451,16 @@ def verify_template_deck_snapshot(
 
         if instance.request.mode == "verbatim":
             # Verbatim copies the original wording through unchanged — there is
-            # no new authored voice to judge, so writing_style is left alone
-            # rather than marked not_checked (a rewrite-only concept).
+            # no new authored voice to judge. Per plan U5 this is reported
+            # not_checked (a voice claim was never evaluated for this
+            # instance), never verified — a prior version left style_status
+            # untouched here, which vacuously stayed "verified" for a
+            # dimension nothing ever graded.
             mismatch_issues = _verbatim_content_issues(instance, actual_slots)
             content_issues.extend({**issue, "slide_id": slide_id} for issue in mismatch_issues)
             if mismatch_issues:
                 content_status = _worse(content_status, "failed")
+            style_status = _worse(style_status, "not_checked")
             continue
 
         if not instance.request.input_slots:
@@ -486,6 +490,14 @@ def verify_template_deck_snapshot(
             instance_style_status,
             instance_style_issues,
         ) = _evaluate_judge_result(judge, required_fact_ids)
+        if not writing_style:
+            # No observed style rule applied to this instance's roles at all
+            # (either the archetype's writing_style is empty — see the
+            # `_profile_writing_style` fix — or none matched the requested
+            # roles). `_evaluate_judge_result` reduces zero rules to
+            # "verified" by construction (nothing failed or was ambiguous),
+            # which is vacuous, not a real pass — force not_checked instead.
+            instance_style_status = "not_checked"
         content_status = _worse(content_status, instance_content_status)
         style_status = _worse(style_status, instance_style_status)
         content_issues.extend({**issue, "slide_id": slide_id} for issue in instance_content_issues)

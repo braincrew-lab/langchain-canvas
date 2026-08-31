@@ -261,6 +261,18 @@ class StyleRule(_Strict):
     evidence: Annotated[list[StyleEvidence], Field(max_length=16)] = []
 
 
+class StyleProfileResponse(_Strict):
+    """The style-profile model call's structured response (task 3's ticket #1 fix).
+
+    Wraps a plain ``rules`` list so ``model.with_structured_output`` has a
+    single schema to target; the caller stores ``rules`` on the archetype
+    unchanged (or ``[]`` on any budget/transport failure — see
+    ``deck_templates.py::_profile_writing_style``).
+    """
+
+    rules: Annotated[list[StyleRule], Field(max_length=64)] = []
+
+
 class Slot(_Strict):
     """One candidate node proposed as a writer-fillable slot."""
 

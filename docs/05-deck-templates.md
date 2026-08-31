@@ -240,6 +240,12 @@ Each dimension's `status` is one of:
 | `degraded` | Not a hard failure, but not fully proven either — an unresolved original font, or an unmeasurable geometry backend. Only ever applies to `visual_fidelity`. |
 | `not_checked` | The dimension could not be evaluated at all (missing original input slots, an unavailable or malformed runtime judge, an ambiguous judge finding). Never treated as a pass. |
 
+`writing_style` is `not_checked`, never vacuously `verified`, in two additional cases: every
+`verbatim` instance (no new authored voice exists to judge — the original wording is copied
+through unchanged), and any `rewrite` instance whose archetype has no observed style rule for the
+requested roles at all (an empty rule set means nothing was actually checked, not that everything
+passed).
+
 `complete=True` requires all three dimensions to be `verified` — a
 `degraded` or `not_checked` result on any dimension, or a saved deck with no
 verification run at all, is never reported as fully verified. A structural
