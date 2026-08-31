@@ -34,3 +34,26 @@ def test_system_prompt_orders_write_slides_before_write_slide_only() -> None:
     assert SYSTEM_PROMPT.index("write_slides") < SYSTEM_PROMPT.index(
         "write_slide only"
     )
+
+
+def test_system_prompt_names_the_four_template_tools() -> None:
+    for tool_name in (
+        "inspect_deck_patterns",
+        "define_deck_template",
+        "write_deck_from_template",
+        "verify_template_deck",
+    ):
+        assert tool_name in SYSTEM_PROMPT
+
+
+def test_system_prompt_orders_intent_priority_before_scratch_pipeline() -> None:
+    """Reproduction -> editing -> new-template priority precedes the scratch
+    plan_deck/write_slides pipeline guidance (plan U5's routing contract)."""
+    reproduction_index = SYSTEM_PROMPT.index("Exact reproduction of the uploaded document")
+    editing_index = SYSTEM_PROMPT.index("Editing or restyling content already on an existing deck")
+    new_template_index = SYSTEM_PROMPT.index(
+        "Reusing the source's page layout and writing style for a NEW topic"
+    )
+    scratch_pipeline_index = SYSTEM_PROMPT.index("For a new slide deck (presentation)")
+
+    assert reproduction_index < editing_index < new_template_index < scratch_pipeline_index

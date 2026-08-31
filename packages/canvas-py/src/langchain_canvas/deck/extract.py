@@ -120,13 +120,23 @@ class SlideExtraction:
     warnings: list[str] = field(default_factory=list)
 
 
-def extract_slides(data: bytes, *, path: str) -> list[SlideExtraction]:
+def extract_slides(
+    data: bytes, *, path: str, pages: list[int] | None = None
+) -> list[SlideExtraction]:
     """Parse presentation bytes into one :class:`SlideExtraction` per slide.
 
     Runs :func:`~langchain_canvas.converters.ensure_archive_within_limits`
     first — a zip-bomb refusal happens before any parser touches the bytes.
     Raises :class:`PptxImportError` when the bytes are not a readable
     presentation.
+
+    ``pages`` selects a 1-based subset to extract in detail — the template
+    compiler's U2 path, which only converts the sampled pages a candidate
+    was prepared from. ``None`` (the default) keeps extracting every slide,
+    unchanged from callers that predate page selection.
+    :attr:`SlideExtraction.index` always keeps the slide's original
+    zero-based position, whether or not a subset was selected, so a
+    selected page's provenance never shifts.
     """
     ensure_archive_within_limits(data, path=path)
     try:
@@ -146,7 +156,19 @@ def extract_slides(data: bytes, *, path: str) -> list[SlideExtraction]:
     if not width or not height:
         raise PptxImportError("the presentation declares no slide size")
 
-    return [_extract_slide(slide, index, width, height) for index, slide in enumerate(deck.slides)]
+    slides = list(deck.slides)
+    if pages is None:
+        selected_indices = list(range(len(slides)))
+    else:
+        if not pages or len(set(pages)) != len(pages):
+            raise PptxImportError("pages must be a non-empty list of unique page numbers")
+        if any(number < 1 or number > len(slides) for number in pages):
+            raise PptxImportError(f"pages must be in 1..{len(slides)}")
+        selected_indices = [number - 1 for number in pages]
+
+    return [
+        _extract_slide(slides[index], index, width, height) for index in selected_indices
+    ]
 
 
 def _image_bytes(shape: Any) -> tuple[bytes, str] | None:

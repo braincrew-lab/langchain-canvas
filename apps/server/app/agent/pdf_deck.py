@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
+from typing import TYPE_CHECKING
 
 from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
@@ -29,6 +30,9 @@ from .pdf_source import PdfPageSource, extract_pdf_pages
 from .render import measure_slide, pdf_text_styles, render_slide
 from .resilience import should_retry_model_call
 from .store import STORE
+
+if TYPE_CHECKING:
+    from .deck_template_models import TemplateBudget
 
 PDF_WRITER_SYSTEM = """You reconstruct a PDF page as editable HTML/CSS. Copy the supplied
 reference faithfully; do not summarize, redesign, add kickers, or impose a house style.
@@ -123,7 +127,15 @@ def write_pdf_html(
     previous: str | None = None,
     feedback: list[str] | None = None,
     rendered: bytes | None = None,
+    budget: "TemplateBudget | None" = None,
 ) -> str:
+    """Ask the writer model to (re)produce one PDF page as HTML.
+
+    ``budget`` is optional and defaults to ``None`` — legacy full-import
+    callers are unaffected. The template compile path passes a shared
+    :class:`~app.agent.deck_template_models.TemplateBudget`, which admits or
+    rejects the call (``reserve_model_call``) before the prompt is sent.
+    """
     if source.texts and "css_top" not in source.texts[0]:
         for text, style in zip(
             source.texts,
@@ -181,6 +193,9 @@ def write_pdf_html(
                 + "\n".join(feedback or []),
             }
         )
+    if budget is not None:
+        prompt_text = PDF_WRITER_SYSTEM + json.dumps(inventory, ensure_ascii=False)
+        budget.reserve_model_call(prompt_text=prompt_text, max_response_tokens=8_000)
     return _invoke(PDF_WRITER_SYSTEM, content)
 
 
@@ -334,7 +349,16 @@ def review_pdf_html(source: PdfPageSource, rendered: bytes) -> list[str]:
     return issues
 
 
-def reconstruct_pdf_page(source: PdfPageSource) -> tuple[str, list[str]]:
+def reconstruct_pdf_page(
+    source: PdfPageSource, *, budget: "TemplateBudget | None" = None
+) -> tuple[str, list[str]]:
+    """(Re)build one PDF page's HTML, retrying against layout/visual feedback.
+
+    ``budget`` is optional and defaults to ``None`` — the legacy full-import
+    path is unaffected. The template compile path passes a shared
+    :class:`~app.agent.deck_template_models.TemplateBudget`; each writer
+    call, ``render_slide``, and ``measure_slide`` is bounded by it.
+    """
     ratio = f"{source.width}:{source.height}"
     previous = None
     feedback: list[str] = []
@@ -342,14 +366,18 @@ def reconstruct_pdf_page(source: PdfPageSource) -> tuple[str, list[str]]:
     screenshot: bytes | None = None
     for attempt in range(3):
         previous = write_pdf_html(
-            source, previous=previous, feedback=feedback, rendered=screenshot
+            source, previous=previous, feedback=feedback, rendered=screenshot, budget=budget
         )
         try:
             clean = prepare_pdf_html(previous, source)
             height = round(1280 * source.height / source.width)
             inlined = inline_pdf_images(clean, source)
             doc = f'<html><head><meta charset="utf-8"><style>html,body{{margin:0;width:1280px;height:{height}px}}*{{box-sizing:border-box}}</style></head><body>{inlined}</body></html>'
-            metrics, screenshot = render_slide(doc, ratio=ratio)
+            if budget is not None:
+                with budget.run_stage(f"render_slide_pdf_page_{source.number}"):
+                    metrics, screenshot = render_slide(doc, ratio=ratio)
+            else:
+                metrics, screenshot = render_slide(doc, ratio=ratio)
             if (
                 metrics.get("brokenImages")
                 or metrics.get("offCanvas")
@@ -366,7 +394,11 @@ def reconstruct_pdf_page(source: PdfPageSource) -> tuple[str, list[str]]:
                     + json.dumps(missing[:12], ensure_ascii=False)
                 )
             last_valid = clean
-            feedback = text_geometry_feedback(source, measure_slide(doc, ratio=ratio))
+            if budget is not None:
+                with budget.run_stage(f"measure_slide_pdf_page_{source.number}"):
+                    feedback = text_geometry_feedback(source, measure_slide(doc, ratio=ratio))
+            else:
+                feedback = text_geometry_feedback(source, measure_slide(doc, ratio=ratio))
             try:
                 feedback += review_pdf_html(source, screenshot)
             except Exception as exc:  # noqa: BLE001 — retain HTML at the review-service boundary

@@ -33,6 +33,7 @@ from .sanitize import (
     SanitizeResult,
     sanitize_slide_html,
 )
+from .template_metadata import TemplateMetadataError, validate_template_metadata
 from .validate import (
     DeckIssue,
     TextIntegrityError,
@@ -60,6 +61,7 @@ __all__ = [
     "ShapeGeom",
     "SlideExtraction",
     "SlideTemplate",
+    "TemplateMetadataError",
     "TextIntegrityError",
     "TextRun",
     "baseline_slide_html",
@@ -77,4 +79,5 @@ __all__ = [
     "skin_presentation",
     "validate_deck",
     "validate_slide_html",
+    "validate_template_metadata",
 ]

@@ -18,7 +18,7 @@ from pptx.util import Inches
 
 from langchain_canvas.converters import UnsafeArchiveError
 from langchain_canvas.deck.baseline import baseline_slide_html
-from langchain_canvas.deck.extract import extract_slides, extracted_text
+from langchain_canvas.deck.extract import PptxImportError, extract_slides, extracted_text
 from langchain_canvas.deck.validate import ensure_text_equality, validate_slide_html
 
 # A real 1x1 red PNG — small enough to inline, real enough for pptx to embed.
@@ -79,6 +79,50 @@ def test_extract_slides_returns_text_geometry_assets() -> None:
     assert slide.images[0].data == _PNG
     assert slide.images[0].ext == "png"
     assert len(slide.images[0].sha) == 64  # sha256 hex digest
+
+
+def test_selected_pages_preserve_original_index_and_default_all() -> None:
+    """`pages` extracts only the selected 1-based slides, index stays 0-based."""
+
+    def build_deck() -> bytes:
+        deck = Presentation()
+        deck.slide_width = Inches(13.333)
+        deck.slide_height = Inches(7.5)
+        for label in ("Slide 1", "Slide 2", "Slide 3"):
+            slide = deck.slides.add_slide(deck.slide_layouts[6])
+            _textbox(slide, label)
+        buffer = io.BytesIO()
+        deck.save(buffer)
+        return buffer.getvalue()
+
+    data = build_deck()
+
+    full = extract_slides(data, path="sources/deck.pptx")
+    assert [run.text for slide in full for run in slide.texts] == [
+        "Slide 1",
+        "Slide 2",
+        "Slide 3",
+    ]
+
+    selected = extract_slides(data, path="sources/deck.pptx", pages=[3, 1])
+    assert [slide.index for slide in selected] == [2, 0]
+    assert [run.text for slide in selected for run in slide.texts] == [
+        "Slide 3",
+        "Slide 1",
+    ]
+
+
+def test_selected_pages_reject_empty_duplicate_and_out_of_range() -> None:
+    data = _deck(lambda s: _textbox(s, "Only slide"))
+
+    with pytest.raises(PptxImportError, match="non-empty"):
+        extract_slides(data, path="sources/deck.pptx", pages=[])
+
+    with pytest.raises(PptxImportError, match="unique"):
+        extract_slides(data, path="sources/deck.pptx", pages=[1, 1])
+
+    with pytest.raises(PptxImportError, match="1..1"):
+        extract_slides(data, path="sources/deck.pptx", pages=[2])
 
 
 def test_extract_rejects_zip_bomb() -> None:

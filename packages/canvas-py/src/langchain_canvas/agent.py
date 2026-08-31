@@ -63,6 +63,33 @@ scratch files there (no notes.md, no "getting started" page) — every file
 becomes a tab the person has to look past.
 """.strip()
 
+# Named only when the caller actually bound all four source-grounded-template
+# tools (see `app/agent/deck_template_tools.py`) — an app without them never
+# sees this path mentioned, since the tools would not resolve.
+_TEMPLATE_TOOL_NAMES = frozenset(
+    {
+        "inspect_deck_patterns",
+        "define_deck_template",
+        "write_deck_from_template",
+        "verify_template_deck",
+    }
+)
+
+_TEMPLATE_GUIDANCE = """
+When a request wants a specific uploaded document's page layout and writing
+style reused for a new topic or a different slide count (not an exact
+reproduction, not an edit of an existing deck), use this sequence instead of
+building a deck from scratch: inspect_deck_patterns to see the source's
+repeated page groups, define_deck_template(mode='prepare', ...) then
+define_deck_template(mode='finalize', ...) to lock a reusable ready
+template, write_deck_from_template to fill it with new content, and
+verify_template_deck to check the result before reporting success.
+""".strip()
+
+
+def _tool_names(tools: Sequence[Callable[..., Any] | Any]) -> set[str]:
+    return {name for t in tools if (name := getattr(t, "name", None))}
+
 
 def create_canvas_agent(
     model: str | Any,
@@ -84,7 +111,10 @@ def create_canvas_agent(
     Returns:
         A compiled LangGraph agent; stream it with ``langchain_canvas.sse_from_agent``.
     """
-    prompt = CANVAS_GUIDANCE if not system_prompt else f"{system_prompt}\n\n{CANVAS_GUIDANCE}"
+    guidance = CANVAS_GUIDANCE
+    if _TEMPLATE_TOOL_NAMES <= _tool_names(tools or []):
+        guidance = f"{guidance}\n\n{_TEMPLATE_GUIDANCE}"
+    prompt = guidance if not system_prompt else f"{system_prompt}\n\n{guidance}"
     # Interrupted tool runs leave orphaned tool_calls in the checkpoint; repair
     # them before every model call so the thread stays usable.
     middleware = [repair_tool_history, *kwargs.pop("middleware", [])]

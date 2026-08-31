@@ -65,6 +65,7 @@ from .deck_batch import (
     invoke_writer_with_retry,
 )
 from .deck_editing import create_deck_editing_tools
+from .deck_template_tools import create_deck_template_tools
 from .exports import app_exporters
 from .pdf_deck import open_pdf_as_slides
 from .render import render_slide
@@ -672,6 +673,7 @@ CANVAS_TOOLS = [
     *_DECK_TOOLS,
     *create_deck_editing_tools(STORE, edit_tool=_edit_deck_slide),
     *create_deck_advanced_tools(STORE),
+    *create_deck_template_tools(STORE),
     create_asset_tool(STORE),
     create_export_tool(STORE, exporters=app_exporters()),
     create_check_table_tool(

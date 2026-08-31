@@ -485,6 +485,11 @@ class DeckPptxExporter:
             deck = parse_deck(content)
         except DeckParseError as exc:
             raise ValueError(f"{path} does not contain a valid deck: {exc}") from exc
+        if deck.template is not None:
+            raise ValueError(
+                "unsupported_template_export: source-grounded template decks are exported "
+                "through the app's native EditableDeckPptxExporter, not this SDK exporter"
+            )
 
         self.degraded_nodes = []
         canvas_px = _CANVAS_PX.get(deck.ratio, _DEFAULT_CANVAS_PX)

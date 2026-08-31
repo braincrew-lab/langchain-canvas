@@ -1425,7 +1425,13 @@ def inline_deck_skin(content: str, store: CanvasStore, canvas_id: str) -> str:
         return content
     encoded = base64.b64encode(raw).decode()
     new_source = f"data:{PPTX_MIME};base64,{encoded}"
-    patched = Deck(title=deck.title, ratio=deck.ratio, source=new_source, slides=deck.slides)
+    patched = Deck(
+        title=deck.title,
+        ratio=deck.ratio,
+        source=new_source,
+        slides=deck.slides,
+        template=deck.template,
+    )
     return serialize_deck(patched)
 
 

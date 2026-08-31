@@ -86,11 +86,35 @@ so an agent author writes ordinary tools and gets a live canvas for free.
 
 | path                       | role                                                            |
 | -------------------------- | --------------------------------------------------------------- |
-| `packages/canvas-py`       | Backend SDK: protocol types, emitter, canvas tools, agent, SSE  |
+| `packages/canvas-py`       | Backend SDK: protocol types, emitter, canvas tools, agent, SSE, deterministic deck extraction/selection/canonical HTML and `lcx:template` metadata preservation |
 | `packages/canvas-react`    | Frontend SDK: protocol types, SSE client, reconciler, store, registry, components |
-| `apps/server`              | Reference FastAPI app wiring an agent with example tools        |
+| `apps/server`              | Reference FastAPI app wiring an agent with example tools, plus the source-grounded slide-template model calls, template compile/write/verification |
 | `apps/web`                 | Reference Next.js app with a chat + canvas UI                   |
-| `docs/`                    | Architecture (this file), the wire protocol, getting started    |
+| `docs/`                    | Architecture (this file), the wire protocol, getting started, slide templates |
+
+### Source-grounded slide templates — package split
+
+Reusing an uploaded PDF/PPTX's page layout and writing style for a new deck
+(distinct from reproducing the original file or editing an existing deck —
+see [`05-deck-templates.md`](05-deck-templates.md)) follows the same SDK/app
+split as the rest of this repo:
+
+- **`packages/canvas-py`** owns everything deterministic and model-free: page
+  census (`deck/source_inventory.py`), representative-page selection
+  (`deck/patterns.py`), selected-page extraction (`deck/extract.py`,
+  `deck/baseline.py`), and the `Deck.template`/`lcx:template` canonical
+  metadata shape (`deck/template_metadata.py`, `deck/model.py`) — the neutral
+  connective tissue between a pinned template artifact and the deck instances
+  filled from it.
+- **`apps/server`** owns everything that calls a model or writes a store
+  artifact: the writer-model calls for PDF page reconstruction and slide
+  rewriting, template compilation (`prepare`/`finalize` in
+  `agent/deck_templates.py`), the ordered slot writer (`agent/deck_template_writer.py`),
+  and post-write verification (`agent/deck_template_verification.py`).
+
+No new database, LangGraph node, provider, API endpoint, or wire streaming
+event is introduced — templates are ordinary content-addressed JSON files in
+the same `CanvasStore` every other artifact uses.
 
 ## Extension points
 

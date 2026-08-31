@@ -26,14 +26,18 @@ even though today's stdlib behavior does not require extra code for it.
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+
+from .template_metadata import MAX_METADATA_BYTES
 
 SLIDES_HTML_SUFFIX = ".slides.html"
 DECK_DIALECT_VERSION = "1"
 
 _SOURCE_META_NAME = "lcx:source"
+_TEMPLATE_META_NAME = "lcx:template"
 
 
 class DeckParseError(ValueError):
@@ -63,6 +67,7 @@ class Deck:
     ratio: str
     source: str | None
     slides: list[SlideTemplate] = field(default_factory=list)
+    template: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,7 @@ class _DeckParser(HTMLParser):
         self.ratio = "16:9"
         self.title = ""
         self.source: str | None = None
+        self.template: dict | None = None
         self.slides: list[SlideTemplate] = []
         self.spans: list[_SlideSpan] = []
         self._template_depth = 0
@@ -120,6 +126,21 @@ class _DeckParser(HTMLParser):
             self.ratio = attr_map.get("data-ratio") or self.ratio
         elif lowered == "meta" and (attr_map.get("name") or "").lower() == _SOURCE_META_NAME:
             self.source = attr_map.get("content")
+        elif lowered == "meta" and (attr_map.get("name") or "").lower() == _TEMPLATE_META_NAME:
+            if self.template is not None:
+                raise DeckParseError("deck HTML has duplicate lcx:template metadata")
+            content = attr_map.get("content")
+            if content is None:
+                raise DeckParseError("lcx:template metadata is missing its content attribute")
+            if len(content.encode("utf-8")) > MAX_METADATA_BYTES:
+                raise DeckParseError(f"lcx:template metadata exceeds {MAX_METADATA_BYTES} bytes")
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as exc:
+                raise DeckParseError(f"lcx:template metadata is not valid JSON: {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise DeckParseError("lcx:template metadata must be a JSON object")
+            self.template = parsed
         elif lowered == "title" and self._template_depth == 0:
             self._capture_title = True
             self._title_chars = []
@@ -190,6 +211,7 @@ def parse_deck(deck_html: str) -> Deck:
         ratio=parser.ratio,
         source=parser.source,
         slides=list(parser.slides),
+        template=parser.template,
     )
 
 
@@ -218,6 +240,12 @@ def serialize_deck(deck: Deck) -> str:
     if deck.source:
         source_attr = html_lib.escape(deck.source, quote=True)
         lines.append(f'<meta name="{_SOURCE_META_NAME}" content="{source_attr}">')
+    if deck.template is not None:
+        template_json = json.dumps(deck.template, ensure_ascii=False, separators=(",", ":"))
+        if len(template_json.encode("utf-8")) > MAX_METADATA_BYTES:
+            raise DeckParseError(f"lcx:template metadata exceeds {MAX_METADATA_BYTES} bytes")
+        template_attr = html_lib.escape(template_json, quote=True)
+        lines.append(f'<meta name="{_TEMPLATE_META_NAME}" content="{template_attr}">')
     lines.append("</head>")
     lines.append("<body>")
     for slide in deck.slides:

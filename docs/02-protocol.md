@@ -127,6 +127,55 @@ New artifact types are added by (1) defining a data shape here, (2) mirroring it
 in both `protocol` modules, and (3) registering a renderer on the frontend. No
 change to the transport or the reconciler is needed.
 
+### Additive template provenance metadata
+
+A `slides` deck's HTML may carry one additional, optional
+`<meta name="lcx:template" content="ESCAPED_JSON">` tag inside `<head>`. It is
+written only by the source-grounded slide-template writer (see
+[`05-deck-templates.md`](05-deck-templates.md)) and is transparent to every
+other consumer: a deck without this tag — every deck produced before this
+feature, and every deck produced by the existing full-reproduction or editing
+paths — parses, serializes, patches, and reorders exactly as before.
+
+```json
+{
+  "schema_version": 1,
+  "template": { "path": "templates/<hash>.template.json", "revision": "r7", "sha256": "<hash>" },
+  "instances": {
+    "slide-001": {
+      "archetype_id": "body",
+      "source_page": 7,
+      "slot_content_sha256": "<hash>",
+      "request": {
+        "mode": "verbatim",
+        "locale": "ko",
+        "required_facts": [{ "id": "f1", "text": "original requested fact" }],
+        "input_slots": { "body": ["exact run to preserve"] },
+        "verbatim_expectations": { "body": ["exact run to preserve"] }
+      },
+      "fact_to_slot": { "f1": "body" }
+    }
+  }
+}
+```
+
+Rules:
+
+- `schema_version` is always `1`; the payload is capped at 256 KiB.
+- `template` is a ref (`path`/`revision`/`sha256`) to the pinned `ready`
+  template artifact the instances were filled from — never the original
+  source file.
+- `instances` is keyed by **slide id**, never by list ordinal, so reordering
+  slides in the UI never desyncs an instance's provenance from its slide.
+- `request.mode` is `verbatim` or `rewrite`. `input_slots` is required in
+  both modes; `verbatim_expectations` is required for `verbatim` and omitted
+  for `rewrite`.
+- The metadata carries only refs, facts, and requested slot text — it never
+  carries model output HTML/CSS or an asset's raw bytes.
+- A duplicate `lcx:template` tag, invalid JSON, an oversize payload, or a
+  field outside this shape is a parse error — the deck fails to load rather
+  than silently dropping or guessing at the metadata.
+
 ## What to emit per type — copy-paste examples
 
 Each artifact renders through the component its `type` selects. **Ship structured

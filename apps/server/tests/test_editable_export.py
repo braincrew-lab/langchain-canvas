@@ -136,6 +136,53 @@ def test_source_decks_fail_closed_for_unresolved_invalid_count_and_provenance():
         EditableDeckPptxExporter().export(content, path="empty.slides.html")
 
 
+def test_ten_template_instances_export_editable_without_old_source_objects():
+    from app.agent.deck_template_writer import ArchetypeFrame, instantiate_archetype
+
+    frame = ArchetypeFrame(
+        archetype_id="body",
+        style_css=".slide { color: #111827; }",
+        body_html=(
+            '<section class="slide">'
+            '<p data-node-id="node-headline">OLD_HEADLINE</p>'
+            '<p data-node-id="node-body">OLD_BODY</p>'
+            '<div class="rect" data-pptx-shape-id="e0" '
+            'style="position:absolute;left:20px;top:200px;width:100px;height:60px;'
+            'background:#334155"></div>'
+            "</section>"
+        ),
+        slot_node_ids={"headline": "node-headline", "body": "node-body"},
+    )
+    source_business_text = frozenset({"OLD_HEADLINE", "OLD_BODY"})
+    slides = [
+        instantiate_archetype(
+            frame,
+            index,
+            {"headline": f"Headline {index}", "body": f"Body {index}"},
+            source_business_text=source_business_text,
+        )
+        for index in range(1, 11)
+    ]
+    content = serialize_deck(Deck("Generated", "16:9", None, slides))
+
+    result = EditableDeckPptxExporter().export(content, path="deck.slides.html")
+
+    reopened = Presentation(io.BytesIO(result.data))
+    assert len(reopened.slides) == 10
+    all_text = " ".join(
+        run.text
+        for slide in reopened.slides
+        for shape in slide.shapes
+        if shape.has_text_frame
+        for paragraph in shape.text_frame.paragraphs
+        for run in paragraph.runs
+    )
+    assert "OLD_HEADLINE" not in all_text
+    assert "OLD_BODY" not in all_text
+    assert "Headline 1" in all_text
+    assert "Body 10" in all_text
+
+
 def test_unsupported_gradient_and_fragment_contract_fail_clearly():
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])

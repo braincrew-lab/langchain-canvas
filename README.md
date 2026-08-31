@@ -174,6 +174,10 @@ Under the hood it rides LangChain 1.x's native custom-stream channel
 - 📊 **Charts** & 📋 **tables** — line/bar/area/pie and sticky-header grids over tidy rows.
 - 📦 **Export to files** — any artifact → self-contained **`.html`**, plus `.md` / `.csv` / `.json`.
 - 🗂️ **Tabs + versioning** — switch between artifacts; page through every version.
+- 🧬 **Source-grounded slide templates** — reuse an uploaded PDF/PPTX's page
+  layout and writing style to write a brand-new deck with a different topic
+  or slide count, without touching the original file's content. See
+  [docs/05-deck-templates.md](docs/05-deck-templates.md).
 - 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`, or use the reconciler/SSE client with your own UI.
 - 🧵 **Typed on both ends** — Pydantic and TypeScript mirror one wire protocol.
 
@@ -219,6 +223,8 @@ Three steps, zero transport changes:
 - [Architecture](docs/01-architecture.md) — the boundaries and why they exist.
 - [Wire protocol](docs/02-protocol.md) — every event and its reconciliation effect.
 - [Getting started](docs/03-getting-started.md) — copy-paste, front to back.
+- [Source-grounded slide templates](docs/05-deck-templates.md) — reuse an
+  uploaded deck's layout and writing style for a new deck.
 - [Contributing](CONTRIBUTING.md).
 
 ## Roadmap

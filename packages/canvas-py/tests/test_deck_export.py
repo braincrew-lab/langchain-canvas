@@ -209,3 +209,74 @@ def test_export_reopen_validation_fails_on_slide_count_mismatch():
 
     with pytest.raises(ValueError):
         _verify_reopen(buffer.getvalue(), expected_slide_count=2)
+
+
+def test_sdk_template_export_rejected_and_legacy_unchanged():
+    slide = SlideTemplate(
+        slide_id="slide-001",
+        title=None,
+        style_css="",
+        body_html=_slide_html(_text_node("node-1", "Hello")),
+    )
+    template_payload = {
+        "schema_version": 1,
+        "template": {"path": "templates/h.template.json", "revision": "r7", "sha256": "abc"},
+        "instances": {},
+    }
+    template_content = serialize_deck(
+        Deck(title="Deck", ratio="16:9", source=None, slides=[slide], template=template_payload)
+    )
+
+    with pytest.raises(ValueError, match="unsupported_template_export"):
+        DeckPptxExporter().export(template_content, path="deck.slides.html")
+
+    legacy_content = _deck_content(slide)
+    result = DeckPptxExporter().export(legacy_content, path="deck.slides.html")
+    reopened = Presentation(io.BytesIO(result.data))
+    assert len(reopened.slides) == 1
+    assert reopened.slides[0].shapes[0].text_frame.text == "Hello"
+
+
+def _skin_pptx_bytes_with_slides(count: int) -> bytes:
+    presentation = Presentation()
+    presentation.slide_width = Inches(10)
+    presentation.slide_height = Inches(5.625)
+    for index in range(count):
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(1))
+        box.text_frame.text = f"Original {index}"
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
+def _skin_uri_with_slides(count: int) -> str:
+    encoded = base64.b64encode(_skin_pptx_bytes_with_slides(count)).decode()
+    return f"data:{PPTX_MIME};base64,{encoded}"
+
+
+def test_legacy_source_count_increase_and_decrease_preserved():
+    slide_a = SlideTemplate(
+        slide_id="slide-001",
+        title=None,
+        style_css="",
+        body_html=_slide_html(_text_node("node-1", "A")),
+    )
+    slide_b = SlideTemplate(
+        slide_id="slide-002",
+        title=None,
+        style_css="",
+        body_html=_slide_html(_text_node("node-2", "B")),
+    )
+
+    # Increase: 1 source slide, 2 deck slides — one is added fresh.
+    increase_content = _deck_content(slide_a, slide_b, source=_skin_uri_with_slides(1))
+    increased = DeckPptxExporter().export(increase_content, path="deck.slides.html")
+    reopened_increase = Presentation(io.BytesIO(increased.data))
+    assert len(reopened_increase.slides) == 2
+
+    # Decrease: 2 source slides, 1 deck slide — the extra source slide is dropped.
+    decrease_content = _deck_content(slide_a, source=_skin_uri_with_slides(2))
+    decreased = DeckPptxExporter().export(decrease_content, path="deck.slides.html")
+    reopened_decrease = Presentation(io.BytesIO(decreased.data))
+    assert len(reopened_decrease.slides) == 1

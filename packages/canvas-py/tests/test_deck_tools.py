@@ -277,3 +277,49 @@ def test_edit_deck_slide_broadcasts_slide_patch() -> None:
     assert patches[0]["slideId"] == slide_id
     assert "Updated" in patches[0]["templateHtml"]
     assert any(e.get("type") == "canvas.commit" for e in sent)
+
+
+def test_inline_skin_preserves_template_metadata():
+    from langchain_canvas.deck import Deck, SlideTemplate, parse_deck, serialize_deck
+    from langchain_canvas.tools import inline_deck_skin
+
+    payload = {
+        "schema_version": 1,
+        "template": {"path": "templates/h.template.json", "revision": "r7", "sha256": "abc"},
+        "instances": {
+            "slide-001": {
+                "archetype_id": "body",
+                "source_page": 7,
+                "slot_content_sha256": "deadbeef",
+                "request": {
+                    "mode": "verbatim",
+                    "locale": "ko",
+                    "required_facts": [],
+                    "input_slots": {"body": ["run"]},
+                    "verbatim_expectations": {"body": ["run"]},
+                },
+                "fact_to_slot": {},
+            }
+        },
+    }
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/deck.pptx", b"not-a-real-pptx", "Upload", actor="human")
+    slide = SlideTemplate(
+        slide_id="slide-001",
+        title=None,
+        style_css="",
+        body_html='<section class="slide"><p data-node-id="n">Text</p></section>',
+    )
+    content = serialize_deck(
+        Deck(
+            title="Deck",
+            ratio="16:9",
+            source="sources/deck.pptx",
+            slides=[slide],
+            template=payload,
+        )
+    )
+
+    inlined = inline_deck_skin(content, store, "t1")
+
+    assert parse_deck(inlined).template == payload

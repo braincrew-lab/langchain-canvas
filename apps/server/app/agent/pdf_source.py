@@ -7,6 +7,10 @@ import hashlib
 import io
 from dataclasses import dataclass, field
 from threading import Lock
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .deck_template_models import TemplateBudget
 
 _PDF_LOCK = Lock()
 
@@ -26,7 +30,7 @@ class PdfPageSource:
 
 
 def extract_pdf_pages(
-    data: bytes, pages: list[int] | None = None
+    data: bytes, pages: list[int] | None = None, *, budget: "TemplateBudget | None" = None
 ) -> list[PdfPageSource]:
     """Extract positioned text and original image objects, plus a visual reference.
 
@@ -34,6 +38,12 @@ def extract_pdf_pages(
     HTML renderer uses. Page screenshots are sent to the model only. A scanned
     page's full-page image is not offered as a reusable asset: its words must
     be transcribed by the vision model into native HTML.
+
+    ``budget`` is optional and defaults to ``None`` — legacy callers (the
+    full PDF import path) are unaffected. When given (the template compile
+    path), each page's render is bounded by
+    ``budget.run_stage``, checked before and after — see
+    ``deck_template_models.py::TemplateBudget``.
     """
     import pypdfium2 as pdfium
     from pypdfium2 import raw
@@ -58,7 +68,11 @@ def extract_pdf_pages(
             try:
                 width, height = page.get_size()
                 scale = 1280 / width
-                bitmap = page.render(scale=scale)
+                if budget is not None:
+                    with budget.run_stage(f"pdf_render_page_{number}"):
+                        bitmap = page.render(scale=scale)
+                else:
+                    bitmap = page.render(scale=scale)
                 try:
                     output = io.BytesIO()
                     bitmap.to_pil().save(output, format="PNG")

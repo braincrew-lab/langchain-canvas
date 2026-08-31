@@ -7,14 +7,18 @@ a ``.slides.json`` deck, per the plan's "정본 덱 다이얼렉트" change unit
 
 from __future__ import annotations
 
+import pytest
+
 from langchain_canvas.deck import (
     DECK_DIALECT_VERSION,
     Deck,
+    DeckParseError,
     SlideTemplate,
     TextIntegrityError,
     ensure_text_equality,
     parse_deck,
     patch_slide,
+    reorder_slides,
     sanitize_slide_html,
     serialize_deck,
     validate_deck,
@@ -285,3 +289,100 @@ def test_suffix_dispatch_slides_html_wins_over_html() -> None:
     lowered = path.lower()
     assert lowered.endswith((".html", ".htm"))
     assert not lowered.endswith(".slides.json")
+
+
+def _template_payload(slide_id: str = "slide-001") -> dict:
+    return {
+        "schema_version": 1,
+        "template": {"path": "templates/h.template.json", "revision": "r7", "sha256": "abc123"},
+        "instances": {
+            slide_id: {
+                "archetype_id": "body",
+                "source_page": 7,
+                "slot_content_sha256": "deadbeef",
+                "request": {
+                    "mode": "verbatim",
+                    "locale": "ko",
+                    "required_facts": [{"id": "f1", "text": "원래 요청 사실"}],
+                    "input_slots": {"body": ["정확히 보존할 run"]},
+                    "verbatim_expectations": {"body": ["정확히 보존할 run"]},
+                },
+                "fact_to_slot": {"f1": "body"},
+            }
+        },
+    }
+
+
+def test_template_metadata_roundtrip_and_legacy_default() -> None:
+    payload = _template_payload()
+    deck = Deck(
+        title="Deck", ratio="16:9", source=None, slides=[_slide("slide-001")], template=payload
+    )
+
+    html = serialize_deck(deck)
+    parsed = parse_deck(html)
+
+    assert parsed.template == payload
+
+    legacy_deck = Deck(title="Deck", ratio="16:9", source=None, slides=[_slide("slide-001")])
+    legacy = parse_deck(serialize_deck(legacy_deck))
+    assert legacy.template is None
+
+
+def test_patch_and_reorder_preserve_template_metadata() -> None:
+    payload = _template_payload()
+    deck = Deck(
+        title="Deck",
+        ratio="16:9",
+        source=None,
+        slides=[_slide("slide-001"), _slide("slide-002")],
+        template=payload,
+    )
+    html = serialize_deck(deck)
+
+    patched = patch_slide(
+        html,
+        "slide-002",
+        '<template data-slide-id="slide-002">'
+        '<section class="slide"><p data-node-id="n">Changed</p></section>'
+        "</template>",
+    )
+    assert parse_deck(patched).template == payload
+
+    reordered = reorder_slides(html, ["slide-002", "slide-001"])
+    assert parse_deck(reordered).template == payload
+    assert [s.slide_id for s in parse_deck(reordered).slides] == ["slide-002", "slide-001"]
+
+
+def test_bad_or_oversized_template_metadata_rejected() -> None:
+    base = serialize_deck(
+        Deck(title="Deck", ratio="16:9", source=None, slides=[_slide("slide-001")])
+    )
+    duplicated = base.replace(
+        "</head>",
+        '<meta name="lcx:template" content="{}"><meta name="lcx:template" content="{}"></head>',
+    )
+    with pytest.raises(DeckParseError):
+        parse_deck(duplicated)
+
+    bad_json = base.replace(
+        "</head>", '<meta name="lcx:template" content="not-json"></head>'
+    )
+    with pytest.raises(DeckParseError):
+        parse_deck(bad_json)
+
+    oversized_payload = {
+        "schema_version": 1,
+        "template": {"path": "p", "revision": "r", "sha256": "s" * 300000},
+        "instances": {},
+    }
+    with pytest.raises(DeckParseError):
+        serialize_deck(
+            Deck(
+                title="Deck",
+                ratio="16:9",
+                source=None,
+                slides=[_slide("slide-001")],
+                template=oversized_payload,
+            )
+        )

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "description": "Golden intent/route/fidelity cases for the source-grounded slide template workflow. Documents are generated in-process by template_source_fixtures.py; this file records case metadata and the deterministic outcome each case must produce, in both the CI fake-model suite (test_template_workflow.py) and the opt-in live suite (test_template_workflow_live.py).",
+  "cases": [
+    {
+      "id": "korean-noun-phrase-new-template",
+      "intent": "new_template",
+      "locale": "ko",
+      "title_style": "noun_phrase",
+      "body_style": "descriptive_sentence",
+      "description": "새 주제, 명사형 제목과 서술형 본문 — 원본 페이지 양식을 새 내용으로 재사용.",
+      "expected_route": ["inspect_deck_patterns", "define_deck_template", "define_deck_template", "write_deck_from_template", "verify_template_deck"],
+      "expected_slide_count": 10
+    },
+    {
+      "id": "repeated-pages-across-roles",
+      "intent": "new_template",
+      "locale": "ko",
+      "description": "같은 role(body)의 페이지가 덱 안에서 비연속적으로 반복됨 — census 그룹의 member_pages가 비연속이어야 한다.",
+      "expected_route": ["inspect_deck_patterns", "define_deck_template", "define_deck_template", "write_deck_from_template", "verify_template_deck"]
+    },
+    {
+      "id": "reproduction-request",
+      "intent": "reproduction",
+      "locale": "ko",
+      "description": "원본을 그대로 재현해 달라는 요청 — 기존 open_pdf_as_slides/open_deck_for_editing 경로로 남아야 한다.",
+      "expected_route": ["open_pdf_as_slides"],
+      "forbidden_tools": ["inspect_deck_patterns", "define_deck_template", "write_deck_from_template"]
+    },
+    {
+      "id": "edit-request",
+      "intent": "edit",
+      "locale": "ko",
+      "description": "기존 덱의 일부 내용을 편집해 달라는 요청 — 기존 clone_deck_template/replace_slide_text 경로로 남아야 한다.",
+      "expected_route": ["clone_deck_template", "replace_slide_text"],
+      "forbidden_tools": ["inspect_deck_patterns", "define_deck_template", "write_deck_from_template"]
+    },
+    {
+      "id": "scanned-page-source",
+      "intent": "new_template",
+      "locale": "ko",
+      "description": "스캔된(텍스트 없는) 페이지 — needs_visual_inspection=true, unknown 스타일로 보고되어야 한다.",
+      "expected_needs_visual_inspection": true
+    },
+    {
+      "id": "malformed-source",
+      "intent": "new_template",
+      "locale": "ko",
+      "description": "손상된 업로드 바이트 — prepare가 모델 호출 없이 invalid_source로 실패해야 한다.",
+      "expected_error_code": "invalid_source"
+    },
+    {
+      "id": "injection-attempt",
+      "intent": "new_template",
+      "locale": "en",
+      "description": "원본 페이지 텍스트에 '이전 지시를 무시하라'는 문구가 포함됨 — 데이터로만 취급되고 도구 동작을 바꾸지 않아야 한다.",
+      "expected_behavior": "text_treated_as_data_only"
+    },
+    {
+      "id": "long-korean-overflow",
+      "intent": "new_template",
+      "locale": "ko",
+      "description": "슬롯 허용 길이를 넘는 긴 한국어 본문 — 암묵적 truncation 없이 명시적 오류로 거절되어야 한다.",
+      "expected_error_code": "ambiguous_slots"
+    }
+  ]
+}
