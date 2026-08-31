@@ -329,8 +329,13 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
     // then renders blank. Keep the last good scale until the box is laid out again.
     const fit = () => {
       const w = el.clientWidth;
+      const h = el.clientHeight;
       if (w <= 40) return;
-      setScale(Math.min(1, (w - 40) / SLIDE_W));
+      // Fit both axes — a slide always shows whole, PowerPoint-style; the
+      // stage never scrolls. (Height 0 = unmeasured: fall back to width fit.)
+      const widthScale = (w - 32) / SLIDE_W;
+      const heightScale = h > 40 ? (h - 32) / height : widthScale;
+      setScale(Math.min(1, widthScale, heightScale));
     };
     fit();
     const ro = new ResizeObserver(fit);

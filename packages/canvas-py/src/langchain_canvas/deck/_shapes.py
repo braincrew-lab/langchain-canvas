@@ -8,6 +8,7 @@ live next to it rather than in a module that no longer exists.
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 # Picture formats the pptx exporter can write back out; anything else is
@@ -80,13 +81,10 @@ def _is_group(shape: Any) -> bool:
     return "GROUP" in str(getattr(shape, "shape_type", "") or "")
 
 
-def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
-    """Text plus the first run's formatting, or ``None`` when there is none.
-
-    One element carries one set of formatting, so a box whose runs disagree
-    is represented by its first — the words all survive, the variation does
-    not. The original keeps it either way.
-    """
+def _text(
+    shape: Any, scheme: dict[str, str], *, preserve_runs: bool = False
+) -> dict[str, Any] | None:
+    """Text shape with inline rich runs, retaining a coherent editing unit."""
     if not getattr(shape, "has_text_frame", False):
         return None
     body = (shape.text_frame.text or "").strip()
@@ -125,6 +123,50 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
         out["spaceBefore"] = before
     if after is not None:
         out["spaceAfter"] = after
+    rich_paragraphs = []
+    for paragraph in paragraphs:
+        spans = []
+        # Walk XML children to retain explicit line breaks between runs.
+        run_iter = iter(paragraph.runs)
+        for child in paragraph._p:
+            if child.tag.endswith("}br"):
+                spans.append("<br>")
+            elif child.tag.endswith("}fld"):
+                # Fields (page numbers/dates) are not paragraph.runs. Preserve
+                # their displayed value alongside ordinary rich text runs.
+                spans.extend(
+                    (
+                        f"<span>{html.escape(node.text or '')}</span>"
+                        if preserve_runs
+                        else html.escape(node.text or "")
+                    )
+                    for node in child
+                    if node.tag.endswith("}t")
+                )
+            elif child.tag.endswith("}r"):
+                run = next(run_iter)
+                font = run.font
+                styles = []
+                if font.size is not None:
+                    styles.append(f"font-size:{font.size.pt * _PT_TO_PX:g}px")
+                if font.name:
+                    styles.append(f"font-family:{font.name}")
+                if font.bold is not None:
+                    styles.append(f"font-weight:{700 if font.bold else 400}")
+                if font.italic is not None:
+                    styles.append(f"font-style:{'italic' if font.italic else 'normal'}")
+                if font.underline:
+                    styles.append("text-decoration:underline")
+                colour = _colour(font, scheme)
+                if colour:
+                    styles.append(f"color:{colour}")
+                text = html.escape(run.text)
+                style = html.escape(";".join(styles), quote=True)
+                spans.append(
+                    f'<span style="{style}">{text}</span>' if styles or preserve_runs else text
+                )
+        rich_paragraphs.append("".join(spans))
+    out["richHtml"] = "<br>".join(rich_paragraphs)
     return out
 
 

@@ -112,6 +112,9 @@ export interface CanvasStore {
    *  export menu uses it to inline them. Null = no file endpoint (references
    *  stay unresolved, everything else behaves as before). */
   assetBaseUrl: string | null;
+  /** The host's office-export endpoint (deck → .pptx, table → .xlsx). Null =
+   *  no server exporter; the export menu shows browser-built formats only. */
+  exportUrl: string | null;
   /** The agent tool currently running (drives the status line above chat input). */
   activeTool: ActiveTool | null;
 
@@ -140,6 +143,7 @@ export interface CanvasStore {
   /** Register (or clear) the user-edit write-back handler. */
   setOnUserEdit: (handler: UserEditHandler | null) => void;
   setAssetBaseUrl: (url: string | null) => void;
+  setExportUrl: (url: string | null) => void;
   reset: () => void;
 }
 
@@ -158,6 +162,7 @@ const initialState = () => ({
   saveFlusher: null as (() => Promise<void>) | null,
   onUserEdit: null as UserEditHandler | null,
   assetBaseUrl: null as string | null,
+  exportUrl: null as string | null,
   activeTool: null as ActiveTool | null,
 });
 
@@ -284,9 +289,11 @@ function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, ge
 
     setOnUserEdit: (handler) => set({ onUserEdit: handler }),
     setAssetBaseUrl: (url) => set({ assetBaseUrl: url }),
+    setExportUrl: (url) => set({ exportUrl: url }),
 
-    // Host configuration (the asset endpoint) survives a session reset.
-    reset: () => set({ ...initialState(), assetBaseUrl: get().assetBaseUrl }),
+    // Host configuration (the asset/export endpoints) survives a session reset.
+    reset: () =>
+      set({ ...initialState(), assetBaseUrl: get().assetBaseUrl, exportUrl: get().exportUrl }),
   }));
 }
 

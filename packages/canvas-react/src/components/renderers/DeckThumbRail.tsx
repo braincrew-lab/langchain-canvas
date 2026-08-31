@@ -4,7 +4,7 @@
  * `cv-deck__thumb*`, styles/canvas.css:479-535).
  *
  * Thumbnails mount their iframe only once visible (IntersectionObserver) and
- * only up to `MAX_CONCURRENT_IFRAMES` at a time — a full deck's rail would
+ * unmount offscreen frames — a full deck's rail would
  * otherwise spin up one live iframe document per slide simultaneously.
  */
 
@@ -13,7 +13,15 @@ import { useEffect, useRef, useState } from "react";
 import { slideDocFor, type DeckSlideTemplate } from "../../client/deck";
 import type { DeckSlideStatus } from "../../client/reconcile";
 
-const MAX_CONCURRENT_IFRAMES = 6;
+/** The slide's design pixel box for a ratio — same width the stage renders at
+ *  (`DeckStage.tsx::SLIDE_DESIGN_WIDTH`), so a thumbnail is the stage scaled
+ *  down, not a differently-wrapped relayout. */
+const THUMB_DESIGN_WIDTH = 1280;
+
+function designHeight(ratio: string): number {
+  const [rw, rh] = ratio.split(/[:x/]/).map(Number);
+  return rw && rh ? Math.round((THUMB_DESIGN_WIDTH * rh) / rw) : 720;
+}
 
 export interface DeckThumbRailProps {
   slides: DeckSlideTemplate[];
@@ -54,13 +62,6 @@ export function DeckThumbRail({
     onReorder(ids);
   };
 
-  // The first N slides (in deck order) among those currently visible get a
-  // live iframe; further visible slides fall back to a placeholder box.
-  const mountBudget = new Set<string>();
-  for (const s of slides) {
-    if (mountBudget.size >= MAX_CONCURRENT_IFRAMES) break;
-    if (visible.has(s.slideId)) mountBudget.add(s.slideId);
-  }
 
   return (
     <aside className="cv-deck__rail cv-chrome">
@@ -83,7 +84,7 @@ export function DeckThumbRail({
               slide={slide}
               ratio={ratio}
               assetBaseUrl={assetBaseUrl}
-              mounted={mountBudget.has(slide.slideId)}
+              mounted={visible.has(slide.slideId)}
               status={slideStatus?.[slide.slideId]}
               onVisibilityChange={(isVisible) => markVisible(slide.slideId, isVisible)}
             />
@@ -105,6 +106,24 @@ interface DeckThumbProps {
 
 function DeckThumb({ slide, ratio, assetBaseUrl, mounted, status, onVisibilityChange }: DeckThumbProps) {
   const boxRef = useRef<HTMLDivElement>(null);
+  // The slide document lays out at its design size (1280×720); the thumbnail
+  // shows it CSS-scaled to the box — a true miniature, PowerPoint-style,
+  // never a scrolling corner crop of the full-size document.
+  const [thumbScale, setThumbScale] = useState(0);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      if (w > 0) setThumbScale(w / THUMB_DESIGN_WIDTH);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return; // jsdom — one measure is all we get
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -119,7 +138,7 @@ function DeckThumb({ slide, ratio, assetBaseUrl, mounted, status, onVisibilityCh
   }, []);
 
   return (
-    <div ref={boxRef} className="cv-deck__thumb-slide">
+    <div ref={boxRef} className="cv-deck__thumb-slide" style={{ aspectRatio: `${THUMB_DESIGN_WIDTH} / ${designHeight(ratio)}` }}>
       {mounted ? (
         <iframe
           className="cv-deck__thumb-frame"
@@ -127,7 +146,17 @@ function DeckThumb({ slide, ratio, assetBaseUrl, mounted, status, onVisibilityCh
           srcDoc={slideDocFor(slide, ratio, assetBaseUrl)}
           sandbox="allow-scripts"
           tabIndex={-1}
-          style={{ width: "100%", height: "100%", border: 0, pointerEvents: "none" }}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: THUMB_DESIGN_WIDTH,
+            height: designHeight(ratio),
+            border: 0,
+            pointerEvents: "none",
+            transform: `scale(${thumbScale})`,
+            transformOrigin: "top left",
+          }}
         />
       ) : null}
       {status && status.stage !== "complete" ? (

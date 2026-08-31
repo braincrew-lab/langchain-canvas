@@ -15,6 +15,7 @@ from __future__ import annotations
 import html as html_lib
 
 from .extract import ImageAsset, ShapeGeom, SlideExtraction, TextRun
+from .structured import StructuredShape, structured_html
 
 __all__ = ["baseline_slide_html"]
 
@@ -63,9 +64,9 @@ def _text_style(run: TextRun) -> str:
 
 def _text_box(run: TextRun, node_id: str, canvas: tuple[int, int]) -> str:
     style = _box_style(run.x, run.y, run.w, run.h, canvas) + " " + _text_style(run)
-    text = html_lib.escape(run.text)
+    text = run.rich_html or html_lib.escape(run.text).replace("\n", "<br>")
     return (
-        f'<div class="lcx-block" data-node-id="{node_id}" '
+        f'<div class="lcx-block" data-text-block="true" data-node-id="{node_id}" '
         f'data-pptx-shape-id="{html_lib.escape(run.element_id, quote=True)}" '
         f'style="{style.strip()}">{text}</div>'
     )
@@ -127,19 +128,23 @@ def baseline_slide_html(extraction: SlideExtraction, *, slide_id: str, ratio: st
     original deck.
     """
     canvas = _canvas_size(ratio)
-    entries: list[tuple[int, ImageAsset | ShapeGeom | TextRun]] = []
+    entries: list[tuple[int, ImageAsset | ShapeGeom | TextRun | StructuredShape]] = []
     for image in extraction.images:
         entries.append((_element_order(image.element_id), image))
     for shape in extraction.shapes:
         entries.append((_element_order(shape.element_id), shape))
     for run in extraction.texts:
         entries.append((_element_order(run.element_id), run))
+    for structured in extraction.structured:
+        entries.append((_element_order(structured.element_id), structured))
     entries.sort(key=lambda pair: pair[0])
 
     boxes: list[str] = []
     for seq, (_, element) in enumerate(entries):
         node_id = f"node-{slide_id}-{seq}"
-        if isinstance(element, ImageAsset):
+        if isinstance(element, StructuredShape):
+            boxes.append(structured_html(element, node_id, canvas))
+        elif isinstance(element, ImageAsset):
             boxes.append(_image_box(element, node_id, canvas))
         elif isinstance(element, ShapeGeom):
             boxes.append(_shape_box(element, node_id, canvas))

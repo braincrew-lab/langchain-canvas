@@ -119,6 +119,21 @@ def test_ensure_text_equality_raises_on_mutation() -> None:
         ensure_text_equality(["Revenue grew 30%"], slide_html)
 
 
+def test_sanitize_preserves_table_rules_and_css_arrowheads() -> None:
+    html = (
+        '<section class="slide"><div style="box-sizing:border-box;'
+        'border-top:1px solid black;border-left-color:red"></div>'
+        '<div style="width:0;height:0;border-left:8px solid white;'
+        'border-top:4px solid transparent;border-bottom:4px solid transparent"></div></section>'
+    )
+    clean = sanitize_slide_html(html).html
+    assert "border-top: 1px solid black" in clean
+    assert "border-left-color: red" in clean
+    assert "border-left: 8px solid white" in clean
+    assert "border-bottom: 4px solid transparent" in clean
+    assert "box-sizing: border-box" in clean
+
+
 def test_sanitize_strips_script_handler_form_external_url() -> None:
     dirty = (
         '<section class="slide" onclick="steal()">'

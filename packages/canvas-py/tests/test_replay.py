@@ -133,6 +133,15 @@ def test_html_source_previews_as_html_artifact() -> None:
     assert events[0]["artifact"]["type"] == "html"
 
 
+def test_uploaded_deck_stays_a_deck_after_reload() -> None:
+    store = InMemoryCanvasStore()
+    content = '<html><body><template data-slide-id="s1"><h1>Slide</h1></template></body></html>'
+    store.write("c1", "sources/deck.slides.html", content, "Upload deck", actor="human")
+    artifact = hydrate_events(store, "c1")[0]["artifact"]
+    assert artifact["type"] == "slides"
+    assert artifact["data"]["html"] == content
+
+
 def test_csv_and_binary_sources_replay_as_file_artifacts() -> None:
     # Uploads outside the text-preview set still show on the canvas — as
     # `file` artifacts (a card, plus whatever preview can be derived). The

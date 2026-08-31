@@ -357,13 +357,16 @@ const INSPECTOR_SCRIPT = `
       while (p) { if (list.indexOf(p) !== -1) return true; p = p.parentElement; }
       return false;
     }
+    function semanticTarget(target) {
+      return target instanceof Element ? (target.closest('[data-chart-data]') || target.closest('[data-text-block="true"]') || target) : target;
+    }
     function selectSummary(el) {
       return { cid: el.getAttribute("data-cid"), selector: selectorFor(el), tag: el.tagName.toLowerCase(),
                text: (el.textContent || "").trim().slice(0, 60), nodeId: el.getAttribute("data-node-id") };
     }
 
     document.addEventListener("mouseover", function (e) {
-      var t = e.target;
+      var t = semanticTarget(e.target);
       if (!(t instanceof Element) || !isEditable(t)) return;
       if (hovered) hovered.classList.remove("lcx-hover");
       hovered = t; t.classList.add("lcx-hover");
@@ -375,7 +378,7 @@ const INSPECTOR_SCRIPT = `
     // --- click = single select --------------------------------------------------
     document.addEventListener("click", function (e) {
       if (suppressClick) { suppressClick = false; return; }
-      var t = e.target;
+      var t = semanticTarget(e.target);
       if (!(t instanceof Element) || t.isContentEditable || !isEditable(t)) return;
       e.preventDefault(); e.stopPropagation();
       // Clicking the page background (body / near-full-page element) deselects.
@@ -440,7 +443,7 @@ const INSPECTOR_SCRIPT = `
     document.addEventListener("mousedown", function (e) {
       suppressClick = false;             // a fresh press: never carry a stale suppress
       if (e.button !== 0) return;
-      var t = e.target;
+      var t = semanticTarget(e.target);
       if (t instanceof Element && t.isContentEditable) return;
       if (t === resizeHandle) return;    // the resize handle drives its own drag
       // Pressing on a selected element drags the whole selection; pressing on any
@@ -514,7 +517,7 @@ const INSPECTOR_SCRIPT = `
       var all = document.body.querySelectorAll("[data-cid]");
       var hits = [];
       all.forEach(function (el) {
-        if (el.hasAttribute("data-lcx")) return;
+        if (el.hasAttribute("data-lcx") || semanticTarget(el) !== el) return;
         var r = el.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) return;
         if (r.width * r.height > vpArea * 0.9) return;   // never select the page/body wrapper
@@ -560,8 +563,8 @@ const INSPECTOR_SCRIPT = `
 
     // --- double-click = edit text inline; commit on blur ------------------------
     document.addEventListener("dblclick", function (e) {
-      var t = e.target;
-      if (!(t instanceof Element) || !isEditable(t)) return;
+      var t = semanticTarget(e.target);
+      if (!(t instanceof Element) || !isEditable(t) || t.hasAttribute("data-chart-data")) return;
       e.preventDefault();
       t.setAttribute("contenteditable", "true");
       t.focus();

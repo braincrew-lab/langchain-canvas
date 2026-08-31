@@ -25,9 +25,11 @@ import { useCanvasStore } from "../../hooks/useCanvasStore";
 
 const SLIDE_DESIGN_WIDTH = 1280;
 
-/** Fit the slide's design width into the available column — the same
- *  calculation `HtmlRenderer.tsx::useSlideFit` performs, duplicated (not
- *  imported) per this component's "own the iframe" contract above. */
+/** Fit the slide's design box into the available column, width AND height —
+ *  the same calculation `HtmlRenderer.tsx::useSlideFit` performs, duplicated
+ *  (not imported) per this component's "own the iframe" contract above. Like
+ *  PowerPoint's canvas, the slide always fits entirely; the stage never
+ *  scrolls. */
 function useDeckStageFit(ratio: string, boxRef: React.RefObject<HTMLDivElement | null>) {
   const [scale, setScale] = useState(1);
   const [rw, rh] = ratio.split(/[:x/]/).map(Number);
@@ -37,8 +39,11 @@ function useDeckStageFit(ratio: string, boxRef: React.RefObject<HTMLDivElement |
     if (!el) return;
     const fit = () => {
       const w = el.clientWidth;
+      const h = el.clientHeight;
       if (w <= 40) return;
-      setScale(Math.min(1, (w - 40) / SLIDE_DESIGN_WIDTH));
+      const widthScale = (w - 32) / SLIDE_DESIGN_WIDTH;
+      const heightScale = h > 40 ? (h - 32) / height : widthScale;
+      setScale(Math.min(1, widthScale, heightScale));
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -71,12 +76,30 @@ export function DeckStage({ artifactId, slide, ratio }: DeckStageProps) {
   const applyEvent = useCanvasStore((s) => s.applyUserEvent);
   const setSelections = useCanvasStore((s) => s.setSelections);
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
+  const iframeCommand = useCanvasStore((s) => s.iframeCommand);
+  const selections = useCanvasStore((s) => s.selections);
+  const lastCommand = useRef(iframeCommand);
   const fit = useDeckStageFit(ratio, stageRef);
 
   const srcDoc = useMemo(
     () => withInspector(slideDocFor(slide, ratio, assetBaseUrl ?? undefined), undefined, slide.slideId),
     [slide, ratio, assetBaseUrl],
   );
+
+  // DeckStage owns its iframe instead of mounting HtmlRenderer, so it must
+  // also forward the StylePanel/selection commands to that editing surface.
+  useEffect(() => {
+    if (iframeCommand === lastCommand.current) return;
+    lastCommand.current = iframeCommand;
+    if (!iframeCommand || iframeCommand.artifactId !== artifactId) return;
+    iframeRef.current?.contentWindow?.postMessage({ source: INSPECTOR_MARK, ...iframeCommand }, "*");
+  }, [iframeCommand, artifactId]);
+
+  useEffect(() => {
+    if (!selections.some((selection) => selection.artifactId === artifactId)) {
+      iframeRef.current?.contentWindow?.postMessage({ source: INSPECTOR_MARK, type: "clear" }, "*");
+    }
+  }, [selections, artifactId]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -148,7 +171,7 @@ export function DeckStage({ artifactId, slide, ratio }: DeckStageProps) {
 
   return (
     <div className="cv-html-stage cv-html-stage--slide" ref={stageRef}>
-      <div style={{ width: fit.width * fit.scale, height: fit.height * fit.scale, flex: "0 0 auto" }}>
+      <div style={{ width: fit.width * fit.scale, height: fit.height * fit.scale, flex: "0 0 auto", position: "relative" }}>
         <iframe
           ref={iframeRef}
           className="cv-html"
@@ -156,6 +179,9 @@ export function DeckStage({ artifactId, slide, ratio }: DeckStageProps) {
           srcDoc={srcDoc}
           sandbox="allow-scripts allow-popups allow-modals"
           style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
             width: fit.width,
             height: fit.height,
             transform: `scale(${fit.scale})`,

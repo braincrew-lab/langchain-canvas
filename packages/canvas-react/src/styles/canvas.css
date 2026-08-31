@@ -351,6 +351,10 @@
 }
 .cv-export__menu button:hover { background: var(--cv-surface); }
 .cv-export__ext { color: var(--cv-muted); font-family: var(--cv-mono); font-size: 11px; }
+.cv-export__note, .cv-export__error { max-width: 250px; margin: 8px 12px; font-size: 11px; line-height: 1.5; white-space: normal; }
+.cv-export__note { color: var(--cv-muted); }
+.cv-export__error { color: var(--cv-danger, #b42318); }
+.cv-export__menu button:disabled { opacity: 0.6; cursor: progress; }
 
 /* --- body --------------------------------------------------------------------- */
 
@@ -556,7 +560,7 @@
 
 /* --- PowerPoint viewer (deck: rail + stage) ----------------------------------- */
 
-.cv-deck { display: flex; gap: 14px; height: 100%; }
+.cv-deck { display: flex; gap: 14px; height: 100%; min-width: 0; min-height: 0; }
 .cv-deck--empty { display: grid; place-items: center; color: var(--cv-muted); }
 .cv-deck__rail {
   width: 168px;
@@ -619,6 +623,7 @@
 .cv-deck__main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1039,12 +1044,14 @@
   box-shadow: 0 2px 6px rgba(99, 102, 241, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 .cv-html-stage {
-  flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center;
+  flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; justify-content: center;
   padding: 10px; background: var(--cv-surface); border-radius: 0;
 }
-/* Fixed-aspect slide stage — the scaled iframe box sits centered at the top,
-   with a card-like frame around it. Still fully editable. */
-.cv-html-stage--slide { align-items: flex-start; padding: 16px; }
+/* Fixed-aspect slide stage — the scaled iframe box sits centered, with a
+   card-like frame around it. Still fully editable. The slide is fitted to
+   both axes (useSlideFit / useDeckStageFit), so like PowerPoint's canvas the
+   stage never scrolls. */
+.cv-html-stage--slide { align-items: center; padding: 16px; overflow: hidden; }
 .cv-html-stage--slide > div {
   overflow: hidden; background: #fff; border-radius: 0;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
@@ -1446,5 +1453,5 @@
 
   .cv-body { padding: 12px; }
   .cv-toolbar, .cv-word__toolbar, .cv-chart__toolbar { flex-wrap: wrap; }
-  .cv-export__menu { right: auto; left: 0; }
+  .cv-export__menu { right: 0; left: auto; max-width: calc(100vw - 32px); }
 }

@@ -1891,14 +1891,15 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
 
         The copy keeps each slide's shapes, text, pictures and speaker notes,
         and points at the original as its source so an export rebuilds on
-        the original's masters. Tables, charts and grouped shapes do not come
-        across — read the upload itself to see those.
+        the original's masters. Native tables and clustered bar/column charts
+        have editable HTML previews. Chart axes/legend previews are simplified;
+        original native formatting stays in PPTX export. Other charts and groups
+        are not editable in HTML; unsupported charts are reported.
         """
         canvas_id = _canvas_id(runtime)
         if not source.lower().endswith(".pptx"):
-            return (
-                f"Error: this opens .pptx files (got {source}). "
-                + _other_ways_to_open(source, default_converters())
+            return f"Error: this opens .pptx files (got {source}). " + _other_ways_to_open(
+                source, default_converters()
             )
         target = (destination or _deck_copy_name(source)).strip()
         if target.startswith(_SOURCES_PREFIX):
@@ -1971,10 +1972,16 @@ def create_deck_tools(store: CanvasStore) -> list[Any]:
                     )
                 )
 
+        warnings = [
+            f"Slide {extraction.index + 1}: {message}"
+            for extraction in extractions
+            for message in extraction.warnings
+        ]
         return (
             f"Copied {source} to {target} ({len(slides)} slide(s), revision "
             f"{commit.revision}). Edit {target} and export it to pptx; {source} "
             "keeps the user's original."
+            + ("\nWarnings: " + "; ".join(warnings) if warnings else "")
         )
 
     @tool

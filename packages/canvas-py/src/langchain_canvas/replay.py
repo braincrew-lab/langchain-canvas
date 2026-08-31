@@ -159,7 +159,9 @@ def encode_artifact(artifact: dict[str, Any], path: str) -> str:
     suffix = _ENVELOPE_SUFFIX_FOR.get(artifact_type) if isinstance(artifact_type, str) else None
     if artifact_type is None or suffix is None:
         allowed = ", ".join(sorted(_ENVELOPE_SUFFIX_FOR))
-        raise ValueError(f"only {allowed} artifacts persist as JSON envelopes (got {artifact_type!r})")
+        raise ValueError(
+            f"only {allowed} artifacts persist as JSON envelopes (got {artifact_type!r})"
+        )
     if not isinstance(artifact.get("data"), dict):
         raise ValueError(f"{artifact_type} artifact needs a data object")
     if not path.endswith(suffix):
@@ -354,7 +356,9 @@ def _source_preview_events(
     lowered = path.lower()
     title = path.rsplit("/", 1)[-1]
     if lowered.endswith((".html", ".htm")):
-        artifact_type = "html"
+        # A deck's inert <template> elements render blank as a regular HTML
+        # page. Preserve its type across upload, hydration and export.
+        artifact_type = "slides" if lowered.endswith(DECK_HTML_SUFFIX) else "html"
         data: dict[str, Any] = {"html": content}
         patch: dict[str, Any] = {"html": content}
     elif lowered.endswith(".json"):

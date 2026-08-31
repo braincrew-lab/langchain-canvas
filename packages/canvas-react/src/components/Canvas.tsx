@@ -70,6 +70,13 @@ export interface CanvasProps {
    * references stay unresolved — everything else behaves exactly as before.
    */
   assetBaseUrl?: string;
+  /**
+   * The host's office-export endpoint (e.g. `http://host/api/canvas/<id>/export`).
+   * With it, the export menu offers the server-rendered formats the browser
+   * cannot build itself — PowerPoint for decks, Excel for tables. Omit it and
+   * the menu shows only the browser-built exports, exactly as before.
+   */
+  exportUrl?: string;
   /** The agent is working: hand editing is frozen and a banner says so. */
   busy?: boolean;
   /** What the banner reads while `busy` (default "Agent is working…"). */
@@ -85,6 +92,7 @@ export function Canvas({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  exportUrl,
   busy = false,
   busyLabel = "Agent is working…",
 }: CanvasProps) {
@@ -98,6 +106,7 @@ export function Canvas({
         onFilesOpened={onFilesOpened}
         onImported={onImported}
         assetBaseUrl={assetBaseUrl}
+        exportUrl={exportUrl}
         busy={busy}
         busyLabel={busyLabel}
       />
@@ -113,6 +122,7 @@ function CanvasPanel({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  exportUrl,
   busy = false,
   busyLabel = "Agent is working…",
 }: Pick<
@@ -124,6 +134,7 @@ function CanvasPanel({
   | "onFilesOpened"
   | "onImported"
   | "assetBaseUrl"
+  | "exportUrl"
   | "busy"
   | "busyLabel"
 >) {
@@ -143,6 +154,7 @@ function CanvasPanel({
   const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
   const setSaveFlusher = useCanvasStore((s) => s.setSaveFlusher);
   const setAssetBaseUrl = useCanvasStore((s) => s.setAssetBaseUrl);
+  const setExportUrl = useCanvasStore((s) => s.setExportUrl);
   const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
 
@@ -151,6 +163,9 @@ function CanvasPanel({
   useEffect(() => {
     setAssetBaseUrl(assetBaseUrl ?? null);
   }, [assetBaseUrl, setAssetBaseUrl]);
+  useEffect(() => {
+    setExportUrl(exportUrl ?? null);
+  }, [exportUrl, setExportUrl]);
 
   // Open = hand the raw files to the host (upload) + preview what we can import.
   const openFiles = (files: FileList) => {

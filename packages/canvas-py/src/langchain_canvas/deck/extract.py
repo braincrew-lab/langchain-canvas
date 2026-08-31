@@ -32,6 +32,7 @@ from ._shapes import (
     _text,
     _with_stroke,
 )
+from .structured import StructuredShape, extract_structured
 
 __all__ = [
     "ImageAsset",
@@ -64,6 +65,7 @@ class TextRun:
     highlight: str | None = None
     space_before: float | None = None
     space_after: float | None = None
+    rich_html: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,8 @@ class SlideExtraction:
     # nothing in this change unit populates it yet.
     relationships: dict[str, str] = field(default_factory=dict)
     notes: str = ""
+    structured: list[StructuredShape] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def extract_slides(data: bytes, *, path: str) -> list[SlideExtraction]:
@@ -142,9 +146,7 @@ def extract_slides(data: bytes, *, path: str) -> list[SlideExtraction]:
     if not width or not height:
         raise PptxImportError("the presentation declares no slide size")
 
-    return [
-        _extract_slide(slide, index, width, height) for index, slide in enumerate(deck.slides)
-    ]
+    return [_extract_slide(slide, index, width, height) for index, slide in enumerate(deck.slides)]
 
 
 def _image_bytes(shape: Any) -> tuple[bytes, str] | None:
@@ -168,12 +170,27 @@ def _extract_slide(slide: Any, index: int, width: int, height: int) -> SlideExtr
     texts: list[TextRun] = []
     shapes: list[ShapeGeom] = []
     images: list[ImageAsset] = []
+    structured: list[StructuredShape] = []
+    warnings: list[str] = []
 
     for shape_index, shape in enumerate(slide.shapes):
         frame = _frame(shape, shape_index, width, height)
         if frame is None:
             continue
         if getattr(shape, "has_table", False) or getattr(shape, "has_chart", False):
+            item = extract_structured(shape, frame, scheme, slide=slide)
+            if item is not None:
+                structured.append(item)
+                if item.kind == "table":
+                    warnings.append(
+                        "Native table style effects may be unavailable in HTML preview; "
+                        "source formatting is retained in PPTX export."
+                    )
+            else:
+                warnings.append(
+                    f"Native chart {frame['id']} is unsupported in HTML preview; "
+                    "retained in PPTX export."
+                )
             continue
         if _is_group(shape):
             continue
@@ -215,6 +232,7 @@ def _extract_slide(slide: Any, index: int, width: int, height: int) -> SlideExtr
                     highlight=text.get("highlight"),
                     space_before=text.get("spaceBefore"),
                     space_after=text.get("spaceAfter"),
+                    rich_html=text.get("richHtml"),
                 )
             )
             continue
@@ -238,7 +256,13 @@ def _extract_slide(slide: Any, index: int, width: int, height: int) -> SlideExtr
             )
 
     return SlideExtraction(
-        index=index, texts=texts, shapes=shapes, images=images, notes=_notes(slide)
+        index=index,
+        texts=texts,
+        shapes=shapes,
+        images=images,
+        notes=_notes(slide),
+        structured=structured,
+        warnings=warnings,
     )
 
 

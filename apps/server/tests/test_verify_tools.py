@@ -282,6 +282,9 @@ class _FakePage:
     def evaluate(self, script: str) -> dict[str, Any]:
         return dict(_FAKE_METRICS)
 
+    def route(self, pattern: str, handler: Any) -> None:
+        assert pattern == "**/*"
+
     def screenshot(self, type: str = "png") -> bytes:
         return b"fake-png"
 
@@ -294,7 +297,8 @@ class _FakeBrowser:
         self._fail = fail
         self.closed = False
 
-    def new_page(self, viewport: dict[str, int]) -> _FakePage:
+    def new_page(self, viewport: dict[str, int], *, java_script_enabled: bool) -> _FakePage:
+        assert java_script_enabled is False
         return _FakePage(viewport, fail=self._fail)
 
     def close(self) -> None:
@@ -340,6 +344,7 @@ def test_viewport_for_ratio_known_and_unknown_ratios() -> None:
     assert render_module.viewport_for_ratio("16:9") == (1280, 720)
     assert render_module.viewport_for_ratio("4:3") == (1280, 960)
     assert render_module.viewport_for_ratio("unknown") == (1280, 720)
+    assert render_module.viewport_for_ratio("3:4") == (1280, 1707)
 
 
 def test_render_slide_caches_browser_across_calls(monkeypatch: pytest.MonkeyPatch) -> None:

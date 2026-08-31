@@ -9,6 +9,9 @@
   ``sources/`` so the agent can read it.
 - ``GET /api/canvas/{thread_id}/files``: the store's file listing.
 - ``GET /api/canvas/{thread_id}/file``: one file's bytes, as a download.
+- ``POST /api/canvas/{thread_id}/export``: convert one canvas file into an
+  office format (deck → ``.pptx``, table → ``.xlsx``) through the same
+  exporters the agent's ``export_canvas`` tool uses.
 """
 
 from __future__ import annotations
@@ -25,15 +28,22 @@ from langchain_canvas import (
     source_preview_events,
     workbook_working_copy,
 )
+from langchain_canvas.assets import inline_canvas_assets
+from langchain_canvas.exporters import (
+    MissingExporterDependencyError,
+    exporter_for,
+)
 from langchain_canvas.replay import SOURCES_PREFIX
 from langchain_canvas.store import (
     CanvasFileNotFoundError,
     CanvasStoreError,
     RevisionMismatchError,
 )
+from langchain_canvas.tools import inline_deck_skin
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
+from ..agent.exports import app_exporters
 from ..agent.store import PAGE_PATH, STORE
 
 _TEXT_UPLOAD_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".json", ".html", ".htm")
@@ -178,6 +188,64 @@ def file_download(thread_id: str, path: str) -> Response:
         headers={
             "Content-Disposition": (
                 f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(name)}'
+            )
+        },
+    )
+
+
+class ExportRequest(BaseModel):
+    """One office export: the canvas ``path`` routes to an exporter by suffix
+    (``.slides.html`` → pptx, ``.table.json`` → xlsx); ``content`` carries the
+    client's current copy so unsaved edits export too — omitted, the stored
+    file is read instead."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    path: str
+    target: str
+    content: str | None = None
+    title: str | None = None
+
+
+@router.post("/api/canvas/{thread_id}/export")
+def export(thread_id: str, request: ExportRequest) -> Response:
+    """Convert one canvas file into a downloadable office format.
+
+    The browser's export menu has no PPTX/XLSX writer of its own — decks and
+    workbooks convert here, through the exact exporters the agent's
+    ``export_canvas`` tool uses, so both doors produce the same file.
+    """
+    exporter = exporter_for(request.path, request.target, app_exporters())
+    if exporter is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no exporter converts {request.path} to {request.target}",
+        )
+    content = request.content
+    if content is None:
+        try:
+            content = STORE.read(thread_id, request.path).content
+        except CanvasFileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except CanvasStoreError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        if request.path.lower().endswith(".slides.html"):
+            content = inline_canvas_assets(content, STORE, thread_id)
+            content = inline_deck_skin(content, STORE, thread_id)
+        exported = exporter.export(content, path=request.path, title=request.title)
+    except MissingExporterDependencyError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ascii_name = exported.filename.encode("ascii", "ignore").decode() or "export"
+    return Response(
+        content=exported.data,
+        media_type=exported.media_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_name}"; '
+                f"filename*=UTF-8''{quote(exported.filename)}"
             )
         },
     )

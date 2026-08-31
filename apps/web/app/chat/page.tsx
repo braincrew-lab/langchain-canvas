@@ -100,14 +100,14 @@ export default function ChatPage() {
   // use); apply them for files the importer can't open locally, so a PNG/PDF/
   // office upload shows on the canvas right away. Importable files keep their
   // richer local preview (editable table, document) — no double display.
-  const handleFilesOpened = useCallback(
-    (files: File[]) => {
+  const uploadFiles = useCallback(
+    (files: File[], { applyImported }: { applyImported: boolean }) => {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
         void fetch(`${SERVER}/api/canvas/${threadId}/upload`, { method: "POST", body: form })
           .then(async (res) => {
-            if (res.ok && !canImport(file)) {
+            if (res.ok && (applyImported || !canImport(file))) {
               const { events } = (await res.json()) as { events?: StreamEvent[] };
               if (events?.length) applyEvents(events);
             }
@@ -117,6 +117,16 @@ export default function ChatPage() {
       }
     },
     [threadId, refreshSources, applyEvents],
+  );
+  const handleFilesOpened = useCallback(
+    (files: File[]) => uploadFiles(files, { applyImported: false }),
+    [uploadFiles],
+  );
+  // The composer's paperclip: no local import runs on this path, so the
+  // server's preview events are applied for every file — importable included.
+  const handleAttachFiles = useCallback(
+    (files: File[]) => uploadFiles(files, { applyImported: true }),
+    [uploadFiles],
   );
 
   // POST one save body; on success stamp the described commit onto the artifact.
@@ -237,6 +247,7 @@ export default function ChatPage() {
           onReset={stream.reset}
           suggestions={SUGGESTIONS}
           activeTool={activeTool}
+          onAttachFiles={handleAttachFiles}
         />
       </section>
       <section className="app__canvas">
@@ -248,6 +259,8 @@ export default function ChatPage() {
           // Resolves `assets/` / `sources/` references for display; the export
           // menu uses the same endpoint to inline them as data: URIs.
           assetBaseUrl={threadId === "ssr" ? undefined : `${SERVER}/api/canvas/${threadId}/file?path=`}
+          // Server-rendered office exports (deck → .pptx, table → .xlsx).
+          exportUrl={threadId === "ssr" ? undefined : `${SERVER}/api/canvas/${threadId}/export`}
         />
       </section>
     </main>

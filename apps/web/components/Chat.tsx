@@ -15,6 +15,12 @@ interface ChatProps {
   suggestions?: string[];
   /** The agent tool currently running — drives the status line under the typing indicator. */
   activeTool?: ActiveTool | null;
+  /**
+   * Wire the composer's paperclip to a file picker: called with the chosen
+   * files (the host uploads them so the agent can read them). Omitted, the
+   * button stays disabled.
+   */
+  onAttachFiles?: (files: File[]) => void;
 }
 
 export function Chat({
@@ -26,9 +32,11 @@ export function Chat({
   onReset,
   suggestions = [],
   activeTool,
+  onAttachFiles,
 }: ChatProps) {
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Keep the transcript pinned to the latest message as it streams.
   useEffect(() => {
@@ -117,7 +125,23 @@ export function Chat({
           />
           <div className="composer__actions">
             <div className="composer__left">
-              <button type="button" className="composer__icon" aria-label="Attach file" disabled>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) onAttachFiles?.(Array.from(e.target.files));
+                  e.target.value = ""; // allow re-attaching the same file
+                }}
+              />
+              <button
+                type="button"
+                className="composer__icon"
+                aria-label="Attach file"
+                disabled={!onAttachFiles}
+                onClick={() => fileInputRef.current?.click()}
+              >
                 <Paperclip size={16} aria-hidden />
               </button>
               <button type="button" className="composer__icon" aria-label="Mention" disabled>

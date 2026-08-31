@@ -13,6 +13,7 @@ import html as html_lib
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from urllib.parse import unquote
 
 ALLOWED_TAGS: frozenset[str] = frozenset(
     {
@@ -65,6 +66,10 @@ ALLOWED_ATTRS: frozenset[str] = frozenset(
         "id",
         "style",
         "data-node-id",
+        "data-chart-type",
+        "data-chart-data",
+        "data-text-block",
+        "data-text-role",
         "data-slide-id",
         "data-slide-title",
         "data-pptx-shape-id",
@@ -101,6 +106,9 @@ ALLOWED_ATTRS: frozenset[str] = frozenset(
 
 ALLOWED_CSS_PROPS: frozenset[str] = frozenset(
     {
+        "font",
+        "border-collapse",
+        "table-layout",
         "position",
         "left",
         "top",
@@ -122,7 +130,27 @@ ALLOWED_CSS_PROPS: frozenset[str] = frozenset(
         "line-height",
         "letter-spacing",
         "border",
+        "border-top",
+        "border-right",
+        "border-bottom",
+        "border-left",
+        "border-width",
+        "border-style",
+        "border-color",
+        "border-top-width",
+        "border-top-style",
+        "border-top-color",
+        "border-right-width",
+        "border-right-style",
+        "border-right-color",
+        "border-bottom-width",
+        "border-bottom-style",
+        "border-bottom-color",
+        "border-left-width",
+        "border-left-style",
+        "border-left-color",
         "border-radius",
+        "box-sizing",
         "opacity",
         "transform",
         "z-index",
@@ -193,10 +221,17 @@ def _is_allowed_url(value: str, *, allow_data_blob: bool = True) -> bool:
         return allow_data_blob
     if lowered.startswith(_DISALLOWED_SCHEMES):
         return False
-    if lowered.startswith("assets/"):
-        return True
+    if lowered.startswith(("assets/", "sources/")):
+        decoded = unquote(stripped)
+        return not (
+            ".." in decoded.split("/")
+            or "\\" in decoded
+            or any(ord(c) < 32 for c in decoded)
+            or "?" in decoded
+            or "#" in decoded
+        )
     # Any other absolute/rooted reference (leading "/", "#", scheme-relative,
-    # or a relative path outside assets/) is not part of the deck's own
+    # or a relative path outside assets/ and sources/) is not part of the deck's own
     # asset store — reject rather than guess intent.
     return False
 
@@ -209,7 +244,7 @@ def _css_value_urls_allowed(value: str) -> bool:
     return True
 
 
-def _filter_css_declarations(value: str) -> str:
+def _filter_css_declarations(value: str, removed: list[str] | None = None) -> str:
     kept: list[str] = []
     for declaration in value.split(";"):
         if ":" not in declaration:
@@ -218,16 +253,22 @@ def _filter_css_declarations(value: str) -> str:
         prop = prop.strip().lower()
         val = val.strip()
         if prop not in ALLOWED_CSS_PROPS or not val:
+            if removed is not None:
+                removed.append(f"css[{prop}]")
             continue
         if _DANGEROUS_CSS_VALUE_RE.search(val):
+            if removed is not None:
+                removed.append(f"css[{prop}: unsafe value]")
             continue
         if not _css_value_urls_allowed(val):
+            if removed is not None:
+                removed.append(f"css[{prop}: external URL]")
             continue
         kept.append(f"{prop}: {val}")
     return "; ".join(kept)
 
 
-def _filter_style_block(css_text: str) -> str:
+def _filter_style_block(css_text: str, removed: list[str] | None = None) -> str:
     """Apply the same declaration allowlist to ``<style>`` block content.
 
     ``<style>`` text is never HTML-escaped by the sanitizer (it is raw CSS,
@@ -237,10 +278,12 @@ def _filter_style_block(css_text: str) -> str:
     itself being allowlisted.
     """
     without_imports = _CSS_AT_IMPORT_RE.sub("", css_text)
+    if without_imports != css_text and removed is not None:
+        removed.append("css[@import]")
     kept_rules: list[str] = []
     for match in _CSS_RULE_RE.finditer(without_imports):
         selector = match.group(1).strip()
-        declarations = _filter_css_declarations(match.group(2))
+        declarations = _filter_css_declarations(match.group(2), removed)
         if selector and declarations:
             kept_rules.append(f"{selector} {{ {declarations}; }}")
     return " ".join(kept_rules)
@@ -290,7 +333,7 @@ class _Sanitizer(HTMLParser):
         if self._skip_depth:
             return
         if self._in_style:
-            self.output.append(_filter_style_block(data))
+            self.output.append(_filter_style_block(data, self.removed))
         else:
             self.output.append(html_lib.escape(data))
 
@@ -317,7 +360,7 @@ class _Sanitizer(HTMLParser):
                     self.removed.append(f"{tag}[{lowered_name}={value!r}]")
                     continue
             if lowered_name == "style":
-                value = _filter_css_declarations(value)
+                value = _filter_css_declarations(value, self.removed)
             kept.append((lowered_name, value))
         return kept
 

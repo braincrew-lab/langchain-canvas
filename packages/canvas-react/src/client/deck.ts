@@ -279,11 +279,18 @@ export function reorderDeck(deckHtml: string, orderedIds: string[]): string {
  * the same contract `io/canvasAssets.ts::resolveAssetUrl` documents.
  */
 export function slideDocFor(slide: DeckSlideTemplate, ratio: string, assetBaseUrl?: string): string {
+  const [rw, rh] = ratio.split(/[:x/]/).map(Number);
+  const height = rw > 0 && rh > 0 ? Math.round(1280 * rh / rw) : 720;
+  // Identical layout in stage, thumbnail, and export. Injected chrome is
+  // excluded from edit serialization via data-lcx.
+  const baseStyle =
+    `<style data-lcx>html{margin:0;overflow:hidden;background:transparent}` +
+    `body{margin:0;width:1280px;height:${height}px}*{box-sizing:border-box}</style>`;
   const styleTag = slide.styleCss ? `<style>${slide.styleCss}</style>` : "";
   const titleAttr = slide.title ? ` data-slide-title="${escapeAttr(slide.title)}"` : "";
   const doc =
     `<!doctype html>\n<html data-ratio="${escapeAttr(ratio)}"><head><meta charset="utf-8">` +
-    `${styleTag}</head><body data-slide-id="${escapeAttr(slide.slideId)}"${titleAttr}>` +
+    `${baseStyle}${styleTag}</head><body data-slide-id="${escapeAttr(slide.slideId)}"${titleAttr}>` +
     `${slide.bodyHtml}</body></html>`;
   return rewriteAssetSrcs(doc, assetBaseUrl);
 }
@@ -325,7 +332,10 @@ export function extractTemplateFromSlideDoc(slideDoc: string, slideId: string): 
   }
   const title = readAttr(bodyAttrs, "data-slide-title");
   const headMatch = slideDoc.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i);
-  const styleMatch = headMatch ? headMatch[1].match(HEAD_STYLE_RE) : null;
+  // Injected chrome (the fixed-canvas base style, inspector css) is tagged
+  // data-lcx — never the slide's own styleCss, so drop it before matching.
+  const headContent = headMatch ? headMatch[1].replace(/<style\s[^>]*\bdata-lcx\b[^>]*>[\s\S]*?<\/style>/gi, "") : "";
+  const styleMatch = headContent ? headContent.match(HEAD_STYLE_RE) : null;
   const styleCss = styleMatch ? styleMatch[1].trim() : "";
   return serializeSlideTemplate({ slideId, title, styleCss, bodyHtml: bodyHtml.trim() });
 }

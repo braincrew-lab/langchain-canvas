@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html as html_lib
 from pathlib import Path
+from typing import Literal
 
 from langchain.chat_models import init_chat_model
 from langchain.tools import ToolRuntime, tool
@@ -53,6 +54,7 @@ from langchain_canvas.replay import (
 from langchain_canvas.store import CanvasFileNotFoundError, CanvasStoreError
 
 from .configuration import config
+from .deck_advanced import create_deck_advanced_tools
 from .deck_batch import (
     SlideSpec,
     _strip_code_fence,
@@ -62,6 +64,9 @@ from .deck_batch import (
     generate_slide_bodies,
     invoke_writer_with_retry,
 )
+from .deck_editing import create_deck_editing_tools
+from .exports import app_exporters
+from .pdf_deck import open_pdf_as_slides
 from .render import render_slide
 from .store import (
     DECK_PATH,
@@ -153,7 +158,11 @@ def _template_fragment(slide_id: str, title: str | None, body_html: str) -> str:
 
 
 def _emit_slide_status(
-    runtime: ToolRuntime, path: str, slide_id: str, stage: str, detail: str | None = None
+    runtime: ToolRuntime,
+    path: str,
+    slide_id: str,
+    stage: Literal["extracting", "generating", "verifying", "complete", "degraded"],
+    detail: str | None = None,
 ) -> None:
     writer = getattr(runtime, "stream_writer", None)
     if writer is None:
@@ -189,14 +198,20 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
             )
             for i, slide_title in enumerate(slide_titles, start=1)
         ]
-        content = serialize_deck(Deck(title=title, ratio=DECK_RATIO, source=None, slides=slides))
+        content = serialize_deck(
+            Deck(title=title, ratio=DECK_RATIO, source=None, slides=slides)
+        )
         description = f"Plan deck: {title} ({len(slides)} slides)"
         commit = STORE.write(tid, DECK_PATH, content, description, actor="agent")
 
         writer = getattr(runtime, "stream_writer", None)
         if writer is not None:
             for event in events_for_commit(
-                DECK_PATH, content, is_new=True, revision=commit.revision, description=description
+                DECK_PATH,
+                content,
+                is_new=True,
+                revision=commit.revision,
+                description=description,
             ):
                 writer(event)
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
@@ -210,7 +225,9 @@ def plan_deck(title: str, slide_titles: list[str], runtime: ToolRuntime) -> str:
 
 
 @tool
-def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolRuntime) -> str:
+def write_slide(
+    path: str, slide_id: str, title: str, brief: str, runtime: ToolRuntime
+) -> str:
     """Write one slide of the deck as canonical slide HTML and check its layout.
 
     Single-slide retry/fix tool — use write_slides to write a deck's slides
@@ -239,7 +256,9 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
     _emit_slide_status(runtime, path, slide_id, "generating")
     try:
         body_html = invoke_writer_with_retry(
-            config.writer_model, build_slide_prompt(brief), max_retries=config.model_max_retries
+            config.writer_model,
+            build_slide_prompt(brief),
+            max_retries=config.model_max_retries,
         )
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
         return f"Error: {exc}"
@@ -247,7 +266,11 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
 
     _emit_slide_status(runtime, path, slide_id, "verifying")
     result = _edit_deck_slide.func(
-        path=path, slide_id=slide_id, template_html=fragment, revision=got.revision, runtime=runtime
+        path=path,
+        slide_id=slide_id,
+        template_html=fragment,
+        revision=got.revision,
+        runtime=runtime,
     )
     if result.startswith("Error:"):
         return result
@@ -269,7 +292,11 @@ def write_slide(path: str, slide_id: str, title: str, brief: str, runtime: ToolR
 
 @tool
 def write_slides(
-    path: str, slide_ids: list[str], titles: list[str], briefs: list[str], runtime: ToolRuntime
+    path: str,
+    slide_ids: list[str],
+    titles: list[str],
+    briefs: list[str],
+    runtime: ToolRuntime,
 ) -> str:
     """Write up to a batch of slides of a deck in one call, generating their
     bodies concurrently.
@@ -328,7 +355,9 @@ def write_slides(
 
     for spec, outcome in zip(specs, outcomes, strict=True):
         if outcome.error:
-            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            _emit_slide_status(
+                runtime, path, spec.slide_id, "degraded", detail=outcome.error
+            )
             continue
 
         _emit_slide_status(runtime, path, spec.slide_id, "verifying")
@@ -336,10 +365,14 @@ def write_slides(
             revision = STORE.read(tid, path).revision
         except CanvasStoreError as exc:
             outcome.error = str(exc)
-            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            _emit_slide_status(
+                runtime, path, spec.slide_id, "degraded", detail=outcome.error
+            )
             continue
 
-        fragment = _template_fragment(spec.slide_id, spec.title, outcome.body_html or "")
+        fragment = _template_fragment(
+            spec.slide_id, spec.title, outcome.body_html or ""
+        )
         edit_result = _edit_deck_slide.func(
             path=path,
             slide_id=spec.slide_id,
@@ -349,7 +382,9 @@ def write_slides(
         )
         if edit_result.startswith("Error:"):
             outcome.error = edit_result.removeprefix("Error: ")
-            _emit_slide_status(runtime, path, spec.slide_id, "degraded", detail=outcome.error)
+            _emit_slide_status(
+                runtime, path, spec.slide_id, "degraded", detail=outcome.error
+            )
             continue
 
         try:
@@ -360,7 +395,9 @@ def write_slides(
             continue
         try:
             metrics, _ = render_slide(slide.body_html, ratio=deck.ratio)
-            outcome.layout_report = _slide_layout_report(f"{path}#{spec.slide_id}", metrics)
+            outcome.layout_report = _slide_layout_report(
+                f"{path}#{spec.slide_id}", metrics
+            )
         except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
             outcome.layout_report = f"(layout check skipped: {exc})"
         _emit_slide_status(runtime, path, spec.slide_id, "complete")
@@ -371,7 +408,9 @@ def write_slides(
     except CanvasStoreError as exc:
         return f"Error: {exc}."
     lines = format_batch_result(path, outcomes).splitlines()
-    lines[0] = f"Wrote {success_count}/{len(specs)} slides to {path} (revision {final_revision})."
+    lines[0] = (
+        f"Wrote {success_count}/{len(specs)} slides to {path} (revision {final_revision})."
+    )
     return "\n".join(lines)
 
 
@@ -453,7 +492,11 @@ def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
 
     fragment = _template_fragment(slide_id, deck.slides[index].title, corrected_html)
     result = _edit_deck_slide.func(
-        path=path, slide_id=slide_id, template_html=fragment, revision=got.revision, runtime=runtime
+        path=path,
+        slide_id=slide_id,
+        template_html=fragment,
+        revision=got.revision,
+        runtime=runtime,
     )
     if result.startswith("Error:"):
         return result
@@ -502,7 +545,9 @@ def write_report(topic: str, runtime: ToolRuntime) -> str:
         doc.commit(description, revision=commit.revision)
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
         return f"Error: {exc}"
-    return f"Drafted a report on “{topic}” — saved as {path} (revision {commit.revision})."
+    return (
+        f"Drafted a report on “{topic}” — saved as {path} (revision {commit.revision})."
+    )
 
 
 @tool
@@ -534,7 +579,10 @@ def build_chart(
             series=[ChartSeries(key="value", label=series_label)],
             id=path,
         )
-        rows = [{"category": c, "value": v} for c, v in zip(categories, values, strict=False)]
+        rows = [
+            {"category": c, "value": v}
+            for c, v in zip(categories, values, strict=False)
+        ]
         handle.set_rows(rows)
         handle.complete()
 
@@ -545,7 +593,9 @@ def build_chart(
             "rows": rows,
         }
         description = f"Build chart: {title[:50]}"
-        commit = STORE.write(tid, path, encode_chart(title, data), description, actor="agent")
+        commit = STORE.write(
+            tid, path, encode_chart(title, data), description, actor="agent"
+        )
         handle.commit(description, revision=commit.revision)
     except Exception as exc:  # noqa: BLE001 - tool boundary: never let a raise abort the run
         return f"Error: {exc}"
@@ -569,11 +619,15 @@ def build_table(
     try:
         tid = thread_id(runtime)
         path = artifact_path(title, TABLE_SUFFIX)
-        norm_columns = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
+        norm_columns = [
+            {"key": c, "label": c.replace("_", " ").title()} for c in columns
+        ]
         canvas = Canvas.from_runtime(runtime)
         handle = canvas.open_table(
             title=title,
-            columns=[TableColumn(**col) for col in norm_columns],
+            columns=[
+                TableColumn(key=col["key"], label=col["label"]) for col in norm_columns
+            ],
             id=path,
         )
         handle.set_rows(rows)
@@ -616,12 +670,15 @@ CANVAS_TOOLS = [
     build_page,
     *create_canvas_tools(STORE),
     *_DECK_TOOLS,
+    *create_deck_editing_tools(STORE, edit_tool=_edit_deck_slide),
+    *create_deck_advanced_tools(STORE),
     create_asset_tool(STORE),
-    create_export_tool(STORE),
+    create_export_tool(STORE, exporters=app_exporters()),
     create_check_table_tool(
         STORE, evaluator=("node", str(_FORMULA_CLI)) if _FORMULA_CLI.exists() else None
     ),
     plan_deck,
+    open_pdf_as_slides,
     write_slide,
     write_slides,
     convert_slide,
