@@ -156,9 +156,14 @@ def _replace_text(body, node_id, text, slots):
 
 
 def _layout_issues(layout):
+    # ``unsupported`` entries carry a bbox for export's raster fallback; the
+    # issue list is read by humans, so keep only the reason string here.
     issues = [
-        {"code": "unsupported", "message": message}
-        for message in layout.get("unsupported", [])
+        {
+            "code": "unsupported",
+            "message": entry["reason"] if isinstance(entry, dict) else entry,
+        }
+        for entry in layout.get("unsupported", [])
     ]
     for el in layout["elements"]:
         if not el.get("visible", True):

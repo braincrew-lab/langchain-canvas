@@ -59,7 +59,8 @@ from .deck_template_models import (
 from .deck_template_prompts import build_judge_prompt, judge_prompt_text
 from .deck_template_writer import TEMPLATE_WRITER_ACTOR
 from .deck_templates import TrustError, _error, require_trusted_artifact
-from .render import measure_slide, viewport_for_ratio
+from .pdf_deck import review_rendered_against_reference
+from .render import measure_slide, render_slide, viewport_for_ratio
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -159,10 +160,14 @@ def _asset_and_font_issues(archetype: Archetype, body_html: str) -> list[dict[st
 
     Both are reported in ``visual_fidelity.issues`` — an unresolved font
     never blocks verification outright (visual is ``degraded``, not
-    ``failed``), but it is never silently dropped either.
+    ``failed``), but it is never silently dropped either. Assets pinned with
+    ``required=False`` (the PDF vector raster layers) are optional overlays
+    the writer may skip, so their absence is not reported at all.
     """
     issues: list[dict[str, Any]] = []
     for asset in archetype.assets:
+        if not asset.required:
+            continue
         if asset.path not in body_html and asset.sha256 not in body_html:
             issues.append(
                 {
@@ -171,6 +176,17 @@ def _asset_and_font_issues(archetype: Archetype, body_html: str) -> list[dict[st
                     "message": "Expected pinned asset reference is missing from the output.",
                 }
             )
+    if archetype.style_css_expected and not archetype.style_css.strip():
+        # Gated on the flag, never on ``style_tokens is not None``: the PPTX
+        # native-table path deliberately keeps filled tokens with empty CSS,
+        # and flagging that combination would be a permanent false positive.
+        issues.append(
+            {
+                "code": "style_tokens_dropped",
+                "id": archetype.id,
+                "message": "The archetype's design-token CSS is missing; original styling is degraded.",
+            }
+        )
     for role in sorted({rule.role for rule in archetype.writing_style if rule.origin == "unknown"}):
         issues.append(
             {
@@ -182,13 +198,76 @@ def _asset_and_font_issues(archetype: Archetype, body_html: str) -> list[dict[st
     return issues
 
 
-def _measure_body(body_html: str, style_css: str, ratio: str) -> dict[str, Any]:
+def _slide_document(body_html: str, style_css: str, ratio: str) -> str:
     width, height = viewport_for_ratio(ratio)
-    document = (
+    return (
         f"<html><head><style>html,body{{margin:0;width:{width}px;height:{height}px}}"
         f"{style_css}</style></head><body>{body_html}</body></html>"
     )
-    return measure_slide(document, ratio=ratio)
+
+
+def _measure_body(body_html: str, style_css: str, ratio: str) -> dict[str, Any]:
+    return measure_slide(_slide_document(body_html, style_css, ratio), ratio=ratio)
+
+
+_REFERENCE_REVIEW_MAX_RESPONSE_TOKENS = 2048
+
+
+def _reference_comparison_issues(
+    archetype: Archetype,
+    body_html: str,
+    ratio: str,
+    *,
+    store: CanvasStore,
+    canvas_id: str,
+    budget: TemplateBudget,
+    review_fn: Callable[[bytes, bytes], list[str]] | None = None,
+) -> list[dict[str, Any]] | None:
+    """Compare the original page render to the current output render.
+
+    Returns ``None`` when the comparison could not be made at all — no
+    pinned ``reference_asset``, an unreadable asset, a render failure, a
+    budget refusal, or an unusable reviewer response. That carries the same
+    contract as ``_geometry_issues``: the caller degrades, never passes
+    silently. The reviewer's verdict only ever degrades; a structural
+    failure is never overridden by it.
+
+    ``review_fn`` defaults to
+    :func:`~app.agent.pdf_deck.review_rendered_against_reference`; it is
+    resolved at call time so tests can substitute the model boundary.
+    """
+    reference = archetype.reference_asset
+    if reference is None:
+        return None
+    try:
+        reference_png = store.read_bytes(
+            canvas_id, reference.path, revision=reference.revision
+        ).data
+    except CanvasStoreError:
+        return None
+
+    document = _slide_document(body_html, archetype.style_css, ratio)
+    try:
+        budget.reserve_model_call(
+            prompt_text=document,
+            max_response_tokens=_REFERENCE_REVIEW_MAX_RESPONSE_TOKENS,
+        )
+    except Exception:  # noqa: BLE001 - budget exhaustion; caller degrades
+        return None
+    try:
+        _, rendered_png = render_slide(document, ratio=ratio)
+    except Exception:  # noqa: BLE001 - rendering boundary; caller degrades, never crashes
+        return None
+
+    review = review_fn or review_rendered_against_reference
+    try:
+        findings = review(reference_png, rendered_png)
+    except Exception:  # noqa: BLE001 - model transport boundary; caller degrades
+        return None
+    return [
+        {"code": "reference_mismatch", "id": archetype.id, "message": finding}
+        for finding in findings
+    ]
 
 
 def _geometry_issues(archetype: Archetype, body_html: str, ratio: str) -> list[dict[str, Any]] | None:
@@ -429,17 +508,40 @@ def verify_template_deck_snapshot(
         dom_issues = _dom_correspondence_issues(archetype, slide.body_html)
         asset_font_issues = _asset_and_font_issues(archetype, slide.body_html)
         geometry_issues = _geometry_issues(archetype, slide.body_html, ready_manifest.ratio)
+        reference_issues = _reference_comparison_issues(
+            archetype,
+            slide.body_html,
+            ready_manifest.ratio,
+            store=store,
+            canvas_id=canvas_id,
+            budget=budget,
+        )
         has_missing_asset = any(issue["code"] == "missing_asset" for issue in asset_font_issues)
         has_unknown_font = any(issue["code"] == "unknown_font_evidence" for issue in asset_font_issues)
+        has_style_tokens_dropped = any(
+            issue["code"] == "style_tokens_dropped" for issue in asset_font_issues
+        )
 
         instance_visual_issues = [
             {**issue, "slide_id": slide_id}
-            for issue in dom_issues + asset_font_issues + (geometry_issues or [])
+            for issue in dom_issues
+            + asset_font_issues
+            + (geometry_issues or [])
+            + (reference_issues or [])
         ]
         visual_issues.extend(instance_visual_issues)
         if dom_issues or has_missing_asset or geometry_issues:
             visual_status = _worse(visual_status, "failed")
-        elif geometry_issues is None or has_unknown_font:
+        elif (
+            geometry_issues is None
+            or has_unknown_font
+            or has_style_tokens_dropped
+            # The reference comparison only ever degrades: an unavailable
+            # comparison (``None``) and a reported mismatch both mean the
+            # original was not shown to match, never that structure failed.
+            or reference_issues is None
+            or reference_issues
+        ):
             visual_status = _worse(visual_status, "degraded")
 
         slot_node_ids = {slot.key: slot.node_id for slot in archetype.slots}

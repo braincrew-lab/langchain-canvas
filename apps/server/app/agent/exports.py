@@ -17,6 +17,14 @@ from langchain_canvas.exporters import (
     default_exporters,
 )
 
+from .export_fallback import (
+    _apply_theme_from_tokens,
+    _background_first,
+    _covered_by_raster,
+    _raster_fallback_items,
+    _style_tokens_from_body,
+)
+from .pdf_fonts import contains_hangul, match_open_source_family
 from .render import measure_slide, viewport_for_ratio
 
 
@@ -199,7 +207,11 @@ def _add_text_block(slide, item, unit):
                 continue
             run = paragraph.add_run()
             run.text = styled["text"]
-            family = styled["font"].split(",")[0].strip("\"' ")
+            family = match_open_source_family(
+                styled["font"].split(",")[0].strip("\"' "),
+                int(styled["weight"]),
+                has_hangul=contains_hangul(styled["text"]),
+            )
             run.font.name = family
             run.font.size = Pt(styled["size"] * unit / 12700)
             run.font.bold = int(styled["weight"]) >= 600
@@ -604,9 +616,21 @@ class EditableDeckPptxExporter:
                 f"<style>{template.style_css}</style></head><body>{body}</body></html>"
             )
             layout = measure_slide(doc, ratio=deck.ratio)
+            if not source_backed:
+                tokens = _style_tokens_from_body(template.body_html)
+                if tokens is not None:
+                    _apply_theme_from_tokens(presentation, tokens)
+            replacements: list[dict] = []
             if layout["unsupported"]:
-                raise ValueError(
-                    f"{template.slide_id}: " + "; ".join(layout["unsupported"])
+                if source_backed:
+                    # Painting over original PPTX objects would destroy their
+                    # editability, so keep rejecting here.
+                    raise ValueError(
+                        f"{template.slide_id}: "
+                        + "; ".join(u["reason"] for u in layout["unsupported"])
+                    )
+                replacements = _raster_fallback_items(
+                    doc, layout["unsupported"], deck.ratio
                 )
             slide = (
                 presentation.slides[slide_index]
@@ -619,23 +643,33 @@ class EditableDeckPptxExporter:
                 else set()
             )
             blocks = {b["key"]: b for b in layout.get("textBlocks", [])}
+            items = _background_first(layout["items"], width, height)
             last = {
                 item["blockKey"]: i
-                for i, item in enumerate(layout["items"])
+                for i, item in enumerate(items)
                 if item["kind"] == "text" and item.get("blockKey") in blocks
             }
-            for index, item in enumerate(layout["items"]):
+            for index, item in enumerate(items):
                 if item.get("pptxId") in patched:
                     continue
                 key = item.get("blockKey")
                 if item["kind"] == "text" and key in blocks:
-                    if index == last[key]:
+                    if index == last[key] and not _covered_by_raster(
+                        blocks[key], replacements
+                    ):
                         _add_text_block(slide, blocks[key], unit)
-                else:
+                elif not _covered_by_raster(item, replacements):
                     _add_item(slide, item, unit)
             for key, block in blocks.items():
-                if key not in last and block.get("pptxId") not in patched:
+                if (
+                    key not in last
+                    and block.get("pptxId") not in patched
+                    and not _covered_by_raster(block, replacements)
+                ):
                     _add_text_block(slide, block, unit)
+            # Added last so the replacement paints over whatever it replaced.
+            for item in replacements:
+                _add_item(slide, item, unit)
         output = io.BytesIO()
         presentation.save(output)
         data = output.getvalue()

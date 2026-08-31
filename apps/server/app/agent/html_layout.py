@@ -16,17 +16,17 @@ LAYOUT_JS = r"""
     if (['SCRIPT','STYLE','HEAD'].includes(el.tagName)) return;
     const pptxId=el.closest('[data-pptx-shape-id]')?.getAttribute('data-pptx-shape-id');
     const base={...box(r),pptxId}, alpha=Number(s.opacity)*inheritedAlpha;
-    if (s.filter!=='none' || s.clipPath!=='none') unsupported.push(el.tagName+': filter/clip-path');
+    if (s.filter!=='none' || s.clipPath!=='none') unsupported.push({reason:el.tagName+': filter/clip-path',...box(r)});
     if (el.tagName==='SVG' || el.tagName==='svg' || el.tagName==='CANVAS') {
-      unsupported.push(el.tagName+': use editable HTML shapes or an original image asset'); return;
+      unsupported.push({reason:el.tagName+': use editable HTML shapes or an original image asset',...box(r)}); return;
     }
     if (s.transform.startsWith('matrix(')) {
       const m=s.transform.slice(7,-1).split(',').map(Number);
-      if (Math.abs(m[1])>0.001 || Math.abs(m[2])>0.001) unsupported.push(el.tagName+': rotated/skewed element');
+      if (Math.abs(m[1])>0.001 || Math.abs(m[2])>0.001) unsupported.push({reason:el.tagName+': rotated/skewed element',...box(r)});
     }
     for (const pseudo of ['::before','::after']) {
       const p=getComputedStyle(el,pseudo);
-      if (p.content!=='none' && p.content!=='normal' && p.content!=='""') unsupported.push(el.tagName+': pseudo-element content');
+      if (p.content!=='none' && p.content!=='normal' && p.content!=='""') unsupported.push({reason:el.tagName+': pseudo-element content',...box(r)});
     }
     if (r.width>0 && r.height>0 && (s.backgroundColor!=='rgba(0, 0, 0, 0)' || s.backgroundImage!=='none')) {
       if (s.backgroundImage.startsWith('url(')) {
@@ -48,7 +48,7 @@ LAYOUT_JS = r"""
       }
     }
     if (el.tagName==='IMG') {
-      if (!el.complete || !el.naturalWidth) unsupported.push('image could not be loaded');
+      if (!el.complete || !el.naturalWidth) unsupported.push({reason:'image could not be loaded',...box(r)});
       else items.push({...base,kind:'image',src:el.currentSrc||el.src,fit:s.objectFit,alpha});
       return;
     }
@@ -79,6 +79,8 @@ LAYOUT_JS = r"""
     }
   }
   paint(document.body);
-  return {width:innerWidth,height:innerHeight,items,unsupported:[...new Set(unsupported)]};
+  // Object identity never dedupes, so key on reason plus box instead.
+  const distinct=new Map(unsupported.map(u=>[JSON.stringify(u),u]));
+  return {width:innerWidth,height:innerHeight,items,unsupported:[...distinct.values()]};
 }
 """

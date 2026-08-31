@@ -215,6 +215,78 @@ and every factual claim in the output must trace back to the original
 `input_slots`/`required_facts`, never to the writer model's own
 self-reported `fact_coverage` or a matching content hash.
 
+## Design tokens, fonts, and rasterized vector art
+
+Three additional archetype fields carry original-page visual fidelity through the
+`prepare`/`finalize` compile step, beyond the `frame_html`/`slots`/`writing_style`
+described above (`deck_template_models.py::Archetype`):
+
+- **`style_tokens: StyleTokens | None`** — a structured extraction of the source
+  page's palette, type scale, and background (`apps/server/app/agent/style_tokens.py`).
+  For a PDF-sourced archetype, `tokens_to_css` renders these tokens into role-selector
+  CSS (`[data-text-role="title"|"body"|"caption"]`, literal declarations only — no CSS
+  custom properties, since the sanitizer's declaration allowlist drops those) that
+  becomes `Archetype.style_css`. Because `frame_html` nodes carry inline styles, this
+  generated CSS never overrides existing original content — it only supplies role
+  defaults to nodes `write_deck_from_template` fills in without an inline
+  `font-family`/`color` of their own.
+- **`style_css_expected: bool`** — whether `style_css` is required to be non-empty for
+  this archetype. The PDF compile path always sets it `True`. The PPTX compile path
+  sets it `True` unless the archetype's `frame_html` contains a native `<table>`, in
+  which case `style_css` stays `""` and `style_css_expected` stays `False` — filling it
+  would trip `_guard_native_table_css` and abort export outright. When
+  `style_css_expected` is `True` but `style_css` is empty, verification reports a
+  `style_tokens_dropped` issue and `visual_fidelity` degrades (see the status table
+  above).
+- **`reference_asset: AssetRef | None`** — a pinned render of the original source page
+  (`PdfPageSource.reference_png`), used only as verification input; it is never
+  referenced from `frame_html` and is therefore exempt from the "every asset must
+  appear in the output" check described below.
+
+Complex vector artwork (more than 32 path segments in one cluster) is no longer
+discarded. `pdf_source.py::extract_pdf_pages` merges adjacent complex clusters and
+rasterizes each one at 2x into a positioned PNG, registered in `source.images` /
+`source.image_boxes` with `"layer": "vector"` — the same asset-whitelist path every
+other original image uses. These layers are optional: their `AssetRef.required` is
+`False`, so the writer may omit placing one without triggering a `missing_asset`
+failure, and they are excluded from both sides (numerator and denominator) of the
+reconstruction node-count census. A cluster overlapping more than 75% with an existing
+text bounding box is dropped rather than rasterized, to avoid baking a text glyph
+outline into an image.
+
+Embedded PDF fonts are extracted as raw bytes (`apps/server/app/agent/pdf_fonts.py`)
+and injected as `data:`-URI `@font-face` declarations into the render/measure document
+wrapper only — never into `Archetype.style_css`, since the sanitizer's declaration
+allowlist drops `src`. This makes rendering and geometry measurement use the actual
+source typeface instead of a silently substituted one. If the pdfium raw font-data API
+is unavailable in a given environment, font-byte extraction falls back to an empty
+list without failing the compile — font *matching* (below) still runs. Export never
+embeds font bytes; instead, the measured family is normalized through a fixed
+open-source curation table (`match_open_source_family`) before being written to the
+PPTX run — e.g. Malgun Gothic/맑은 고딕 → Noto Sans KR, Batang/바탕 → Noto Serif KR,
+Helvetica/Arial/Segoe UI → Inter, Times/Georgia → Source Serif 4, Courier/Consolas →
+JetBrains Mono. A family outside the table is kept unchanged rather than guessed.
+
+## Reference-image comparison
+
+`verify_template_deck` compares the current render against the archetype's pinned
+`reference_asset` (the original source page), reusing the same model-based two-image
+review core as the full-conversion path's `review_pdf_html`
+(`apps/server/app/agent/pdf_deck.py::review_rendered_against_reference`). Any reported
+finding becomes a `reference_mismatch` issue and degrades `visual_fidelity`; the
+comparison being unavailable at all (no pinned reference, an unreadable asset, a render
+failure, or a budget refusal) also degrades rather than passing silently. This
+comparison only ever degrades — it never overrides a structural `failed` finding from
+the DOM-correspondence check.
+
+`convert_slide`, the tool used to fix mechanical layout defects on an imported slide
+(`deck.source` required), no longer injects the deck's house style
+(`DECK_STYLE` — headline size ranges, display-serif fonts, fixed padding, single accent
+color). Its prompt now asks the model to fix only overlap/clipping/off-canvas defects
+and explicitly preserve the source design's fonts, colors, and visual style. The
+`DECK_STYLE` constant itself is unchanged and still governs the *new-deck* writing path
+(`deck_batch.py::build_slide_prompt`), which has no original source to preserve.
+
 ## Reading verification results
 
 ```python
@@ -237,7 +309,7 @@ Each dimension's `status` is one of:
 | --- | --- |
 | `verified` | Positively confirmed — every check for this dimension passed. |
 | `failed` | A concrete violation was found (missing/extra DOM node, missing pinned asset, verbatim text mismatch, a judge-flagged missing/unsupported/contradictory fact or claim). |
-| `degraded` | Not a hard failure, but not fully proven either — an unresolved original font, or an unmeasurable geometry backend. Only ever applies to `visual_fidelity`. |
+| `degraded` | Not a hard failure, but not fully proven either. Only ever applies to `visual_fidelity`, on any of: an unresolved original font (`unknown_font_evidence`); an unmeasurable geometry backend (`_geometry_issues` returns `None`); the archetype's design-token CSS is expected but empty (`style_tokens_dropped` — see "Design tokens, fonts, and rasterized vector art" above); or the reference-image comparison against the original page could not run or reported a mismatch (`reference_mismatch`, or the comparison itself returning `None` — see "Reference-image comparison" below). |
 | `not_checked` | The dimension could not be evaluated at all (missing original input slots, an unavailable or malformed runtime judge, an ambiguous judge finding). Never treated as a pass. |
 
 `writing_style` is `not_checked`, never vacuously `verified`, in two additional cases: every
@@ -273,7 +345,16 @@ behaves exactly as before; nothing about the existing wire protocol,
   `DeckPptxExporter.export` fails closed with `unsupported_template_export`
   when a deck carries `lcx:template` metadata — it never attempts a
   best-effort ordinal-patch export of a source-grounded deck.
-- Real customer-file fidelity (actual installed fonts, non-synthetic page
-  layouts) is `UNVERIFIED` beyond the synthetic fixtures this feature ships
-  with; this is a fidelity confirmation gap, not a blocker for the synthetic
-  implementation.
+- Within `EditableDeckPptxExporter.export`, unsupported CSS (filters,
+  `clip-path`, inline SVG/canvas, rotation/skew, `::before`/`::after`, or a
+  failed-to-load image) no longer aborts the whole export for a non-source
+  (`source_backed=False`) deck — the affected region is instead replaced with
+  a positioned raster picture cropped from a full-slide render, leaving the
+  rest of the slide's text editable. A source-backed deck (real PPTX objects
+  present) still raises on the same condition, since painting over an
+  original PPTX object would destroy its editability. For a non-source deck,
+  the export also reads the `data-style-tokens` attribute the writer stamped
+  onto the slide root (re-validated with `StyleTokens.model_validate`,
+  skipped safely on invalid/missing JSON) and sets the slide master's
+  background fill from the token's background color; a full-bleed original
+  background image is placed first so nothing else covers it.

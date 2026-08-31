@@ -5,10 +5,18 @@ import io
 
 import pytest
 from app.agent.exports import EditableDeckPptxExporter, _add_item, _fill
-from langchain_canvas.deck import Deck, SlideTemplate, serialize_deck
+from app.agent.style_tokens import BackgroundToken, StyleTokens
+from langchain_canvas.deck import (
+    Deck,
+    SlideTemplate,
+    sanitize_slide_html,
+    serialize_deck,
+)
 from langchain_canvas.exporters import PPTX_MIME
 from PIL import Image
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_FILL
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.util import Inches
 
@@ -183,6 +191,151 @@ def test_ten_template_instances_export_editable_without_old_source_objects():
     assert "Body 10" in all_text
 
 
+def _text_block(key, x, y, w, h, text):
+    return {
+        "key": key,
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "paragraphs": [
+            {
+                "align": "left",
+                "lineHeight": 20,
+                "runs": [
+                    {
+                        "text": text,
+                        "font": "Arial",
+                        "size": 16,
+                        "weight": "400",
+                        "italic": False,
+                        "underline": False,
+                        "color": "rgb(0, 0, 0)",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _stub_layout(monkeypatch, *, unsupported, items, blocks):
+    """Drive the exporter with a fixed layout and a fixed raster replacement."""
+    calls = {}
+
+    def fake_measure_slide(document, *, ratio):
+        calls["measure_ratio"] = ratio
+        return {
+            "width": 1280,
+            "height": 720,
+            "items": items,
+            "textBlocks": blocks,
+            "unsupported": unsupported,
+        }
+
+    def fake_fallback(document, entries, ratio):
+        calls["fallback_entries"] = entries
+        calls["fallback_ratio"] = ratio
+        return [
+            {
+                "kind": "image",
+                "src": _url(_png((20, 10), "red")),
+                "fit": "fill",
+                "x": entry["x"],
+                "y": entry["y"],
+                "w": entry["w"],
+                "h": entry["h"],
+            }
+            for entry in entries
+        ]
+
+    monkeypatch.setattr("app.agent.exports.measure_slide", fake_measure_slide)
+    monkeypatch.setattr("app.agent.exports._raster_fallback_items", fake_fallback)
+    return calls
+
+
+def test_unsupported_filter_element_exports_as_positioned_picture():
+    presentation = _export(
+        '<section data-text-block="b1">'
+        '<div style="position:absolute;left:100px;top:80px;width:200px;height:120px;'
+        'filter:blur(2px);background:#c00"></div></section>'
+    )
+    pictures = [
+        s
+        for s in presentation.slides[0].shapes
+        if s.shape_type == MSO_SHAPE_TYPE.PICTURE
+    ]
+    assert len(pictures) == 1
+    unit = presentation.slide_width / 1280
+    assert abs(pictures[0].left - round(100 * unit)) <= unit
+    assert abs(pictures[0].top - round(80 * unit)) <= unit
+    # A real crop of the rendered slide, not a placeholder.
+    assert pictures[0].image.size == (200, 120)
+
+
+def test_unsupported_element_does_not_double_draw_covered_items(monkeypatch):
+    calls = _stub_layout(
+        monkeypatch,
+        unsupported=[{"reason": "filter/clip-path", "x": 100, "y": 80, "w": 200, "h": 120}],
+        items=[],
+        blocks=[
+            _text_block("covered", 110, 90, 100, 40, "COVERED"),
+            _text_block("outside", 600, 400, 100, 40, "OUTSIDE"),
+        ],
+    )
+    presentation = _export('<section data-text-block="b1">x</section>')
+    texts = [
+        s.text_frame.text
+        for s in presentation.slides[0].shapes
+        if s.has_text_frame
+    ]
+    assert calls["fallback_ratio"] == "16:9"
+    assert calls["fallback_entries"][0]["reason"] == "filter/clip-path"
+    assert "COVERED" not in texts
+    assert "OUTSIDE" in texts
+
+
+def test_partially_overlapping_item_is_still_drawn(monkeypatch):
+    _stub_layout(
+        monkeypatch,
+        unsupported=[{"reason": "filter/clip-path", "x": 100, "y": 80, "w": 200, "h": 120}],
+        items=[],
+        blocks=[_text_block("straddling", 250, 90, 200, 40, "STRADDLING")],
+    )
+    presentation = _export('<section data-text-block="b1">x</section>')
+    texts = [
+        s.text_frame.text
+        for s in presentation.slides[0].shapes
+        if s.has_text_frame
+    ]
+    assert "STRADDLING" in texts
+
+
+def test_source_backed_deck_still_rejects_unsupported_css():
+    source = Presentation()
+    source.slides.add_slide(source.slide_layouts[6])
+    buffer = io.BytesIO()
+    source.save(buffer)
+    content = serialize_deck(
+        Deck(
+            "Test",
+            "16:9",
+            _url(buffer.getvalue(), PPTX_MIME),
+            [
+                SlideTemplate(
+                    "s1",
+                    None,
+                    "",
+                    '<section><div style="position:absolute;left:10px;top:10px;'
+                    'width:80px;height:80px;clip-path:circle(40px);'
+                    'background:#0c0"></div></section>',
+                )
+            ],
+        )
+    )
+    with pytest.raises(ValueError, match="clip-path"):
+        EditableDeckPptxExporter().export(content, path="test.slides.html")
+
+
 def test_unsupported_gradient_and_fragment_contract_fail_clearly():
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
@@ -191,3 +344,77 @@ def test_unsupported_gradient_and_fragment_contract_fail_clearly():
         _fill(shape, {"gradient": "linear-gradient(red,blue)"})
     with pytest.raises(ValueError, match="semantic editing block"):
         _add_item(slide, {"kind": "text", "x": 0, "y": 0, "w": 100, "h": 20}, 1)
+
+
+def _image_item(x, y, w, h, size):
+    return {
+        "kind": "image",
+        "src": _url(_png(size, "blue")),
+        "fit": "fill",
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+    }
+
+
+def test_full_bleed_background_image_is_added_before_other_shapes(monkeypatch):
+    _stub_layout(
+        monkeypatch,
+        unsupported=[],
+        items=[
+            _image_item(400, 300, 100, 50, (100, 50)),
+            _image_item(0, 0, 1280, 720, (160, 90)),
+        ],
+        blocks=[],
+    )
+    presentation = _export('<section data-text-block="b1">x</section>')
+    shapes = list(presentation.slides[0].shapes)
+    unit = presentation.slide_width / 1280
+    assert shapes[0].width == round(1280 * unit)
+    assert shapes[0].top == 0
+
+
+def test_export_normalizes_measured_font_to_matched_open_source_name(monkeypatch):
+    block = _text_block("b1", 10, 10, 400, 40, "분기 실적")
+    block["paragraphs"][0]["runs"][0]["font"] = "Malgun Gothic, sans-serif"
+    _stub_layout(monkeypatch, unsupported=[], items=[], blocks=[block])
+
+    presentation = _export('<section data-text-block="b1">x</section>')
+
+    shape = next(s for s in presentation.slides[0].shapes if s.has_text_frame)
+    run = shape.text_frame.paragraphs[0].runs[0]
+    assert run.font.name == "Noto Sans KR"
+    assert run._r.xpath(".//a:ea/@typeface") == ["Noto Sans KR"]
+
+
+def _deck_with_tokens_attribute(attribute_value):
+    body = sanitize_slide_html(
+        f'<section class="slide" data-style-tokens=\'{attribute_value}\'>'
+        '<div style="position:absolute;left:10px;top:10px;width:80px;height:40px;'
+        'background:#0c0"></div></section>'
+    ).html
+    return _export(body)
+
+
+def test_theme_sets_master_background_from_tokens():
+    tokens = StyleTokens(background=BackgroundToken(kind="solid", value="#112233"))
+    presentation = _deck_with_tokens_attribute(tokens.model_dump_json())
+    fill = presentation.slide_master.background.fill
+    assert fill.type == MSO_FILL.SOLID
+    assert fill.fore_color.rgb == RGBColor.from_string("112233")
+
+
+@pytest.mark.parametrize(
+    "attribute_value",
+    [
+        "{not json",
+        '{"colors": 3}',
+        # A named CSS color validates as a plain string but is not a color the
+        # PPTX writer can parse: the export must still succeed, unthemed.
+        '{"background": {"kind": "solid", "value": "red"}}',
+    ],
+)
+def test_theme_skipped_when_style_tokens_attribute_is_invalid_json(attribute_value):
+    presentation = _deck_with_tokens_attribute(attribute_value)
+    assert presentation.slide_master.background.fill.type != MSO_FILL.SOLID

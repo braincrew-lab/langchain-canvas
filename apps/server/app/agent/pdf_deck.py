@@ -26,6 +26,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from .configuration import config
 from .deck_batch import _strip_code_fence
+from .pdf_fonts import build_font_face_css
 from .pdf_source import PdfPageSource, extract_pdf_pages
 from .render import measure_slide, pdf_text_styles, render_slide
 from .resilience import should_retry_model_call
@@ -63,6 +64,8 @@ Use inline styles. Text must remain visible and editable, never hidden or transp
 Use original image objects ONLY through the exact src names in the image inventory.
 Place ALL original images at their exact x/y/w/h, in inventory order. Their lettering
 is already in those source assets; do not invent an extra footer or duplicate it.
+An image inventory entry with layer="vector" is pre-rasterized original artwork: place it
+at its exact x/y/w/h in inventory order and never redraw it as CSS shapes.
 Also reproduce all vector_shapes as native CSS rectangles/borders/lines. Use the
 order field across shapes, images and text to preserve their original paint order.
 The vector segments describe actual paths (type 2=move, 0=line, 1=Bezier), not
@@ -139,7 +142,11 @@ def write_pdf_html(
     if source.texts and "css_top" not in source.texts[0]:
         for text, style in zip(
             source.texts,
-            pdf_text_styles(source.texts, source.reference_png),
+            pdf_text_styles(
+                source.texts,
+                source.reference_png,
+                font_face_css=build_font_face_css(source.fonts),
+            ),
             strict=True,
         ):
             if "reference_color" in style:
@@ -309,26 +316,23 @@ def inline_pdf_images(markup: str, source: PdfPageSource) -> str:
     return markup
 
 
-def review_pdf_html(source: PdfPageSource, rendered: bytes) -> list[str]:
+def review_rendered_against_reference(
+    reference_png: bytes, rendered_png: bytes, *, extra_content: list[dict] | None = None
+) -> list[str]:
+    """Compare an original page render to a reconstructed render.
+
+    The single place the visual-review prompt lives. ``extra_content``
+    appends already-built message parts (``review_pdf_html`` passes its
+    enlarged clipped-text crops); the two whole-page images always come
+    first so the prompt's "first image"/"second image" wording holds.
+    """
     content = [
         {"type": "text", "text": "Reference PDF page:"},
-        _image(source.reference_png),
+        _image(reference_png),
         {"type": "text", "text": "Rendered HTML:"},
-        _image(rendered),
+        _image(rendered_png),
+        *(extra_content or []),
     ]
-    for (_, reference), (_, actual) in zip(
-        source_reference_crops(source),
-        reference_crops(rendered, source.clipped_text_regions),
-        strict=True,
-    ):
-        content.extend(
-            [
-                {"type": "text", "text": "Enlarged reference lettering:"},
-                _image(reference),
-                {"type": "text", "text": "Same region of rendered HTML:"},
-                _image(actual),
-            ]
-        )
     result = _invoke(
         "Compare the reference PDF page (first image) to the reconstructed HTML (second image). "
         "Identify concrete differences in text, positions, size, font, colors, tables, images or missing elements. "
@@ -349,6 +353,26 @@ def review_pdf_html(source: PdfPageSource, rendered: bytes) -> list[str]:
     return issues
 
 
+def review_pdf_html(source: PdfPageSource, rendered: bytes) -> list[str]:
+    crops: list[dict] = []
+    for (_, reference), (_, actual) in zip(
+        source_reference_crops(source),
+        reference_crops(rendered, source.clipped_text_regions),
+        strict=True,
+    ):
+        crops.extend(
+            [
+                {"type": "text", "text": "Enlarged reference lettering:"},
+                _image(reference),
+                {"type": "text", "text": "Same region of rendered HTML:"},
+                _image(actual),
+            ]
+        )
+    return review_rendered_against_reference(
+        source.reference_png, rendered, extra_content=crops
+    )
+
+
 def reconstruct_pdf_page(
     source: PdfPageSource, *, budget: "TemplateBudget | None" = None
 ) -> tuple[str, list[str]]:
@@ -360,6 +384,11 @@ def reconstruct_pdf_page(
     call, ``render_slide``, and ``measure_slide`` is bounded by it.
     """
     ratio = f"{source.width}:{source.height}"
+    # Embedded faces belong to the document wrapper, not to the model's
+    # markup: ``prepare_pdf_html`` has already run, and stored slide CSS
+    # would lose the ``src`` declaration to the sanitizer.
+    font_faces = build_font_face_css(source.fonts)
+    font_style = f"<style>{font_faces}</style>" if font_faces else ""
     previous = None
     feedback: list[str] = []
     last_valid: str | None = None
@@ -372,7 +401,7 @@ def reconstruct_pdf_page(
             clean = prepare_pdf_html(previous, source)
             height = round(1280 * source.height / source.width)
             inlined = inline_pdf_images(clean, source)
-            doc = f'<html><head><meta charset="utf-8"><style>html,body{{margin:0;width:1280px;height:{height}px}}*{{box-sizing:border-box}}</style></head><body>{inlined}</body></html>'
+            doc = f'<html><head><meta charset="utf-8">{font_style}<style>html,body{{margin:0;width:1280px;height:{height}px}}*{{box-sizing:border-box}}</style></head><body>{inlined}</body></html>'
             if budget is not None:
                 with budget.run_stage(f"render_slide_pdf_page_{source.number}"):
                     metrics, screenshot = render_slide(doc, ratio=ratio)

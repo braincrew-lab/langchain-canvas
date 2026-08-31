@@ -68,6 +68,7 @@ ALLOWED_ATTRS: frozenset[str] = frozenset(
         "data-node-id",
         "data-chart-type",
         "data-chart-data",
+        "data-style-tokens",
         "data-text-block",
         "data-text-role",
         "data-slide-id",

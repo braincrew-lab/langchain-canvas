@@ -386,3 +386,17 @@ def test_bad_or_oversized_template_metadata_rejected() -> None:
                 template=oversized_payload,
             )
         )
+
+
+def test_sanitizer_keeps_data_style_tokens_attribute() -> None:
+    dirty = (
+        '<section class="slide" data-style-tokens=\'{"colors":[]}\' '
+        'data-unknown="drop me"><p>text</p></section>'
+    )
+
+    result = sanitize_slide_html(dirty)
+
+    assert 'data-style-tokens="{&quot;colors&quot;:[]}"' in result.html
+    assert not any("data-style-tokens" in entry for entry in result.removed)
+    assert "data-unknown" not in result.html
+    assert any("data-unknown" in entry for entry in result.removed)

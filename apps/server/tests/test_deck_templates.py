@@ -42,6 +42,7 @@ from app.agent.deck_templates import (
 )
 from app.agent.pdf_source import PdfPageSource
 from langchain_canvas.store import InMemoryCanvasStore
+from template_source_fixtures import complex_vector_pdf_source, korean_pptx_source
 
 pdfium = pytest.importorskip("pypdfium2")
 from pypdfium2 import raw  # noqa: E402
@@ -1192,3 +1193,197 @@ def test_style_profiling_failure_leaves_ready_without_rules(monkeypatch: pytest.
         store.read(CANVAS_ID, ref.path, revision=ref.revision).content
     )
     assert manifest.archetypes[0].writing_style == []
+
+
+# --- U1: design tokens persisted on the compiled archetype ---------------------------
+
+
+def test_compile_pdf_archetype_populates_style_css_from_tokens() -> None:
+    """The PDF compile path fills ``style_css`` from the page's own type scale."""
+    data = _pdf(1)
+    store = _store_with("sources/deck.pdf", data)
+
+    def _reconstruct(source: PdfPageSource) -> tuple[str, list[str]]:
+        nodes = "".join(
+            f'<p data-node-id="pdf-text-{i}" data-text-block="true" '
+            f'data-text-role="title">{t["text"]}</p>'
+            for i, t in enumerate(source.texts)
+        )
+        return f"<section class='slide'>{nodes}</section>", []
+
+    prepared = prepare_template(
+        PrepareRequest(
+            mode="prepare", source="sources/deck.pdf", source_sha256=_sha256(data), pages=[1]
+        ),
+        store=store,
+        canvas_id=CANVAS_ID,
+        reconstruct_pdf_page_fn=_reconstruct,
+    )
+    ref = ArtifactRef(**prepared["candidate_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+
+    archetype = manifest.archetypes[0]
+    assert archetype.style_css != ""
+    assert archetype.style_css_expected is True
+    assert archetype.style_tokens is not None
+    assert archetype.style_tokens.type_scale != []
+
+
+def test_compile_pptx_archetype_populates_style_css_from_tokens() -> None:
+    """The PPTX compile path fills ``style_css`` from the measured layout's
+    own type scale when the slide carries no native table."""
+    data = korean_pptx_source([("보고서 제목", "보고서 본문 설명입니다.")])
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(
+            mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]
+        ),
+        store=store,
+        canvas_id=CANVAS_ID,
+    )
+    ref = ArtifactRef(**prepared["candidate_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+
+    archetype = manifest.archetypes[0]
+    assert archetype.style_css != ""
+    assert archetype.style_css_expected is True
+    assert archetype.style_tokens is not None
+    assert archetype.style_tokens.type_scale != []
+
+
+def test_compile_pptx_table_archetype_keeps_style_css_empty() -> None:
+    """A native-table slide keeps ``style_css`` empty (export's
+    ``_guard_native_table_css`` would otherwise abort the export), but still
+    records ``style_tokens`` and marks ``style_css_expected`` false so the
+    degrade check does not misclassify the empty CSS as a dropped token."""
+    data = _pptx_deck_with_native_table()
+    store = _store_with("sources/deck.pptx", data)
+
+    prepared = prepare_template(
+        PrepareRequest(
+            mode="prepare", source="sources/deck.pptx", source_sha256=_sha256(data), pages=[1]
+        ),
+        store=store,
+        canvas_id=CANVAS_ID,
+    )
+    ref = ArtifactRef(**prepared["candidate_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+
+    archetype = manifest.archetypes[0]
+    assert archetype.style_css == ""
+    assert archetype.style_css_expected is False
+    assert archetype.style_tokens is not None
+
+
+# --- U3: vector raster layers are optional on both sides of the node census ----------
+
+
+def _text_nodes(source: PdfPageSource) -> str:
+    return "".join(
+        f'<p data-node-id="pdf-text-{index}" data-text-block="true" '
+        f'data-text-role="body">{text["text"]}</p>'
+        for index, text in enumerate(source.texts)
+    )
+
+
+def _layer_boxes(source: PdfPageSource) -> list[dict[str, Any]]:
+    return [box for box in source.image_boxes if "layer" in box]
+
+
+def _layer_img_nodes(source: PdfPageSource) -> str:
+    return "".join(
+        f'<img data-node-id="pdf-layer-{index}" src="{box["src"]}" '
+        f'style="position:absolute;left:{box["x"]}px;top:{box["y"]}px;'
+        f'width:{box["w"]}px;height:{box["h"]}px">'
+        for index, box in enumerate(_layer_boxes(source))
+    )
+
+
+def _prepare_vector_pdf(reconstruct: Any) -> tuple[dict[str, Any], InMemoryCanvasStore]:
+    data = complex_vector_pdf_source()
+    store = _store_with("sources/vector.pdf", data)
+    prepared = prepare_template(
+        PrepareRequest(
+            mode="prepare", source="sources/vector.pdf", source_sha256=_sha256(data), pages=[1]
+        ),
+        store=store,
+        canvas_id=CANVAS_ID,
+        reconstruct_pdf_page_fn=reconstruct,
+    )
+    return prepared, store
+
+
+def _node_count_issues(prepared: dict[str, Any]) -> list[str]:
+    return [
+        issue
+        for issue in prepared["archetypes"][0]["reconstruction_issues"]
+        if "node count does not match" in issue
+    ]
+
+
+def test_compile_excludes_layer_boxes_from_node_count_census() -> None:
+    """A vector layer the writer did not place must not inflate the denominator."""
+    seen: dict[str, Any] = {}
+
+    def _reconstruct(source: PdfPageSource) -> tuple[str, list[str]]:
+        seen["layers"] = _layer_boxes(source)
+        return f"<section class='slide'>{_text_nodes(source)}</section>", []
+
+    prepared, store = _prepare_vector_pdf(_reconstruct)
+
+    assert seen["layers"], "fixture must register at least one vector layer"
+    assert _node_count_issues(prepared) == []
+
+    ref = ArtifactRef(**prepared["candidate_ref"])
+    manifest = CompiledTemplateManifest.model_validate_json(
+        store.read(CANVAS_ID, ref.path, revision=ref.revision).content
+    )
+    assets = manifest.archetypes[0].assets
+    assert len(assets) == len(seen["layers"])
+    assert all(asset.required is False for asset in assets)
+    assert store.read_bytes(CANVAS_ID, assets[0].path, revision=assets[0].revision).data
+
+
+def test_compile_ignores_layer_img_nodes_in_census_when_writer_places_them() -> None:
+    """Placing the layer as an ``<img>`` — the prompt's contract — also passes."""
+
+    def _reconstruct(source: PdfPageSource) -> tuple[str, list[str]]:
+        assert _layer_boxes(source), "fixture must register at least one vector layer"
+        body = _text_nodes(source) + _layer_img_nodes(source)
+        return f"<section class='slide'>{body}</section>", []
+
+    prepared, _ = _prepare_vector_pdf(_reconstruct)
+
+    assert _node_count_issues(prepared) == []
+
+
+def test_vector_layer_img_is_measured_as_image_item() -> None:
+    """The placed layer really paints: an image item at the cluster bbox, not unsupported."""
+    from app.agent.pdf_deck import inline_pdf_images
+    from app.agent.pdf_source import extract_pdf_pages
+    from app.agent.render import measure_slide, viewport_for_ratio
+
+    source = extract_pdf_pages(complex_vector_pdf_source(), [1])[0]
+    box = _layer_boxes(source)[0]
+    frame_html = f"<section class='slide'>{_text_nodes(source)}{_layer_img_nodes(source)}</section>"
+    ratio = f"{source.width}:{source.height}"
+    width, height = viewport_for_ratio(ratio)
+    document = (
+        f"<html><head><style>html,body{{margin:0;width:{width}px;height:{height}px}}"
+        f"</style></head><body>{inline_pdf_images(frame_html, source)}</body></html>"
+    )
+
+    layout = measure_slide(document, ratio=ratio)
+
+    images = [item for item in layout["items"] if item.get("kind") == "image"]
+    assert len(images) == 1, layout["items"]
+    for key in ("x", "y", "w", "h"):
+        assert abs(images[0][key] - box[key]) <= 2, images[0]
+    assert layout["unsupported"] == []

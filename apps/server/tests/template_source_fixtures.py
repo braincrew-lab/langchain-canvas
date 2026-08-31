@@ -78,14 +78,66 @@ def _text_object(document: Any, text: str, x: float, y: float, size: float = 18.
     return obj
 
 
-def text_pdf_source(pages: list[list[tuple[str, float, float]]]) -> bytes:
-    """A text-bearing PDF; each page is a list of ``(text, x, y)`` placements."""
+def text_pdf_source(
+    pages: list[list[tuple[str, float, float] | tuple[str, float, float, float]]],
+) -> bytes:
+    """A text-bearing PDF; each page is a list of ``(text, x, y[, size])`` placements.
+
+    The optional fourth element sets that one text object's font size, so a
+    page can carry a real typographic hierarchy (U1 token extraction). Existing
+    3-tuple callers keep ``_text_object``'s default size.
+    """
     document = pdfium.PdfDocument.new()
     for items in pages:
         page = document.new_page(612.0, 792.0)
-        for text, x, y in items:
-            raw.FPDFPage_InsertObject(page.raw, _text_object(document, text, x, y))
+        for item in items:
+            text, x, y = item[0], item[1], item[2]
+            size = item[3] if len(item) == 4 else 18.0
+            raw.FPDFPage_InsertObject(page.raw, _text_object(document, text, x, y, size))
         page.gen_content()
+    out = io.BytesIO()
+    document.save(out)
+    document.close()
+    return out.getvalue()
+
+
+_VECTOR_PATH_SEGMENTS = 40
+
+
+def _complex_path_object(x: float, y: float, w: float, h: float) -> Any:
+    """A filled zig-zag path whose segment count exceeds the 32-segment cutoff."""
+    obj = raw.FPDFPageObj_CreateNewPath(x, y)
+    for index in range(1, _VECTOR_PATH_SEGMENTS + 1):
+        raw.FPDFPath_LineTo(
+            obj,
+            x + w * index / _VECTOR_PATH_SEGMENTS,
+            y + (h if index % 2 else 0.0),
+        )
+    raw.FPDFPath_SetDrawMode(obj, raw.FPDF_FILLMODE_WINDING, False)
+    raw.FPDFPageObj_SetFillColor(obj, 20, 90, 200, 255)
+    return obj
+
+
+def complex_vector_pdf_source(
+    boxes: list[tuple[float, float, float, float]] | None = None,
+    texts: list[tuple[str, float, float]] | None = None,
+) -> bytes:
+    """A one-page PDF whose vector art is too complex to survive as shape data.
+
+    Each box is ``(x, y, w, h)`` in PDF user space (origin bottom-left) and is
+    drawn as one path of 41 segments, above the cutoff that decides whether a
+    path is kept as shape data or deferred to a raster layer. The default box
+    sits far from the default text so the two never overlap.
+    """
+    boxes = [(320.0, 200.0, 160.0, 120.0)] if boxes is None else boxes
+    texts = [("Alpha", 60.0, 700.0)] if texts is None else texts
+    document = pdfium.PdfDocument.new()
+    page = document.new_page(612.0, 792.0)
+    for text, x, y in texts:
+        raw.FPDFPage_InsertObject(page.raw, _text_object(document, text, x, y))
+    for box in boxes:
+        raw.FPDFPage_InsertObject(page.raw, _complex_path_object(*box))
+    page.gen_content()
     out = io.BytesIO()
     document.save(out)
     document.close()

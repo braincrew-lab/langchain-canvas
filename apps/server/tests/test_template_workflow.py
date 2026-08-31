@@ -170,6 +170,18 @@ def _patch_measure_slide(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.deck_template_verification.measure_slide", _fake_measure)
 
 
+def _patch_reference_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean reference-comparison stub: no renderer, no reviewer model call."""
+    monkeypatch.setattr(
+        "app.agent.deck_template_verification.render_slide",
+        lambda _document, *, ratio: ({}, b"rendered-png"),
+    )
+    monkeypatch.setattr(
+        "app.agent.deck_template_verification.review_rendered_against_reference",
+        lambda _reference, _rendered: [],
+    )
+
+
 def _finalize_bindings(archetype: dict) -> list[dict]:
     return [
         {
@@ -254,7 +266,10 @@ def test_style_request_avoids_full_conversion_and_scratch_writer(
     verified = tools["verify_template_deck"].func(
         path="new-deck.slides.html", revision=write_result["revision"], runtime=runtime
     )
-    assert verified["visual_fidelity"]["status"] == "verified", verified
+    # A PPTX archetype carries no pinned reference render, so the U4 original
+    # comparison cannot run for it — that degrades visual fidelity rather than
+    # passing an unchecked dimension as verified.
+    assert verified["visual_fidelity"]["status"] == "degraded", verified
     assert verified["content"]["status"] == "verified", verified
     # A verbatim slide has no new authored voice to judge — writing_style is
     # not_checked (never vacuously verified), so `complete` is correctly
@@ -522,6 +537,7 @@ def test_pdf_end_to_end_prepare_finalize_write_verify_with_model_chosen_node_ids
     from app.agent.deck_template_verification import verify_template_deck_snapshot
 
     _patch_measure_slide(monkeypatch)
+    _patch_reference_review(monkeypatch)
     canvas_id = "thread-pdf-node-ids"
     store = InMemoryCanvasStore()
     data = text_pdf_source([[("Original title text", 100, 700)]])

@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import html
 import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from langchain.chat_models import init_chat_model
@@ -148,6 +149,25 @@ def instantiate_archetype(
         style_css=frame.style_css,
         body_html=body,
     )
+
+
+def _with_style_tokens(slide: SlideTemplate, archetype: Archetype) -> SlideTemplate:
+    """Plant the archetype's design tokens on the instantiated markup root.
+
+    ``style_css`` alone cannot be reversed back into tokens, so export reads
+    them from this attribute (``export_fallback.py::_apply_theme_from_tokens``). An
+    archetype without tokens gets no attribute at all — never an empty one.
+    """
+    if archetype.style_tokens is None:
+        return slide
+    markup = _Markup(slide.body_html)
+    if not markup.nodes:
+        return slide
+    root = markup.nodes[0]
+    cut = root.inner - (2 if slide.body_html[root.inner - 2 : root.inner] == "/>" else 1)
+    payload = html.escape(archetype.style_tokens.model_dump_json(), quote=True)
+    body = f'{slide.body_html[:cut]} data-style-tokens="{payload}"{slide.body_html[cut:]}'
+    return replace(slide, body_html=body)
 
 
 class InvalidModelOutputError(RuntimeError):
@@ -338,7 +358,7 @@ def _fill_and_instantiate(
         slide = instantiate_archetype(
             frame, slide_index, result.slots, source_business_text=source_texts
         )
-        return slide, result
+        return _with_style_tokens(slide, archetype), result
 
     attempt = 0
     last_error: Exception | None = None
@@ -351,7 +371,7 @@ def _fill_and_instantiate(
             slide = instantiate_archetype(
                 frame, slide_index, result.slots, source_business_text=source_texts
             )
-            return slide, result
+            return _with_style_tokens(slide, archetype), result
         except (
             ValidationError,
             InvalidModelOutputError,

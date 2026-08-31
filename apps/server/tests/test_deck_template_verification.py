@@ -30,6 +30,7 @@ from app.agent.deck_template_models import (
 from app.agent.deck_template_verification import verify_template_deck_snapshot
 from app.agent.deck_template_writer import TEMPLATE_WRITER_ACTOR, write_deck_from_template
 from app.agent.deck_templates import TEMPLATE_COMPILER_ACTOR
+from app.agent.style_tokens import StyleTokens, TypeToken
 from langchain_canvas.deck import Deck, SlideTemplate, parse_deck, reorder_slides, serialize_deck
 from langchain_canvas.store import InMemoryCanvasStore
 
@@ -245,6 +246,53 @@ def test_missing_asset_and_font_evidence_are_reported(monkeypatch):
     codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
     assert "missing_asset" in codes
     assert "unknown_font_evidence" in codes
+
+
+def test_optional_layer_asset_missing_from_output_is_not_reported(monkeypatch):
+    """A ``required=False`` layer asset the writer skipped is a normal outcome."""
+    _patch_measure(monkeypatch)
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _single_slot_archetype(
+        "body", 1,
+        assets=[
+            AssetRef(
+                path="assets/template/vector.png",
+                revision="r1",
+                sha256="b" * 64,
+                required=False,
+            )
+        ],
+    )
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "missing_asset" not in codes
+    assert result["visual_fidelity"]["status"] != "failed", result
+
+
+def test_required_asset_missing_from_output_still_fails(monkeypatch):
+    """The default (``required=True``) pinned-asset contract is unchanged."""
+    _patch_measure(monkeypatch)
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _single_slot_archetype(
+        "body", 1,
+        assets=[AssetRef(path="assets/template/logo.png", revision="r1", sha256="c" * 64)],
+    )
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "missing_asset" in codes
+    assert result["visual_fidelity"]["status"] == "failed", result
 
 
 def test_verifier_recovers_original_fact_contract_after_restart(monkeypatch):
@@ -550,3 +598,167 @@ def test_ambiguous_claim_is_not_checked(monkeypatch):
     )
     assert result["content"]["status"] == "not_checked", result
     assert result["complete"] is False
+
+
+def test_style_tokens_dropped_degrades_visual_status(monkeypatch):
+    """An archetype that promised role-default CSS but carries none degrades visual."""
+    _patch_measure(monkeypatch)
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _single_slot_archetype("body", 1).model_copy(
+        update={"style_css": "", "style_css_expected": True}
+    )
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "style_tokens_dropped" in codes, result
+    assert result["visual_fidelity"]["status"] == "degraded", result
+
+
+def test_native_table_archetype_does_not_report_style_tokens_dropped(monkeypatch):
+    """Empty ``style_css`` with ``style_css_expected=False`` is the native-table
+    exception, not a dropped token — reporting it would be a permanent false positive."""
+    _patch_measure(monkeypatch)
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    tokens = StyleTokens(
+        type_scale=[
+            TypeToken(
+                role="body", family="Helvetica", size_px=16.0, weight=400,
+                line_height_px=19.0, color="#1a1a1a",
+            )
+        ]
+    )
+    archetype = _single_slot_archetype("body", 1).model_copy(
+        update={"style_css": "", "style_css_expected": False, "style_tokens": tokens}
+    )
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "style_tokens_dropped" not in codes, result
+
+
+def test_geometry_issue_message_is_string_after_unsupported_structuring(monkeypatch):
+    """Structured ``unsupported`` entries must be flattened to their ``reason``.
+
+    Nine call sites embed ``issue["message"]`` in prompts and reports, so a dict
+    leaking into that field would surface raw geometry in tool result JSON.
+    """
+    from app.agent.deck_template_verification import _geometry_issues
+
+    monkeypatch.setattr(
+        "app.agent.deck_template_verification.measure_slide",
+        lambda document, *, ratio: {
+            "width": 1280,
+            "height": 720,
+            "elements": [],
+            "unsupported": [{"reason": "filter", "x": 0, "y": 0, "w": 10, "h": 10}],
+        },
+    )
+
+    issues = _geometry_issues(SimpleNamespace(style_css=""), "<section></section>", "16:9")
+
+    assert issues == [{"code": "unsupported", "message": "filter"}]
+
+
+def _pin_reference_asset(store, canvas_id, archetype, png: bytes = b"reference-png") -> Archetype:
+    """Attach a stored reference render to ``archetype`` (the U4 compile pin)."""
+    commit = store.write_bytes(canvas_id, "assets/template/reference.png", png, "pin reference")
+    return archetype.model_copy(
+        update={
+            "reference_asset": AssetRef(
+                path="assets/template/reference.png",
+                revision=commit.revision,
+                sha256=hashlib.sha256(png).hexdigest(),
+            )
+        }
+    )
+
+
+def _patch_reference_render(monkeypatch, issues: list[str]) -> list[tuple[bytes, bytes]]:
+    """Stub the render + reviewer boundary; returns the (reference, rendered) pairs seen."""
+    seen: list[tuple[bytes, bytes]] = []
+
+    def _fake_review(reference: bytes, rendered: bytes) -> list[str]:
+        seen.append((reference, rendered))
+        return list(issues)
+
+    monkeypatch.setattr(
+        "app.agent.deck_template_verification.render_slide",
+        lambda _document, *, ratio: ({}, b"rendered-png"),
+    )
+    monkeypatch.setattr(
+        "app.agent.deck_template_verification.review_rendered_against_reference", _fake_review
+    )
+    return seen
+
+
+def test_reference_comparison_reports_issues_as_degraded_not_failed(monkeypatch):
+    """A model-reported reference mismatch degrades visual fidelity, never fails it."""
+    _patch_measure(monkeypatch)
+    seen = _patch_reference_render(monkeypatch, ["title moved 40px left"])
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _pin_reference_asset(store, canvas_id, _single_slot_archetype("body", 1))
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "reference_mismatch" in codes, result
+    assert result["visual_fidelity"]["status"] == "degraded", result
+    assert seen == [(b"reference-png", b"rendered-png")]
+
+
+def test_reference_comparison_missing_asset_degrades_without_crash(monkeypatch):
+    """No pinned reference render means the comparison never ran — degrade, do not pass."""
+    _patch_measure(monkeypatch)
+    _patch_reference_render(monkeypatch, [])
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _single_slot_archetype("body", 1)
+    assert archetype.reference_asset is None
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+
+    assert result["visual_fidelity"]["status"] == "degraded", result
+
+
+def test_reference_mismatch_never_overrides_missing_node_failure(monkeypatch):
+    """A clean model verdict cannot lift a structural ``missing_node`` failure."""
+    _patch_measure(monkeypatch)
+    _patch_reference_render(monkeypatch, [])
+    store = InMemoryCanvasStore()
+    canvas_id = "c1"
+    archetype = _pin_reference_asset(store, canvas_id, _single_slot_archetype("body", 1))
+    ref = _seed_ready_template(store, canvas_id, [archetype])
+    _write_verbatim_deck(store, canvas_id, ref, "deck.slides.html")
+
+    content = store.read(canvas_id, "deck.slides.html").content
+    stripped = content.replace(' data-node-id="node-body"', "")
+    store.write(canvas_id, "deck.slides.html", stripped, "drop the slot node", actor="agent")
+
+    result = verify_template_deck_snapshot(
+        "deck.slides.html", None, store=store, canvas_id=canvas_id, judge_model="judge",
+    )
+
+    codes = {issue["code"] for issue in result["visual_fidelity"]["issues"]}
+    assert "missing_node" in codes, result
+    assert result["visual_fidelity"]["status"] == "failed", result

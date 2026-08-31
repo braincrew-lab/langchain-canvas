@@ -219,12 +219,21 @@ def measure_slide(html: str, *, ratio: str) -> dict[str, Any]:
     return _EXECUTOR.submit(_measure_task, html, width, height).result()
 
 
-def _font_styles_task(texts: list[dict], reference_png: bytes | None) -> list[dict]:
+def _font_styles_task(
+    texts: list[dict], reference_png: bytes | None, font_face_css: str | None = None
+) -> list[dict]:
     page = _get_browser().new_page(java_script_enabled=False)
     try:
-        page.set_content("<html><body></body></html>")
+        # The document now loads real font faces, so the same guard
+        # ``_render_task`` installs must keep any external ``src`` off the
+        # network. The ``data:`` reference image is not a network request.
+        page.route("**/*", lambda route: route.abort())
+        page.set_content(
+            f"<html><head><style>{font_face_css or ''}</style></head><body></body></html>"
+        )
         return page.evaluate(
             """async ({texts, reference}) => {
+          await document.fonts.ready;
           const c=document.createElement('canvas').getContext('2d');
           let pixels, image;
           if(reference) {
@@ -284,7 +293,17 @@ def _font_styles_task(texts: list[dict], reference_png: bytes | None) -> list[di
 
 
 def pdf_text_styles(
-    texts: list[dict], reference_png: bytes | None = None
+    texts: list[dict],
+    reference_png: bytes | None = None,
+    *,
+    font_face_css: str | None = None,
 ) -> list[dict]:
-    """Suggested CSS boxes computed from PDF glyph bounds and actual font metrics."""
-    return _EXECUTOR.submit(_font_styles_task, texts, reference_png).result()
+    """Suggested CSS boxes computed from PDF glyph bounds and actual font metrics.
+
+    ``font_face_css`` carries ``@font-face`` blocks for the source page's
+    embedded fonts (see ``pdf_fonts.py::build_font_face_css``) so the
+    measurement uses the original faces instead of a substitute.
+    """
+    return _EXECUTOR.submit(
+        _font_styles_task, texts, reference_png, font_face_css
+    ).result()

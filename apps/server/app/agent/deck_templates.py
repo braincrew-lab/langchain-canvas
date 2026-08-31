@@ -70,6 +70,8 @@ from .deck_template_prompts import (
 )
 from .pdf_deck import reconstruct_pdf_page
 from .pdf_source import PdfPageSource, extract_pdf_pages
+from .render import measure_slide
+from .style_tokens import tokens_from_measured_layout, tokens_from_pdf_page, tokens_to_css
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -341,6 +343,7 @@ def prepare_template(
             pages, ratio = _compile_pdf_archetypes(
                 source_bytes, request.pages, budget, path=request.source,
                 reconstruct_pdf_page_fn=reconstruct_pdf_page_fn,
+                store=store, canvas_id=canvas_id,
             )
         elif lowered.endswith(".pptx"):
             pages, ratio = _compile_pptx_archetypes(
@@ -395,7 +398,7 @@ def prepare_template(
     }
 
 
-def _pin_pptx_image_asset(
+def _pin_source_image_asset(
     store: CanvasStore, canvas_id: str, data: bytes, ext: str
 ) -> dict[str, str]:
     """Content-address, create-only pin ``data`` under :data:`_TEMPLATE_ASSET_PREFIX`.
@@ -404,10 +407,12 @@ def _pin_pptx_image_asset(
     ``finalize_template`` never re-extracts the source (a candidate is
     reused byte-for-byte, see ``test_finalize_reuses_candidate_without_reconversion``),
     so this is the only point at which the original image bytes are still
-    available to pin. The returned mapping is stashed on the archetype's own
-    ``proof`` dict (see ``_compile_pptx_archetypes``) so a later ``finalize``
-    call can recover it — for a ``retain`` disposition only — without
-    touching the source file again.
+    available to pin. Both source paths use it: a PPTX shape image, whose
+    mapping is stashed on the archetype's own ``proof`` dict (see
+    ``_compile_pptx_archetypes``) so a later ``finalize`` call can recover it
+    — for a ``retain`` disposition only — without touching the source file
+    again; and a PDF vector raster layer, recorded directly on
+    ``Archetype.assets`` as an optional (``required=False``) overlay.
     """
     sha256 = hashlib.sha256(data).hexdigest()
     path = f"{_TEMPLATE_ASSET_PREFIX}/{sha256}.{ext}"
@@ -470,7 +475,7 @@ def _compile_pptx_archetypes(
             node_id = node_id_by_shape_id.get(image.element_id, image.element_id)
             image_static_nodes.append(StaticNode(node_id=node_id, node_type="image"))
             with budget.run_stage(f"pin_image_asset_{slide_id}_{image.element_id}"):
-                image_asset_refs[node_id] = _pin_pptx_image_asset(
+                image_asset_refs[node_id] = _pin_source_image_asset(
                     store, canvas_id, image.data, image.ext
                 )
         static_nodes = image_static_nodes + [
@@ -481,11 +486,25 @@ def _compile_pptx_archetypes(
             for shape in extraction.shapes
         ]
         inventory = census.get(page)
+        with budget.run_stage(f"measure_pptx_layout_{slide_id}"):
+            layout = measure_slide(frame_html, ratio="16:9")
+        tokens = tokens_from_measured_layout(layout)
+        # `_guard_native_table_css` (exports.py) aborts export whenever a
+        # native table shares a slide with a non-empty style_css, so a slide
+        # with one keeps style_tokens (still useful for review) but withholds
+        # style_css and marks it not-expected — the only case the
+        # style_tokens_dropped degrade check must not flag as a regression.
+        has_native_table = any(
+            node.tag == "table" and node.attrs.get("data-pptx-shape-id")
+            for node in _Markup(frame_html).nodes
+        )
         archetype = Archetype(
             id=slide_id,
             source_page=page,
             frame_html=frame_html,
-            style_css="",
+            style_css="" if has_native_table else tokens_to_css(tokens),
+            style_tokens=tokens,
+            style_css_expected=not has_native_table,
             slots=slots,
             static_nodes=static_nodes,
             proof={
@@ -505,7 +524,7 @@ def _compile_pptx_archetypes(
     return compiled, "16:9"
 
 
-def _pdf_node_ids(frame_html: str) -> tuple[list[str], list[str]]:
+def _pdf_node_ids(frame_html: str, *, excluded_srcs: set[str]) -> tuple[list[str], list[str]]:
     """The actual ``data-node-id`` values a reconstructed PDF frame assigned.
 
     ``reconstruct_pdf_page`` asks the writer model to invent its own node
@@ -519,12 +538,18 @@ def _pdf_node_ids(frame_html: str) -> tuple[list[str], list[str]]:
     node — real writer output additionally marks these
     ``data-text-block="true"``/``data-text-role="..."``, but that marker is
     not required to classify them, only their tag and the presence of an id.
+
+    ``excluded_srcs`` names the vector raster layers, which are absent from
+    the source census this count is compared against; an ``<img>`` placed
+    for one of them is skipped entirely rather than counted as either kind.
     """
     text_ids: list[str] = []
     image_ids: list[str] = []
     for node in _Markup(frame_html).nodes:
         node_id = node.attrs.get("data-node-id")
         if not node_id:
+            continue
+        if node.tag == "img" and node.attrs.get("src") in excluded_srcs:
             continue
         if node.tag == "img":
             image_ids.append(node_id)
@@ -540,6 +565,8 @@ def _compile_pdf_archetypes(
     *,
     path: str,
     reconstruct_pdf_page_fn: Callable[[PdfPageSource], tuple[str, list[str]]],
+    store: CanvasStore,
+    canvas_id: str,
 ) -> tuple[list[_CompiledPage], str]:
     census: dict[int, tuple[str, ...]] = {}
     for page in pages:
@@ -558,14 +585,18 @@ def _compile_pdf_archetypes(
             frame_html, issues = reconstruct_pdf_page_fn(source)
         slide_id = f"archetype-{source.number}"
         issues = list(issues)
-        text_node_ids, image_node_ids = _pdf_node_ids(frame_html)
-        if len(text_node_ids) != len(source.texts) or len(image_node_ids) != len(
-            source.image_boxes
-        ):
+        # A vector raster layer is an optional overlay, not a census object:
+        # it is excluded from the denominator here and from the numerator in
+        # ``_pdf_node_ids``, so both a frame that places it and one that does
+        # not agree with the source count.
+        layer_srcs = {box["src"] for box in source.image_boxes if "layer" in box}
+        census_image_count = len(source.image_boxes) - len(layer_srcs)
+        text_node_ids, image_node_ids = _pdf_node_ids(frame_html, excluded_srcs=layer_srcs)
+        if len(text_node_ids) != len(source.texts) or len(image_node_ids) != census_image_count:
             issues.append(
                 "reconstructed frame's node count does not match the source census "
                 f"({len(text_node_ids)} text / {len(image_node_ids)} node(s) vs "
-                f"{len(source.texts)} text / {len(source.image_boxes)} object(s))"
+                f"{len(source.texts)} text / {census_image_count} object(s))"
             )
         slots = [
             Slot(
@@ -582,13 +613,34 @@ def _compile_pdf_archetypes(
         static_nodes = [
             StaticNode(node_id=node_id, node_type="image") for node_id in image_node_ids
         ]
+        layer_assets: list[AssetRef] = []
+        for index, src in enumerate(sorted(layer_srcs)):
+            with budget.run_stage(f"pin_vector_layer_{slide_id}_{index}"):
+                ref = _pin_source_image_asset(
+                    store, canvas_id, source.images[src], "png"
+                )
+            layer_assets.append(AssetRef(**ref, required=False))
+        # Verification input only: the original page render is never referenced
+        # from ``frame_html``, so it stays off ``assets`` (whose entries must
+        # appear in writer output) and lives on ``reference_asset`` instead.
+        with budget.run_stage(f"pin_reference_render_{slide_id}"):
+            reference_asset = AssetRef(
+                **_pin_source_image_asset(store, canvas_id, source.reference_png, "png")
+            )
+        # Computed from the extracted ``source`` alone, so the result does not
+        # depend on whether ``reconstruct_pdf_page_fn`` was stubbed.
+        tokens = tokens_from_pdf_page(source)
         archetype = Archetype(
             id=slide_id,
             source_page=source.number,
             frame_html=frame_html,
-            style_css="",
+            style_css=tokens_to_css(tokens),
+            style_tokens=tokens,
+            style_css_expected=True,
             slots=slots,
             static_nodes=static_nodes,
+            assets=layer_assets,
+            reference_asset=reference_asset,
             proof={
                 "reconstruction_issues": issues,
                 "capability_issues": list(census.get(source.number, ())),
@@ -688,7 +740,7 @@ def _embed_retained_pptx_assets(
     """Embed each retained PPTX image node's pinned bytes as a ``data:`` URI.
 
     ``original_asset_refs`` is the candidate-time
-    ``proof['candidate_asset_refs']`` map (see ``_pin_pptx_image_asset``),
+    ``proof['candidate_asset_refs']`` map (see ``_pin_source_image_asset``),
     keyed by node id — the only point the original image bytes were still
     available, since ``finalize_template`` never re-extracts the source. A
     retained image node is read back through that pinned, content-addressed

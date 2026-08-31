@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from .pdf_fonts import EmbeddedFont, extract_embedded_fonts
+
 if TYPE_CHECKING:
+    import pypdfium2 as pdfium
+
     from .deck_template_models import TemplateBudget
 
 _PDF_LOCK = Lock()
@@ -27,6 +31,114 @@ class PdfPageSource:
     shapes: list[dict] = field(default_factory=list)
     clipped_text_regions: list[dict] = field(default_factory=list)
     clipped_references: list[bytes] = field(default_factory=list)
+    fonts: list[EmbeddedFont] = field(default_factory=list)
+
+
+_VECTOR_MERGE_GAP = 12.0
+_TEXT_OVERLAP_LIMIT = 0.75
+
+
+def _is_adjacent(first: dict, second: dict) -> bool:
+    """True when two boxes overlap or sit within ``_VECTOR_MERGE_GAP`` on both axes."""
+    return (
+        first["x"] - _VECTOR_MERGE_GAP < second["x"] + second["w"]
+        and second["x"] - _VECTOR_MERGE_GAP < first["x"] + first["w"]
+        and first["y"] - _VECTOR_MERGE_GAP < second["y"] + second["h"]
+        and second["y"] - _VECTOR_MERGE_GAP < first["y"] + first["h"]
+    )
+
+
+def merge_vector_clusters(boxes: list[dict]) -> list[dict]:
+    """Merge adjacent vector bounds into cluster bounds, greedily to a fixpoint.
+
+    Each pass sorts by ``(y, x)`` and folds every box into the first cluster it
+    touches. Expanding a cluster can bring it within reach of another, so the
+    pass repeats until no merge happens. Union-find does not apply here: the
+    adjacency relation changes as cluster bounds grow.
+    """
+    clusters = [dict(box) for box in boxes]
+    merged = True
+    while merged:
+        merged = False
+        pending, clusters = sorted(clusters, key=lambda b: (b["y"], b["x"])), []
+        for box in pending:
+            for cluster in clusters:
+                if not _is_adjacent(cluster, box):
+                    continue
+                right = max(cluster["x"] + cluster["w"], box["x"] + box["w"])
+                bottom = max(cluster["y"] + cluster["h"], box["y"] + box["h"])
+                cluster["x"] = min(cluster["x"], box["x"])
+                cluster["y"] = min(cluster["y"], box["y"])
+                cluster["w"], cluster["h"] = right - cluster["x"], bottom - cluster["y"]
+                merged = True
+                break
+            else:
+                clusters.append(box)
+    return clusters
+
+
+def _covers_text(box: dict, texts: list[dict]) -> bool:
+    """True when a text bbox covers most of ``box`` — an outlined glyph, not art."""
+    area = box["w"] * box["h"]
+    return area > 0 and any(
+        max(0, min(box["x"] + box["w"], t["x"] + t["w"] + 2) - max(box["x"], t["x"] - 2))
+        * max(0, min(box["y"] + box["h"], t["y"] + t["h"] + 2) - max(box["y"], t["y"] - 2))
+        / area
+        > _TEXT_OVERLAP_LIMIT
+        for t in texts
+    )
+
+
+def _register_vector_layers(
+    page: pdfium.PdfPage,
+    source: PdfPageSource,
+    deferred: list[dict],
+    *,
+    scale: float,
+    prefix: str,
+) -> None:
+    """Rasterize each merged vector cluster into a positioned image layer.
+
+    Paths too complex to survive as shape data are re-rendered from the page at
+    twice the layout scale and cropped to their cluster bounds, so the artwork
+    reaches the writer as an original asset instead of being dropped.
+    """
+    clusters = [
+        cluster
+        for cluster in merge_vector_clusters(deferred)
+        if not _covers_text(cluster, source.texts)
+    ]
+    if not clusters:
+        return
+    detail = page.render(scale=scale * 2)
+    try:
+        image = detail.to_pil()
+        for index, cluster in enumerate(clusters):
+            x, y, w, h = (cluster[key] for key in ("x", "y", "w", "h"))
+            crop = image.crop(
+                (
+                    max(0, round(x * 2)),
+                    max(0, round(y * 2)),
+                    min(image.width, round((x + w) * 2)),
+                    min(image.height, round((y + h) * 2)),
+                )
+            )
+            output = io.BytesIO()
+            crop.save(output, format="PNG")
+            name = f"{prefix}/page-{source.number}-vector-{index}.png"
+            source.images[name] = output.getvalue()
+            source.image_boxes.append(
+                {
+                    "src": name,
+                    "x": round(x, 2),
+                    "y": round(y, 2),
+                    "w": round(w, 2),
+                    "h": round(h, 2),
+                    "layer": "vector",
+                }
+            )
+    finally:
+        detail.close()
 
 
 def extract_pdf_pages(
@@ -79,6 +191,7 @@ def extract_pdf_pages(
                 finally:
                     bitmap.close()
                 source = PdfPageSource(number, width, height, output.getvalue())
+                source.fonts = extract_embedded_fonts(page)
                 objects = list(page.get_objects(textpage=textpage))
                 for order, obj in enumerate(objects):
                     if not isinstance(obj, pdfium.PdfTextObj):
@@ -190,6 +303,7 @@ def extract_pdf_pages(
                             "h": round((top - bottom) * scale, 2),
                         }
                     )
+                deferred_vectors: list[dict] = []
                 for order, obj in enumerate(objects):
                     if obj.type != raw.FPDF_PAGEOBJ_PATH:
                         continue
@@ -202,6 +316,9 @@ def extract_pdf_pages(
                         (top - bottom) * scale,
                     )
                     if count > 32:
+                        # Art too complex for shape data survives as a raster
+                        # layer instead of being dropped before the writer.
+                        deferred_vectors.append({"x": x, "y": y, "w": w, "h": h})
                         continue
                     # Outlined PDF glyphs should be rewritten as HTML text,
                     # not duplicated as hundreds of vector glyph shapes.
@@ -263,6 +380,14 @@ def extract_pdf_pages(
                                 for i in range(count)
                             ),
                         }
+                    )
+                if deferred_vectors:
+                    _register_vector_layers(
+                        page,
+                        source,
+                        deferred_vectors,
+                        scale=scale,
+                        prefix=asset_prefix,
                     )
                 if source.clipped_text_regions:
                     # Resolve tiny lettering from PDF vector clips at higher

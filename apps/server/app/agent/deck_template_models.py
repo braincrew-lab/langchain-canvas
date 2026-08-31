@@ -22,6 +22,8 @@ from typing import Annotated, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
+from .style_tokens import StyleTokens
+
 MAX_FACTS_PER_INSTANCE = 32
 MAX_FACT_TEXT_CHARS = 1000
 MAX_SLOTS_PER_INSTANCE = 64
@@ -238,6 +240,9 @@ class AssetRef(_Strict):
     path: _Path512
     revision: _Revision128
     sha256: _Sha256Hex
+    # A vector raster layer is an optional overlay: the writer may legitimately
+    # leave it out, so its absence from the output is not a missing_asset.
+    required: bool = True
 
 
 class StyleEvidence(_Strict):
@@ -308,9 +313,21 @@ class Archetype(_Strict):
     source_page: int = Field(ge=1, le=MAX_PAGE_NUMBER)
     frame_html: str
     style_css: str
+    # Optional with defaults, so every already-stored templates/*.json still
+    # loads unchanged under ``extra='forbid'`` (which rejects unknown keys,
+    # never absent optional ones). ``style_css_expected`` is set explicitly by
+    # both compile paths: the PDF path always promises role-default CSS, the
+    # PPTX path only when the archetype has no native table (a non-empty
+    # ``style_css`` there aborts export via ``_guard_native_table_css``).
+    style_tokens: StyleTokens | None = None
+    style_css_expected: bool = False
     slots: list[Slot] = []
     static_nodes: list[StaticNode] = []
     assets: list[AssetRef] = []
+    # The pinned render of the original source page, used only as verification
+    # input: it is never referenced from ``frame_html``, so it is deliberately
+    # kept out of ``assets`` (whose entries must appear in writer output).
+    reference_asset: AssetRef | None = None
     protected_layout: dict = {}
     writing_style: list[StyleRule] = []
     proof: dict = {}

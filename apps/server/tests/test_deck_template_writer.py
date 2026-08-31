@@ -10,10 +10,18 @@ overflow/failure never commits a partial deck; and the shared
 from __future__ import annotations
 
 import hashlib
+import html
+import json
+import re
+import threading
 from types import SimpleNamespace
 
 import pytest
-from app.agent.deck_template_writer import write_deck_from_template
+from app.agent.deck_template_writer import (
+    _fill_and_instantiate,
+    _frame_from_archetype,
+    write_deck_from_template,
+)
 from app.agent.deck_template_models import (
     Archetype,
     ArtifactRef,
@@ -27,6 +35,7 @@ from app.agent.deck_template_models import (
     TemplateBudget,
 )
 from app.agent.deck_templates import TEMPLATE_COMPILER_ACTOR
+from app.agent.style_tokens import BackgroundToken, StyleTokens
 from langchain_canvas.deck import parse_deck
 from langchain_canvas.store import CanvasFileNotFoundError, InMemoryCanvasStore
 from pydantic import ValidationError
@@ -454,3 +463,48 @@ def test_shared_content_retry_budget_has_no_partial_commit(monkeypatch):
     assert result["code"] == "resource_budget_exceeded"
     with pytest.raises(CanvasFileNotFoundError):
         store.read(canvas_id, "deck.slides.html")
+
+
+def _fill_one(archetype: Archetype, mode: str):
+    """Run one ``_fill_and_instantiate`` attempt in the given mode."""
+    request = SlideContentRequest(
+        archetype_id=archetype.id, mode=mode, slots={"body": "New text"}
+    )
+
+    def _fake_rewrite(_writer_model, _messages) -> SlotContentResult:
+        return SlotContentResult(
+            archetype_id=archetype.id, mode="rewrite", slots={"body": "New text"}
+        )
+
+    slide, _result = _fill_and_instantiate(
+        1,
+        request,
+        _frame_from_archetype(archetype),
+        archetype,
+        writer_model="unused-model",
+        budget=TemplateBudget(),
+        budget_lock=threading.Lock(),
+        max_content_retries=0,
+        invoke_model=_fake_rewrite,
+    )
+    return slide
+
+
+@pytest.mark.parametrize("mode", ["verbatim", "rewrite"])
+def test_style_tokens_attribute_survives_both_return_paths(mode):
+    tokens = StyleTokens(
+        background=BackgroundToken(kind="solid", value="#112233"),
+        spacing={"gutter": 24.0},
+    )
+    archetype = _single_slot_archetype("a", 1)
+    with_tokens = archetype.model_copy(update={"style_tokens": tokens})
+
+    slide = _fill_one(with_tokens, mode)
+
+    match = re.search(r'data-style-tokens="([^"]*)"', slide.body_html)
+    assert match is not None, slide.body_html
+    planted = json.loads(html.unescape(match[1]))
+    assert planted == json.loads(tokens.model_dump_json())
+
+    without_tokens = _fill_one(archetype, mode)
+    assert "data-style-tokens" not in without_tokens.body_html

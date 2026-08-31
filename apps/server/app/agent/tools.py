@@ -472,9 +472,10 @@ def convert_slide(path: str, slide_id: str, runtime: ToolRuntime) -> str:
     try:
         model = init_chat_model(config.writer_model)
         prompt = (
-            "Improve this presentation slide's layout — reposition, restyle, and "
-            "rebalance the boxes below — without adding, removing, or rewording "
-            f"any of its text.\n\n{DECK_STYLE}\n\nBaseline markup:\n{baseline_html}\n\n"
+            "Fix only mechanical layout defects in this imported slide — overlapping "
+            "boxes, clipped text, off-canvas elements — without adding, removing, or "
+            "rewording any text, and without changing its fonts, colors, or visual "
+            f"style. Preserve the source design exactly.\n\nBaseline markup:\n{baseline_html}\n\n"
             'Return ONLY the corrected <section class="slide">...</section> markup.'
         )
         corrected_html = _strip_code_fence(_text_of(model.invoke(prompt)))

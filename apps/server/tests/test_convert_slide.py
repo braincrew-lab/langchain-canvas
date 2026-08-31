@@ -184,3 +184,25 @@ def test_convert_slide_retry_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> N
     assert "Error" not in first_result
     assert "Error" not in second_result
     assert first_body == second_body  # re-corrects from the same immutable source, every time
+
+
+def test_convert_slide_prompt_excludes_deck_style(monkeypatch: pytest.MonkeyPatch) -> None:
+    path, slide_id = _seed_deck("t-degrade", text="Hello deck")
+    captured_prompts: list[str] = []
+
+    def respond(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        baseline = prompt.split("Baseline markup:\n", 1)[1].split("\n\nReturn ONLY", 1)[0]
+        return baseline
+
+    _patch_model(monkeypatch, respond)
+    _patch_render(monkeypatch)
+
+    result = convert_slide.func(path=path, slide_id=slide_id, runtime=_runtime("t-degrade"))
+
+    assert "Error" not in result
+    assert len(captured_prompts) == 1
+    prompt = captured_prompts[0]
+    assert "Generous margins" not in prompt
+    assert "display serif" not in prompt
+    assert "Preserve the source design exactly" in prompt

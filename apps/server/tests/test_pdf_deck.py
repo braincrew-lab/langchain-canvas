@@ -704,3 +704,53 @@ def test_public_import_reports_review_mismatches_as_degraded_not_complete(
     )
     assert len(model._calls) == 6
     assert any(event.get("stage") == "degraded" for event in events)
+
+
+def test_reconstruct_document_carries_font_face_before_body(monkeypatch, model_boundary):
+    from app.agent import pdf_deck
+    from app.agent.pdf_fonts import EmbeddedFont
+    from app.agent.pdf_source import extract_pdf_pages
+    from PIL import Image
+
+    source = extract_pdf_pages(pdf_bytes(), [1])[0]
+    source.fonts = [
+        EmbeddedFont(
+            family="Malgun Gothic",
+            weight=400,
+            is_italic=False,
+            sha256="c" * 64,
+            data=b"\x00\x01\x00\x00stub-font-bytes",
+            format="truetype",
+        )
+    ]
+    documents: dict[str, str] = {}
+    screenshot = io.BytesIO()
+    Image.new("RGB", (128, 72), "white").save(screenshot, format="PNG")
+
+    def render(doc, *, ratio):
+        documents["render"] = doc
+        return {
+            "brokenImages": 0,
+            "offCanvas": 0,
+            "textLength": 5,
+            "visibleText": " ".join(text["text"] for text in source.texts),
+        }, screenshot.getvalue()
+
+    def measure(doc, *, ratio):
+        documents["measure"] = doc
+        return {"textBlocks": []}
+
+    monkeypatch.setattr(pdf_deck, "render_slide", render)
+    monkeypatch.setattr(pdf_deck, "measure_slide", measure)
+    monkeypatch.setattr(pdf_deck, "text_geometry_feedback", lambda source, layout: [])
+    model_boundary()
+
+    markup, issues = pdf_deck.reconstruct_pdf_page(source)
+
+    assert issues == [] and "Alpha</p>" in markup
+    document = documents["render"]
+    assert documents["measure"] == document, (
+        "visual review and geometry measurement must share one document"
+    )
+    head = document.split("<body>", 1)[0]
+    assert "@font-face" in head and "data:font/" in head
