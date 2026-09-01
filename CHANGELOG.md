@@ -4,6 +4,16 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.28] — 2026-09-01
+
+### Fixed
+- **No light engine no longer means blank cells.** With no formula evaluator
+  configured, a save that writes formulas now falls through to the
+  `xlsx_recalc` workbook engine (when wired) instead of leaving the cells
+  without display values — a deployment that ships LibreOffice but not the
+  formula CLI gets values on screen, at the cost of the engine's seconds on
+  formula saves only.
+
 ## [0.7.27] — 2026-09-01
 
 ### Added

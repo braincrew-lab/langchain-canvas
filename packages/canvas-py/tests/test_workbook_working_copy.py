@@ -253,7 +253,44 @@ def test_without_an_evaluator_the_reply_says_values_were_not_computed() -> None:
         description="sum", revision=store.read("t1", "book.table.json").revision,
         runtime=_runtime(thread_id="t1"),
     )
-    assert "NOT recomputed" in reply and "no evaluator configured" in reply
+    assert "not computed by the grid engine" in reply and "no evaluator configured" in reply
+
+
+def test_without_an_evaluator_the_workbook_engine_takes_the_whole_save() -> None:
+    """A deployment that ships LibreOffice but not the formula CLI still gets
+    values on screen: with no light engine at all, every formula save falls
+    through to the workbook engine instead of leaving blank cells."""
+    from openpyxl import Workbook, load_workbook
+
+    def fake_recalc(data: bytes) -> bytes:
+        source = load_workbook(io.BytesIO(data))
+        out = Workbook()
+        out.remove(out.active)
+        for ws in source.worksheets:
+            fresh = out.create_sheet(ws.title)
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is None:
+                        continue
+                    is_formula = isinstance(cell.value, str) and cell.value.startswith("=")
+                    fresh.cell(row=cell.row, column=cell.column,
+                               value=888 if is_formula else cell.value)
+        buffer = io.BytesIO()
+        out.save(buffer)
+        return buffer.getvalue()
+
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(store, xlsx_recalc=fake_recalc)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J1": "=SUM(H1:I1)"},
+        description="sum", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "Recalculated with the full spreadsheet engine" in reply
+    saved = json.loads(store.read("t1", "book.table.json").content)
+    cells = {(c["r"], c["c"]): c["v"] for c in saved["data"]["sheet"][0]["celldata"]}
+    written = cells[(0, 9)]
+    assert written["v"] == 888 and written["f"] == "=SUM(H1:I1)"
 
 
 def test_a_formula_the_grid_cannot_run_falls_through_to_the_workbook_engine() -> None:
