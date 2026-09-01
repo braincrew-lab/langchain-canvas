@@ -47,6 +47,23 @@ _FAKE_EVALUATOR = (
 )
 
 
+# A sheets-capable stand-in: grid formulas containing XLOOKUP fail, others are 42.
+_GRID_EVALUATOR = (
+    sys.executable,
+    "-c",
+    (
+        "import json,sys; p=json.load(sys.stdin); r=[]\n"
+        "for i,s in enumerate(p.get('sheets') or []):\n"
+        "    for cell in s.get('celldata') or []:\n"
+        "        v=cell.get('v')\n"
+        "        f=v.get('f') if isinstance(v,dict) else None\n"
+        "        if f: r.append({'sheet': i, 'r': cell['r'], 'c': cell['c'],\n"
+        "                        'formula': f, 'value': '#ERR' if 'XLOOKUP' in f else 42})\n"
+        "print(json.dumps({'results': r}))"
+    ),
+)
+
+
 def _store_with(rows: list[dict], columns: list[dict] | None = None) -> InMemoryCanvasStore:
     store = InMemoryCanvasStore()
     data = {"columns": columns or [{"key": "a"}, {"key": "t"}], "rows": rows}
@@ -111,18 +128,38 @@ def test_expect_assertions_pass_fail_and_malformed():
     assert message.startswith("2 ERROR")
 
 
-def test_typed_sheet_formulas_are_reported_not_checked():
+def _grid_store() -> InMemoryCanvasStore:
     store = InMemoryCanvasStore()
     data = {
         "columns": [{"key": "a"}],
         "rows": [{"a": 1}],
-        "sheet": [{"celldata": [{"r": 0, "c": 0, "v": {"v": 3, "f": "=SUM(A1:A2)"}}]}],
+        "sheet": [{"celldata": [
+            {"r": 0, "c": 0, "v": {"v": 3, "f": "=SUM(A1:A2)"}},
+            {"r": 1, "c": 0, "v": {"f": "=XLOOKUP(1,B1:B2,C1:C2)"}},
+        ]}],
     }
     store.write("t1", "calc.table.json", encode_table("Calc", data), "seed", actor="agent")
-    tool_obj = create_check_table_tool(store, evaluator=_FAKE_EVALUATOR)
+    return store
+
+
+def test_grid_formulas_are_checked_too():
+    """"They evaluate in the grid" was assumed here once — and an
+    agent-written formula did not. Now the grid state is verified with the
+    same engine."""
+    tool_obj = create_check_table_tool(_grid_store(), evaluator=_GRID_EVALUATOR)
     message = tool_obj.func(path="calc.table.json", runtime=_runtime())
-    assert "1 typed formula(s)" in message
-    assert "not checked here" in message
+    assert "2 grid formula cell(s)" in message
+    assert "ok    s0!A1: =SUM(A1:A2) -> 42" in message
+    assert "ERROR s0!A2: =XLOOKUP(1,B1:B2,C1:C2) -> #ERR" in message
+    assert message.startswith("1 ERROR")
+
+
+def test_grid_formulas_with_a_rows_only_evaluator_say_not_verified():
+    """Version skew: an old CLI ignores the sheets payload; the report says
+    the grid was not verified instead of pretending it was."""
+    tool_obj = create_check_table_tool(_grid_store(), evaluator=_FAKE_EVALUATOR)
+    message = tool_obj.func(path="calc.table.json", runtime=_runtime())
+    assert "NOT verified" in message and "grid mode" in message
 
 
 # --- the real evaluator (canvas-react formula CLI) --------------------------------
@@ -165,3 +202,27 @@ def test_real_cli_smoke_contract():
     )
     out = json.loads(proc.stdout.decode())
     assert out["results"][0]["value"] == 5
+
+
+@pytest.mark.skipif(
+    not _CLI.exists() or shutil.which("node") is None,
+    reason="needs Node.js and a built canvas-react (pnpm build)",
+)
+def test_real_cli_evaluates_the_grid_like_the_canvas():
+    store = InMemoryCanvasStore()
+    data = {
+        "columns": [{"key": "a"}],
+        "rows": [{"a": 1}],
+        "sheet": [{"celldata": [
+            {"r": 0, "c": 7, "v": {"v": 5}},
+            {"r": 0, "c": 8, "v": {"v": 14300}},
+            {"r": 0, "c": 9, "v": {"f": "=ROUND(H1*I1*2,0)"}},
+            {"r": 1, "c": 9, "v": {"f": "=J1+5"}},
+        ]}],
+    }
+    store.write("t1", "calc.table.json", encode_table("Calc", data), "seed", actor="agent")
+    tool_obj = create_check_table_tool(store, evaluator=("node", str(_CLI)))
+    message = tool_obj.func(path="calc.table.json", runtime=_runtime())
+    assert "ok    s0!J1: =ROUND(H1*I1*2,0) -> 143000" in message
+    assert "ok    s0!J2: =J1+5 -> 143005" in message
+    assert message.startswith("0 ERROR")

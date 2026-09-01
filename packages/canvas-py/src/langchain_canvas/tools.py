@@ -140,6 +140,41 @@ _DEFAULT_READ_LIMIT = 400
 _EYE_MAX_SLIDES = 2
 
 
+#: The width an eye image is resized to — enough to read a finding, a third
+#: of the tokens of a full render on pixel-priced vision models.
+_EYE_MAX_WIDTH = 1024
+
+
+def _glance_size(block: dict) -> dict:
+    """The image block resized to glance size (JPEG), or unchanged.
+
+    A deck page arrived at 1921x1080 PNG, ~300KB and ~1.5k vision tokens,
+    twice per save. The eye exists to show a finding, not to archive the
+    slide; anything that fails here (no pillow, odd bytes) passes through.
+    """
+    try:
+        import base64
+        import io
+
+        from PIL import Image  # type: ignore[import-untyped]
+
+        raw = base64.b64decode(block.get("data", ""))
+        image = Image.open(io.BytesIO(raw))
+        if image.width <= _EYE_MAX_WIDTH:
+            return block
+        height = round(image.height * _EYE_MAX_WIDTH / image.width)
+        resized = image.convert("RGB").resize((_EYE_MAX_WIDTH, height))
+        out = io.BytesIO()
+        resized.save(out, format="JPEG", quality=80)
+        return {
+            **block,
+            "data": base64.b64encode(out.getvalue()).decode(),
+            "mime_type": "image/jpeg",
+        }
+    except Exception:  # noqa: BLE001 - the eye is a bonus, never a failure
+        return block
+
+
 def _with_eye(text: str, images: list[dict]) -> str | list[dict]:
     """The tool reply as text, or text followed by page images when there are any."""
     if not images:
@@ -570,6 +605,41 @@ def _deck_with_skin_page(
     return json.dumps(envelope, ensure_ascii=False), None, note
 
 
+def _skin_baseline(
+    store: CanvasStore, canvas_id: str, data: dict[str, Any]
+) -> tuple[float | None, float, dict[tuple[float, float, float, float], float]]:
+    """``(min font px, max overhang, own overflows)`` from the deck's skin.
+
+    A deck copied from an upload is judged by what its author did: the
+    smallest size they printed is the readability floor, how far their own
+    shapes reach past the page is the overflow allowance, and the boxes
+    their own text already overflowed are folded rather than repeated.
+    Without a skin the defaults apply.
+    """
+    template = data.get("template")
+    if not isinstance(template, str) or not template.lower().endswith(".pptx"):
+        return None, 0.0, {}
+    ref = normalize_asset_reference(template)
+    if ref is None:
+        return None, 0.0, {}
+    try:
+        raw = store.read_bytes(canvas_id, ref).data
+    except CanvasStoreError:
+        return None, 0.0, {}
+    from .pptx_import import deck_baseline
+
+    baseline = deck_baseline(raw)
+    if baseline is None:
+        return None, 0.0, {}
+    return baseline.smallest_text_px, baseline.max_overhang, baseline.overflow
+
+
+#: The deck-check lines that mean content is hidden or missing — the ones the
+#: export gate refuses on. Small type and layout advice pass; a person can
+#: read a 12px footnote, not a line drawn past the box's edge.
+_HIDING_FINDINGS = ("run past the box", "off the page", "is not on the")
+
+
 def create_canvas_tools(
     store: CanvasStore,
     *,
@@ -810,30 +880,17 @@ def create_canvas_tools(
             return f"Error: {path} was not saved — {exc}", content
         return None, content
 
-    def _baseline(canvas_id: str, data: dict[str, Any]) -> tuple[float | None, float]:
-        """``(min font px, max overhang)`` from the deck's skin, if it has one.
+    def _baseline(
+        canvas_id: str, data: dict[str, Any]
+    ) -> tuple[float | None, float, dict[tuple[float, float, float, float], float]]:
+        """``(min font px, max overhang, own overflows)`` from the deck's skin.
 
         A deck copied from an upload is judged by what its author did: the
         smallest size they printed is the readability floor, and how far their
         own shapes reach past the page is the overflow allowance. Without a
         skin the defaults apply.
         """
-        template = data.get("template")
-        if not isinstance(template, str) or not template.lower().endswith(".pptx"):
-            return None, 0.0
-        ref = normalize_asset_reference(template)
-        if ref is None:
-            return None, 0.0
-        try:
-            raw = store.read_bytes(canvas_id, ref).data
-        except CanvasStoreError:
-            return None, 0.0
-        from .pptx_import import deck_baseline
-
-        baseline = deck_baseline(raw)
-        if baseline is None:
-            return None, 0.0
-        return baseline.smallest_text_px, baseline.max_overhang
+        return _skin_baseline(store, canvas_id, data)
 
     def _deck_note(canvas_id: str, path: str, content: str) -> str:
         """The deck check, over the envelope's ``data`` ('' when unreadable)."""
@@ -845,16 +902,23 @@ def create_canvas_tools(
         if not isinstance(data, dict):
             return ""
         on_canvas = _canvas_paths(canvas_id)
-        floor, overhang = _baseline(canvas_id, data)
+        floor, overhang, own_overflow = _baseline(canvas_id, data)
         warnings = lint_slides_data(
             data,
             ref_exists=None if on_canvas is None else on_canvas.__contains__,
             min_text_px=floor,
             max_overhang=overhang,
+            known_overflow=own_overflow,
         )
         return format_layout_warnings(warnings)
 
-    def _deck_eye(canvas_id: str, path: str, content: str, save_note: str) -> list[dict]:
+    def _deck_eye(
+        canvas_id: str,
+        path: str,
+        content: str,
+        save_note: str,
+        previous_revision: str | None = None,
+    ) -> list[dict]:
         """Page images of the slides the check named, or ``[]``.
 
         Telling the model to look was measured at 14 asks, 1 look. So when
@@ -862,10 +926,20 @@ def create_canvas_tools(
         the slide arrives with the finding — rendered from the deck as the
         exporter would print it. Quiet saves, decks without a renderer, and
         any render failure add nothing.
+
+        Among the named slides, the ones this save actually changed come
+        first — fourteen saves once arrived with the same two untouched
+        slides while the slide being written was never shown. The images are
+        resized to glance size on the way out: the model reads a finding,
+        not a poster.
         """
         if not path.lower().endswith(".slides.json") or "Deck check" not in save_note:
             return []
-        numbers = sorted({int(n) for n in re.findall(r"slide (\d+)", save_note)})[:_EYE_MAX_SLIDES]
+        flagged = sorted({int(n) for n in re.findall(r"slide (\d+)", save_note)})
+        changed = _changed_slides(canvas_id, path, content, previous_revision)
+        touched = [n for n in flagged if n in changed] if changed is not None else flagged
+        numbers = touched or flagged
+        numbers = numbers[:_EYE_MAX_SLIDES]
         if not numbers:
             return []
         stem = _deck_stem(path)
@@ -881,7 +955,37 @@ def create_canvas_tools(
             converted = renderer.render_pages(printed.data, path=f"{stem}.pptx", pages=numbers)
         except Exception:  # noqa: BLE001 - the eye is a bonus, never a failure
             return []
-        return [block for block in converted.blocks if block.get("type") == "image"]
+        return [
+            _glance_size(block)
+            for block in converted.blocks
+            if block.get("type") == "image"
+        ]
+
+    def _changed_slides(
+        canvas_id: str, path: str, content: str, previous_revision: str | None
+    ) -> set[int] | None:
+        """1-based numbers of the slides this save changed, or ``None``.
+
+        ``None`` (no previous revision, or anything unreadable) means "no
+        idea", and the caller falls back to every flagged slide.
+        """
+        if previous_revision is None:
+            return None
+        try:
+            before = store.read(canvas_id, path, revision=previous_revision).content
+            old_slides = json.loads(before)["data"]["slides"]
+            new_slides = json.loads(content)["data"]["slides"]
+        except Exception:  # noqa: BLE001 - a diff is a bonus, never a failure
+            return None
+        if not isinstance(old_slides, list) or not isinstance(new_slides, list):
+            return None
+        changed: set[int] = set()
+        for index in range(max(len(old_slides), len(new_slides))):
+            a = old_slides[index] if index < len(old_slides) else None
+            b = new_slides[index] if index < len(new_slides) else None
+            if json.dumps(a, sort_keys=True) != json.dumps(b, sort_keys=True):
+                changed.add(index + 1)
+        return changed
 
     def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
         """Rendered page images (or the grid overview) for one paged source.
@@ -1142,7 +1246,7 @@ def create_canvas_tools(
         when it does not match the schema, or when a slide carries both
         `elements` and `title`/`bullets` — the reply names what to fix.
         To revise an uploaded deck, do not write a new one: call
-        open_deck_for_editing and change the copy with `edit_canvas`.
+        open_deck_for_editing and change the copy with `set_slide_texts`.
 
         A `.table.json` table is `{"type": "table", "title": "...", "data":
         {"columns": [{"key": "name", "label": "Name"}], "rows": [{"name":
@@ -1192,7 +1296,7 @@ def create_canvas_tools(
         return _with_eye(
             f"Wrote {path} (revision {commit.revision})."
             f"{template_note}{page_note or ''}{save_note}",
-            _deck_eye(canvas_id, path, content, save_note),
+            _deck_eye(canvas_id, path, content, save_note, previous_revision=revision),
         )
 
     @tool
@@ -1257,9 +1361,232 @@ def create_canvas_tools(
             save_note = _save_note(canvas_id, path, edited)
             return _with_eye(
                 f"Edited {path} (revision {commit.revision}).{save_note}",
-                _deck_eye(canvas_id, path, edited, save_note),
+                _deck_eye(canvas_id, path, edited, save_note, previous_revision=revision),
             )
         return f"Edited {path} (revision {commit.revision}).{save_note}"
+
+    @tool
+    def set_slide_texts(
+        path: str,
+        slide: int,
+        texts: dict[str, str],
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+    ) -> str | list[dict]:
+        """Replace the words of one slide's text elements, by element id.
+
+        `slide` is 1-based, as `read_canvas` prints it, and `texts` maps
+        element ids to their new words: `{"e0": "Title", "e2": "Body"}`. Put
+        every text change for the slide in one call — one call is one save,
+        and the reply carries that slide's check (with its image when a
+        renderer is mounted). This is the way to retitle and refill a slide;
+        it cannot collide with itself the way parallel `edit_canvas` string
+        matches do.
+
+        Words only: fonts, colours and boxes stay. Geometry or styling
+        changes go through `edit_canvas`; a table's words live in its `rows`
+        (`edit_canvas` too). `revision` must be the value from your most
+        recent `read_canvas` of this file.
+        """
+        if not path.lower().endswith(SLIDES_SUFFIX):
+            return f"Error: set_slide_texts edits {SLIDES_SUFFIX} decks (got {path})."
+        canvas_id = _canvas_id(runtime)
+        try:
+            got = store.read(canvas_id, path)
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            envelope = json.loads(got.content)
+            slides = envelope["data"]["slides"]
+            assert isinstance(slides, list)
+        except Exception:  # noqa: BLE001 - not a deck we can address into
+            return f"Error: {path} does not parse as a slides deck; read it and use edit_canvas."
+        if not texts:
+            return "Error: `texts` is empty — nothing to change."
+        if not isinstance(slide, int) or not 1 <= slide <= len(slides):
+            return f"Error: slide {slide} is out of range — the deck has {len(slides)} slide(s)."
+        elements = slides[slide - 1].get("elements")
+        if not isinstance(elements, list) or not elements:
+            return (
+                f"Error: slide {slide} has no `elements` (it is a structured slide) — "
+                "edit its `title`/`bullets` with edit_canvas."
+            )
+        by_id = {e.get("id"): e for e in elements if isinstance(e, dict)}
+        for element_id, words in texts.items():
+            element = by_id.get(element_id)
+            if element is None:
+                have = ", ".join(f'{e.get("id")} ({e.get("type")})' for e in elements)
+                return f"Error: slide {slide} has no element {element_id!r}. It has: {have}."
+            if element.get("type") == "table":
+                return (
+                    f"Error: {element_id!r} on slide {slide} is a table — its words are "
+                    "its `rows`; change them with edit_canvas."
+                )
+            if element.get("type") != "text":
+                kind = element.get("type")
+                return f"Error: {element_id!r} on slide {slide} is a {kind}, not text."
+            if not isinstance(words, str):
+                return f"Error: the text for {element_id!r} must be a string."
+        for element_id, words in texts.items():
+            by_id[element_id]["text"] = words
+        content = encode_slides(envelope.get("title") or display_title(path), envelope["data"])
+        refusal = _deck_refusal(path, content)
+        if refusal is not None:
+            return refusal
+        try:
+            commit = store.write(
+                canvas_id, path, content, description, base_revision=revision, actor="agent"
+            )
+        except RevisionMismatchError as exc:
+            return f"Error: {exc}. {_RETRY_HINT}"
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        _broadcast(runtime, canvas_id, path, is_new=False, commit=commit)
+        save_note = _save_note(canvas_id, path, content)
+        return _with_eye(
+            f"Set {len(texts)} text(s) on slide {slide} of {path} "
+            f"(revision {commit.revision}).{save_note}",
+            _deck_eye(canvas_id, path, content, save_note, previous_revision=revision),
+        )
+
+    @tool
+    def review_deck(
+        path: str, runtime: ToolRuntime, slide: int | None = None
+    ) -> str | list[dict]:
+        """Look over the whole deck before handing it off — check plus pages.
+
+        With no `slide`: the full deck check (the original's own findings
+        folded out), a per-slide note of what changed against the original,
+        and — when a page renderer is mounted — the deck now as a page grid,
+        then the original's grid, for side-by-side comparison. With
+        `slide=N`: that one slide rendered large, the deck now first, the
+        original second.
+
+        Call it after the last text change and before `export_canvas` — the
+        export refuses while findings that hide content remain.
+        """
+        canvas_id = _canvas_id(runtime)
+        if not path.lower().endswith(SLIDES_SUFFIX):
+            return f"Error: review_deck reads {SLIDES_SUFFIX} decks (got {path})."
+        try:
+            content = store.read(canvas_id, path).content
+        except CanvasFileNotFoundError as exc:
+            return f"Error: {exc}. Use list_canvas_files to see available files."
+        except CanvasStoreError as exc:
+            return f"Error: {exc}."
+        try:
+            data = json.loads(content)["data"]
+            slides = data["slides"]
+            assert isinstance(slides, list)
+        except Exception:  # noqa: BLE001 - not a reviewable deck
+            return f"Error: {path} does not parse as a slides deck."
+        if slide is not None and not 1 <= slide <= len(slides):
+            return f"Error: slide {slide} is out of range — the deck has {len(slides)} slide(s)."
+
+        note = _save_note(canvas_id, path, content) or "\nDeck check: clean."
+        lines = [f"{path} — {len(slides)} slide(s).{note}"]
+
+        # What moved against the original, slide by slide — the review is
+        # where "slide 5 was never touched" stops being invisible.
+        original = _original_deck_data(canvas_id, data)
+        if original is not None:
+            source_slides = original.get("slides") or []
+            for number, current in enumerate(slides, start=1):
+                if slide is not None and number != slide:
+                    continue
+                base = source_slides[number - 1] if number - 1 < len(source_slides) else {}
+                base_texts = {
+                    e.get("id"): e.get("text")
+                    for e in (base.get("elements") or [])
+                    if isinstance(e, dict) and e.get("type") == "text"
+                }
+                changed, untouched = [], []
+                for element in current.get("elements") or []:
+                    if not isinstance(element, dict) or element.get("type") != "text":
+                        continue
+                    before = base_texts.get(element.get("id"))
+                    if before is None:
+                        changed.append(element.get("id"))
+                    elif element.get("text") == before:
+                        untouched.append(element.get("id"))
+                    else:
+                        changed.append(element.get("id"))
+                parts = [f"changed {len(changed)} text(s)"]
+                if untouched:
+                    shown = ", ".join(str(i) for i in untouched[:4])
+                    parts.append(
+                        f"{len(untouched)} still read as the original ({shown}"
+                        + (", ..." if len(untouched) > 4 else "")
+                        + ")"
+                    )
+                lines.append(f"[s{number}] " + "; ".join(parts))
+
+        images = _review_images(canvas_id, path, content, data, slide)
+        if images:
+            what = "that slide" if slide is not None else "every page"
+            lines.append(f"Images: {what} of the deck now, then the original.")
+        return _with_eye("\n".join(lines), images)
+
+    def _original_deck_data(canvas_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        """The template re-imported, for comparison — or ``None``, quietly."""
+        template = data.get("template")
+        if not isinstance(template, str) or not template.lower().endswith(".pptx"):
+            return None
+        ref = normalize_asset_reference(template)
+        if ref is None:
+            return None
+        try:
+            raw = store.read_bytes(canvas_id, ref).data
+            from .pptx_import import pptx_to_slides
+
+            return pptx_to_slides(raw)
+        except Exception:  # noqa: BLE001 - the comparison is a bonus
+            return None
+
+    def _review_images(
+        canvas_id: str,
+        path: str,
+        content: str,
+        data: dict[str, Any],
+        slide: int | None,
+    ) -> list[dict]:
+        """Current pages then original pages, glance-sized — or ``[]``."""
+        stem = _deck_stem(path)
+        renderer = _renderer_for(f"{stem}.pptx", active_converters)
+        if renderer is None:
+            return []
+        try:
+            from .exporters import SlidesPptxExporter
+
+            printed = SlidesPptxExporter().export(
+                inline_slides_assets(content, store, canvas_id), path=path
+            )
+            blocks: list[dict] = []
+            template = data.get("template")
+            ref = normalize_asset_reference(template) if isinstance(template, str) else None
+            original = store.read_bytes(canvas_id, ref).data if ref else None
+            if slide is not None:
+                converted = renderer.render_pages(
+                    printed.data, path=f"{stem}.pptx", pages=[slide]
+                )
+                blocks += converted.blocks
+                if original is not None:
+                    converted = renderer.render_pages(
+                        original, path=f"{stem}.pptx", pages=[slide]
+                    )
+                    blocks += converted.blocks
+            else:
+                blocks += renderer.render_grid(printed.data, path=f"{stem}.pptx").blocks
+                if original is not None:
+                    blocks += renderer.render_grid(original, path=f"{stem}.pptx").blocks
+            return [
+                _glance_size(block) for block in blocks if block.get("type") == "image"
+            ]
+        except Exception:  # noqa: BLE001 - the review still reports in text
+            return []
 
     @tool
     def list_canvas_files(runtime: ToolRuntime) -> str:
@@ -1290,7 +1617,7 @@ def create_canvas_tools(
     edit_canvas.description = edit_canvas.description.replace(
         "{document_formats}", _DOCUMENT_FORMATS
     )
-    return [read_canvas, write_canvas, edit_canvas, list_canvas_files]
+    return [read_canvas, write_canvas, edit_canvas, set_slide_texts, review_deck, list_canvas_files]
 
 
 def create_document_tools(
@@ -1612,7 +1939,112 @@ def create_document_tools(
     ]
 
 
-def create_table_tools(store: CanvasStore) -> list[Any]:
+def _run_formula_evaluator(
+    evaluator: Sequence[str], payload: dict[str, Any]
+) -> list[dict[str, Any]] | None:
+    """The evaluator's ``results`` list, or ``None`` when it could not run."""
+    try:
+        proc = subprocess.run(  # noqa: S603 — host-configured argv, no shell
+            list(evaluator),
+            input=json.dumps(payload).encode(),
+            capture_output=True,
+            timeout=60,
+        )
+        output = json.loads(proc.stdout.decode())
+        results = output["results"]
+        return results if isinstance(results, list) else None
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return None
+
+
+def _stamp_sheet_formulas(
+    content: str, sheet: str, written: dict[str, Any], evaluator: Sequence[str] | None
+) -> tuple[str, str]:
+    """Compute the touched sheet's formulas and stamp their values.
+
+    Measured before this existed: an agent-written ``=ROUND(H2*I2*2,0)``
+    stored only ``f``, the grid showed a blank cell, and a value someone
+    else's formula depended on left the dependent showing its stale cache.
+    So after a write the whole sheet is recomputed — dependents included —
+    and every formula cell gets the value the person will see (``v``/``m``),
+    the same way the importer carries the file's own cached values across.
+
+    Returns ``(content, note)`` — content unchanged and a note that says so
+    when there is nothing to compute or no way to compute it.
+    """
+    from .table_outline import _a1, _at, _grid_index, _rewritten, _table, cell_map
+
+    try:
+        envelope, data, sheets = _table(content)
+        index = _grid_index(sheet, sheets)
+    except ValueError:
+        return content, ""
+    grid = cell_map(sheets[index])
+    formula_cells = {
+        at: cell
+        for at, cell in grid.items()
+        if isinstance(cell, dict) and isinstance(cell.get("f"), str) and cell["f"].strip()
+    }
+    if not formula_cells:
+        return content, ""
+    if evaluator is None:
+        return content, (
+            f"\nFormulas: {len(formula_cells)} formula cell(s) were NOT recomputed "
+            "(no evaluator configured) — the grid may show stale or blank values."
+        )
+    celldata = [{"r": r, "c": c, "v": v} for (r, c), v in sorted(grid.items())]
+    results = _run_formula_evaluator(evaluator, {"sheets": [{"celldata": celldata}]})
+    if not results:
+        return content, (
+            f"\nFormulas: {len(formula_cells)} formula cell(s) were NOT recomputed "
+            "(the evaluator could not run or predates grid mode) — run check_table."
+        )
+    written_at = set()
+    for ref in written:
+        try:
+            written_at.add(_at(ref))
+        except ValueError:
+            continue
+    shown: list[str] = []
+    errors: list[str] = []
+    stamped_others = 0
+    for result in results:
+        at = (int(result["r"]), int(result["c"]))
+        cell = grid.get(at)
+        if not isinstance(cell, dict):
+            continue
+        value = result.get("value")
+        address = _a1(*at)
+        if value in (None, "#ERR"):
+            # Not stamped: a wrong number is worse than a blank one. The old
+            # cached value (if any) stays, honestly flagged.
+            errors.append(
+                f"{address} {cell['f']} → #ERR — " + _error_hint(str(cell["f"]))
+            )
+            continue
+        cell["v"] = value
+        cell["m"] = str(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            cell["ct"] = {"fa": "General", "t": "n"}
+        elif "ct" in cell:
+            cell.pop("ct")
+        if at in written_at:
+            shown.append(f"{address} {cell['f']} → {value}")
+        else:
+            stamped_others += 1
+    sheets[index]["celldata"] = [
+        {"r": r, "c": c, "v": v} for (r, c), v in sorted(grid.items())
+    ]
+    parts = shown[:8] + errors[:8]
+    if stamped_others:
+        parts.append(f"{stamped_others} other formula cell(s) recomputed with them")
+    note = "\nFormulas: " + " · ".join(parts) if parts else ""
+    return _rewritten(envelope), note
+
+
+def create_table_tools(
+    store: CanvasStore, *, evaluator: Sequence[str] | None = None
+) -> list[Any]:
     """Build the table-writing tools bound to ``store``.
 
     ``read_canvas`` shows a table as a map and hands back one addressed
@@ -1682,7 +2114,10 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
         `{"B3": 42, "C3": "=B3*2", "D3": "done"}`. The column letters are in
         the `### sheet:` line of the read, so nothing needs counting. A value
         starting with `=` stays a formula; `""` clears the cell. Styling on a
-        cell you overwrite stays.
+        cell you overwrite stays. On save the sheet's formulas are computed —
+        dependents included — and the reply shows each written formula's
+        value; a formula the grid cannot run is flagged `#ERR` instead of
+        showing a wrong or stale number.
 
         To match the sheet's look, write a dict: `{"v": "Notes", "like":
         "A3"}` copies A3's bold, fill, font and colour onto the cell; explicit
@@ -1699,6 +2134,8 @@ def create_table_tools(store: CanvasStore) -> list[Any]:
         try:
             got = _load(canvas_id, path)
             content, note = table_write_cells(got.content, sheet, cells)
+            stamped, formula_note = _stamp_sheet_formulas(content, sheet, cells, evaluator)
+            content, note = stamped, note + formula_note
         except CanvasFileNotFoundError as exc:
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
@@ -1760,15 +2197,56 @@ def create_export_tool(
 
     active_converters = default_converters() if converters is None else converters
 
+    def _deck_export_gate(canvas_id: str, content: str) -> str | None:
+        """The refusal for a deck that would export with hidden content, or None.
+
+        Only the findings that hide words block (see ``_HIDING_FINDINGS``);
+        the template's own inherited overflows are already folded out, so the
+        list is one the agent can actually bring to zero.
+        """
+        try:
+            data = json.loads(content).get("data")
+        except (ValueError, AttributeError):
+            return None  # unparseable decks are the exporter's own refusal
+        if not isinstance(data, dict):
+            return None
+        floor, overhang, overflow = _skin_baseline(store, canvas_id, data)
+        try:
+            on_canvas = {info.path for info in store.list_files(canvas_id)}
+        except CanvasStoreError:
+            on_canvas = set()
+        findings = lint_slides_data(
+            data,
+            ref_exists=on_canvas.__contains__,
+            min_text_px=floor,
+            max_overhang=overhang,
+            known_overflow=overflow,
+        )
+        blocking = [w for w in findings if any(k in w for k in _HIDING_FINDINGS)]
+        if not blocking:
+            return None
+        listed = "\n".join(f"- {w}" for w in blocking[:3])
+        more = f"\n- ... and {len(blocking) - 3} more" if len(blocking) > 3 else ""
+        return (
+            f"Error: not exported — {len(blocking)} finding(s) would hide content "
+            "in the file:\n"
+            f"{listed}{more}\n"
+            "Fix them (set_slide_texts for words, edit_canvas for boxes), see the "
+            "pages with review_deck, or — only once the user has said to export "
+            "as is — call again with accept_findings=True."
+        )
+
     @tool
-    def export_canvas(path: str, target: str, runtime: ToolRuntime) -> str | list[dict]:
+    def export_canvas(
+        path: str, target: str, runtime: ToolRuntime, accept_findings: bool = False
+    ) -> str | list[dict]:
         """Export canvas work into a downloadable office file.
 
         ``path`` is one canvas file (``report/02-overview.html``,
         ``sales.table.json``) or a directory prefix ending in ``/``
         (``report/``), which merges every .html file under it, in name
         order, into one document with a page break between sections.
-        ``target`` is the output format: ``docx`` for .html files,
+        ``target`` is the output format: ``docx`` for .html and .md files,
         ``xlsx`` for .table.json tables, ``pptx`` for .slides.json decks.
         The result is saved under ``exports/`` on the canvas, where the
         user can download it.
@@ -1779,6 +2257,12 @@ def create_export_tool(
         headers survive, and the text takes the face that file uses most.
         A missing or unreadable skin degrades to the plain blank-layout
         export, where fonts fall back to whatever the viewer has installed.
+
+        A deck is refused while its check still names content-hiding
+        findings (text past its box, boxes off the page, missing images) —
+        exporting those hands the user a file with invisible words. Fix
+        them, look with `review_deck`, or pass `accept_findings=True` only
+        after the user has said to export as is.
         """
         canvas_id = _canvas_id(runtime)
         try:
@@ -1805,6 +2289,10 @@ def create_export_tool(
                 "(.html, .table.json, .slides.json)."
             )
 
+        if sample.lower().endswith(".slides.json") and not accept_findings:
+            refusal = _deck_export_gate(canvas_id, content)
+            if refusal is not None:
+                return refusal
         # Relative asset references (assets/, sources/) become data: URIs here,
         # before the exporter runs — exporters keep their one-method contract
         # and the exported file leaves self-contained, images included.
@@ -2019,12 +2507,6 @@ def create_check_table_tool(
             for cell in sheet.get("celldata") or []
             if isinstance(cell.get("v"), dict) and cell["v"].get("f")
         )
-        typed_note = (
-            f"\nNote: {typed} typed formula(s) exist in the sheet editor state; they "
-            "evaluate in the grid and are not checked here."
-            if typed
-            else ""
-        )
 
         formula_cells = sum(
             1
@@ -2032,8 +2514,54 @@ def create_check_table_tool(
             for value in row.values()
             if isinstance(value, str) and value.startswith("=")
         )
+        # Grid formulas (the sheet editor state — where write_table_cells and
+        # typing put them) are checked too: "they evaluate in the grid" was
+        # assumed here once, and an agent-written formula did not.
+        grid_lines: list[str] = []
+        grid_errors = 0
+        grid_checked = 0
+        if typed and evaluator is not None:
+            grid_payload = {
+                "sheets": [
+                    {"celldata": sheet.get("celldata") or []}
+                    for sheet in data.get("sheet") or []
+                ]
+            }
+            grid_results = _run_formula_evaluator(evaluator, grid_payload)
+            if not grid_results:
+                grid_lines.append(
+                    f"note: {typed} grid formula(s) NOT verified — the evaluator "
+                    "could not run or predates grid mode"
+                )
+            else:
+                from .table_outline import _a1
+
+                grid_checked = len(grid_results)
+                for cell in grid_results:
+                    address = f"s{cell['sheet']}!{_a1(int(cell['r']), int(cell['c']))}"
+                    value = cell.get("value")
+                    if value in (None, "#ERR"):
+                        grid_errors += 1
+                        grid_lines.append(
+                            f"ERROR {address}: {cell['formula']} -> #ERR — "
+                            + _error_hint(str(cell["formula"]))
+                        )
+                    else:
+                        grid_lines.append(f"ok    {address}: {cell['formula']} -> {value}")
+        elif typed:
+            grid_lines.append(
+                f"note: {typed} grid formula(s) NOT verified — no evaluator configured"
+            )
         if formula_cells == 0 and not expect:
-            return f"0 ERROR — no formula cells in {path} rows.{typed_note}"
+            if grid_checked or grid_lines:
+                return "\n".join(
+                    [
+                        f"{grid_errors} ERROR — {grid_checked} grid formula cell(s) "
+                        f"evaluated in {path}, none in rows.",
+                        *grid_lines,
+                    ]
+                )
+            return f"0 ERROR — no formula cells in {path} rows."
 
         if evaluator is None:
             return (
@@ -2089,8 +2617,12 @@ def create_check_table_tool(
                 errors += 1
                 lines.append(f"ERROR expect {key}[{row_idx}] = {match['value']}, got {got}")
 
-        summary = f"{errors} ERROR — {len(results)} formula cell(s) evaluated in {path}."
-        return "\n".join([summary, *lines]) + typed_note
+        errors += grid_errors
+        checked = f"{len(results)} formula cell(s)"
+        if grid_checked:
+            checked += f" + {grid_checked} grid formula cell(s)"
+        summary = f"{errors} ERROR — {checked} evaluated in {path}."
+        return "\n".join([summary, *lines, *grid_lines])
 
     check_table.description += "\n\n" + formula_guidance()
     return check_table
@@ -2146,8 +2678,9 @@ def create_deck_tools(
         shorten them, set `autofit`, or ask the user which they prefer.
 
         This is how an uploaded deck is revised: read the copy, then change
-        its text with `edit_canvas`. Changing the words keeps the look. Do
-        not write a new deck from scratch for a revision — it would carry
+        its words with `set_slide_texts`, one slide per call. Changing the
+        words keeps the look; geometry and styling go through `edit_canvas`.
+        Do not write a new deck from scratch for a revision — it would carry
         none of the original's styling.
         """
         canvas_id = _canvas_id(runtime)
@@ -2247,9 +2780,10 @@ def create_deck_tools(
         return (
             f"Copied {source} to {target} ({count} slide(s), {pictures} picture(s) "
             f"under {ASSETS_PREFIX}{_deck_stem(target)}/, revision {commit.revision})."
-            f"{carried} Read {target}, then change its text with edit_canvas — the fonts, "
-            "colours and positions came from the original, so changing the words "
-            "keeps the look. A box that grows takes the height its words need (mind "
+            f"{carried} Read {target}, then change its words with set_slide_texts, one slide "
+            "per call — the fonts, colours and positions came from the original, so "
+            "changing the words keeps the look. A box that grows takes the height "
+            "its words need (mind "
             "the page bottom and what sits below it); a fixed box does not — when "
             "new words run longer than its placeholder, shorten them, set `autofit`, "
             f"or ask the user which they prefer. Export it to pptx when done; {source} "

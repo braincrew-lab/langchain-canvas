@@ -1578,3 +1578,262 @@ def test_an_export_comes_back_with_its_pages_when_a_renderer_is_mounted() -> Non
     assert eye.calls and eye.calls[-1][1] == "grid"
     plain = create_export_tool(store).func(path="deck.slides.json", target="pptx", runtime=runtime)
     assert isinstance(plain, str)  # no renderer mounted: text as before
+
+
+def test_the_eye_shows_the_slide_this_save_changed_not_the_templates_noise() -> None:
+    """Fourteen saves once arrived with slides 1 and 2 — the template's own
+    findings — while the slide being written was never shown."""
+    pytest.importorskip("pptx")
+    from langchain_canvas import encode_slides
+
+    off = {"id": "e0", "type": "text", "x": 60, "y": 10, "w": 58, "h": 10, "text": "off page"}
+    fine = {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 50, "h": 10, "text": "fine"}
+    eye = _PptxEye()
+    store = InMemoryCanvasStore()
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[eye])}
+    first = tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=encode_slides("Deck", {"slides": [{"elements": [off]}, {"elements": [fine]}]}),
+        description="c",
+        runtime=_runtime(thread_id="t1"),
+    )
+    import re as regex
+
+    revision = regex.search(r"revision (v\d+)", first[0]["text"]).group(1)
+    # This save touches only slide 2, making it overflow too. Slide 1's
+    # finding is older noise; the eye follows the change.
+    tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=encode_slides("Deck", {"slides": [{"elements": [off]}, {"elements": [
+            {**off, "id": "e0"}]}]}),
+        description="c",
+        revision=revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert eye.calls[-1] == ("deck.pptx", [2])
+
+
+def test_an_eye_image_is_resized_to_glance_size() -> None:
+    pytest.importorskip("pptx")
+    pytest.importorskip("PIL")
+    import base64 as b64
+    import io as iolib
+
+    from PIL import Image
+
+    big = iolib.BytesIO()
+    Image.new("RGB", (1920, 1080), "white").save(big, format="PNG")
+    payload = b64.b64encode(big.getvalue()).decode()
+
+    class _BigEye(_PptxEye):
+        def render_pages(self, data: bytes, *, path: str, pages: list[int]):
+            from langchain_canvas.converters import ConvertedSource
+
+            return ConvertedSource(
+                blocks=[{"type": "image", "source_type": "base64", "data": payload,
+                         "mime_type": "image/png"} for _ in pages],
+                metadata={},
+            )
+
+    store = InMemoryCanvasStore()
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[_BigEye()])}
+    reply = tools["write_canvas"].func(
+        path="deck.slides.json",
+        content=_deck_with_overflow(),
+        description="c",
+        runtime=_runtime(thread_id="t1"),
+    )
+    image = reply[1]
+    assert image["mime_type"] == "image/jpeg"
+    got = Image.open(iolib.BytesIO(b64.b64decode(image["data"])))
+    assert got.width == 1024 and got.height == 576
+
+
+# --- set_slide_texts: one slide, one save ----------------------------------------------
+
+
+def _two_slide_deck() -> str:
+    from langchain_canvas import encode_slides
+
+    return encode_slides("Deck", {"slides": [
+        {"elements": [
+            {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 80, "h": 10,
+             "fontSize": 40, "text": "표지 제목"},
+            {"id": "e1", "type": "shape", "shape": "rect", "x": 5, "y": 20, "w": 20, "h": 10},
+        ]},
+        {"elements": [
+            {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 80, "h": 10,
+             "fontSize": 32, "text": "본문 제목"},
+            {"id": "e2", "type": "text", "x": 5, "y": 20, "w": 60, "h": 8,
+             "fontSize": 24, "text": "자리표시자"},
+        ]},
+    ]})
+
+
+def test_set_slide_texts_changes_several_elements_in_one_save() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    write = tools["write_canvas"].func(
+        path="d.slides.json", content=_two_slide_deck(), description="c",
+        runtime=_runtime(thread_id="t1"),
+    )
+    import re as regex
+
+    text = write if isinstance(write, str) else write[0]["text"]
+    revision = regex.search(r"revision (v\d+)", text).group(1)
+    reply = tools["set_slide_texts"].func(
+        path="d.slides.json", slide=2,
+        texts={"e0": "협업 구조와 역할", "e2": "본문 한 줄"},
+        description="slide 2 body", revision=revision, runtime=_runtime(thread_id="t1"),
+    )
+    reply_text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert reply_text.startswith("Set 2 text(s) on slide 2")
+    saved = json.loads(store.read("t1", "d.slides.json").content)
+    slide2 = {e["id"]: e for e in saved["data"]["slides"][1]["elements"]}
+    assert slide2["e0"]["text"] == "협업 구조와 역할"
+    assert slide2["e2"]["text"] == "본문 한 줄"
+    assert slide2["e0"]["fontSize"] == 32  # the look stays
+    # slide 1 untouched
+    assert json.loads(_two_slide_deck())["data"]["slides"][0] == saved["data"]["slides"][0]
+
+
+def test_set_slide_texts_refuses_with_the_slides_own_ids() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    tools["write_canvas"].func(path="d.slides.json", content=_two_slide_deck(),
+                               description="c", runtime=_runtime(thread_id="t1"))
+    revision = store.read("t1", "d.slides.json").revision
+    run = tools["set_slide_texts"].func
+    wrong_id = run(path="d.slides.json", slide=1, texts={"nope": "x"},
+                   description="d", revision=revision, runtime=_runtime(thread_id="t1"))
+    assert "has no element 'nope'" in wrong_id and "e0 (text)" in wrong_id
+    not_text = run(path="d.slides.json", slide=1, texts={"e1": "x"},
+                   description="d", revision=revision, runtime=_runtime(thread_id="t1"))
+    assert "is a shape, not text" in not_text
+    off_range = run(path="d.slides.json", slide=9, texts={"e0": "x"},
+                    description="d", revision=revision, runtime=_runtime(thread_id="t1"))
+    assert "out of range" in off_range and "2 slide(s)" in off_range
+    stale = run(path="d.slides.json", slide=1, texts={"e0": "새 제목"},
+                description="d", revision="v0", runtime=_runtime(thread_id="t1"))
+    assert stale.startswith("Error:")
+
+
+def test_set_slide_texts_overflow_arrives_with_the_check_and_the_eye() -> None:
+    pytest.importorskip("pptx")
+    eye = _PptxEye()
+    store = InMemoryCanvasStore()
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[eye])}
+    tools["write_canvas"].func(path="d.slides.json", content=_two_slide_deck(),
+                               description="c", runtime=_runtime(thread_id="t1"))
+    revision = store.read("t1", "d.slides.json").revision
+    reply = tools["set_slide_texts"].func(
+        path="d.slides.json", slide=2, texts={"e2": "자리표시자보다 훨씬 긴 본문 " * 8},
+        description="overflow", revision=revision, runtime=_runtime(thread_id="t1"),
+    )
+    assert isinstance(reply, list)
+    assert "Deck check" in reply[0]["text"]
+    assert eye.calls[-1] == ("d.pptx", [2])
+
+
+# --- the export gate and the review ----------------------------------------------------
+
+
+def _crowded_template() -> bytes:
+    """One slide: a title placeholder and a fixed box whose own text overflows."""
+    import io as iolib
+
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    deck = Presentation()
+    deck.slide_width, deck.slide_height = Inches(13.333), Inches(7.5)
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+
+    def box(text: str, top: float, height: float, autofit: object) -> None:
+        shape = slide.shapes.add_textbox(Inches(1), Inches(top), Inches(6), Inches(height))
+        shape.text_frame.text = text
+        shape.text_frame.auto_size = autofit
+        shape.text_frame.paragraphs[0].runs[0].font.size = Pt(20)
+
+    box("핵심 주제를 입력해 주세요", 0.5, 0.8, None)
+    box("상세 내용을 작성해 주세요 " * 6, 2.0, 0.5, None)  # overflows already
+    out = iolib.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def _deck_workbench(converters: list | None = None) -> tuple[Any, dict[str, Any]]:
+    """Store with the crowded upload opened for editing, plus every tool."""
+    from langchain_canvas.tools import create_deck_tools, create_export_tool
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/skin.pptx", _crowded_template(), "Upload", actor="human")
+    tools = {t.name: t for t in create_canvas_tools(store, converters=converters)}
+    for t in create_deck_tools(store, converters=converters):
+        tools[t.name] = t
+    tools["export_canvas"] = create_export_tool(store, converters=converters)
+    tools["open_deck_for_editing"].func(
+        source="sources/skin.pptx", runtime=_runtime(thread_id="t1")
+    )
+    return store, tools
+
+
+def test_an_inherited_overflow_does_not_block_export_but_a_new_one_does() -> None:
+    pytest.importorskip("pptx")
+    store, tools = _deck_workbench()
+    fresh = tools["export_canvas"].func(path="skin.slides.json", target="pptx",
+                                        runtime=_runtime(thread_id="t1"))
+    text = fresh if isinstance(fresh, str) else fresh[0]["text"]
+    assert not text.startswith("Error"), text  # the template's own overflow is folded
+    # Write far more text into the crowded box: now it is the agent's doing.
+    revision = store.read("t1", "skin.slides.json").revision
+    deck = json.loads(store.read("t1", "skin.slides.json").content)
+    crowded = deck["data"]["slides"][0]["elements"][1]["id"]
+    tools["set_slide_texts"].func(
+        path="skin.slides.json", slide=1, texts={crowded: "훨씬 더 길게 다시 쓴 본문 " * 30},
+        description="longer", revision=revision, runtime=_runtime(thread_id="t1"),
+    )
+    blocked = tools["export_canvas"].func(path="skin.slides.json", target="pptx",
+                                          runtime=_runtime(thread_id="t1"))
+    assert isinstance(blocked, str) and blocked.startswith("Error: not exported")
+    assert "run past the box" in blocked and "review_deck" in blocked
+    assert "accept_findings=True" in blocked
+    # The user said to ship it anyway.
+    shipped = tools["export_canvas"].func(path="skin.slides.json", target="pptx",
+                                          accept_findings=True, runtime=_runtime(thread_id="t1"))
+    text = shipped if isinstance(shipped, str) else shipped[0]["text"]
+    assert "exports/" in text
+
+
+def test_review_deck_names_what_still_reads_as_the_original() -> None:
+    pytest.importorskip("pptx")
+    store, tools = _deck_workbench()
+    revision = store.read("t1", "skin.slides.json").revision
+    deck = json.loads(store.read("t1", "skin.slides.json").content)
+    title = deck["data"]["slides"][0]["elements"][0]["id"]
+    untouched = deck["data"]["slides"][0]["elements"][1]["id"]
+    tools["set_slide_texts"].func(
+        path="skin.slides.json", slide=1, texts={title: "협업 제안"},
+        description="title", revision=revision, runtime=_runtime(thread_id="t1"),
+    )
+    report = tools["review_deck"].func(path="skin.slides.json", runtime=_runtime(thread_id="t1"))
+    text = report if isinstance(report, str) else report[0]["text"]
+    assert text.startswith("skin.slides.json — 1 slide(s).")
+    assert "changed 1 text(s)" in text
+    assert f"1 still read as the original ({untouched})" in text
+
+
+def test_review_deck_renders_now_and_original_side_by_side() -> None:
+    pytest.importorskip("pptx")
+    eye = _PptxEye()
+    store, tools = _deck_workbench(converters=[eye])
+    grid = tools["review_deck"].func(path="skin.slides.json", runtime=_runtime(thread_id="t1"))
+    assert isinstance(grid, list)
+    assert "Images: every page of the deck now, then the original." in grid[0]["text"]
+    assert [c for c in eye.calls if c[1] == "grid"][-2:] == [("skin.pptx", "grid")] * 2
+    one = tools["review_deck"].func(path="skin.slides.json", slide=1,
+                                    runtime=_runtime(thread_id="t1"))
+    assert isinstance(one, list)
+    assert eye.calls[-2:] == [("skin.pptx", [1]), ("skin.pptx", [1])]

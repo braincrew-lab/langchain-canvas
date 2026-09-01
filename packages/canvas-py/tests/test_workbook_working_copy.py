@@ -19,6 +19,7 @@ from test_tools import _runtime  # noqa: E402
 
 from langchain_canvas.replay import (  # noqa: E402
     encode_artifact,
+    encode_table,  # noqa: E402
     hydrate_events,
     source_preview_events,
     workbook_working_copy,
@@ -171,3 +172,85 @@ def test_encode_artifact_still_projects_rows_from_the_sheet() -> None:
     envelope = json.loads(store.read("t1", "book.table.json").content)
     again = encode_artifact(envelope, "book.table.json")
     assert json.loads(again)["data"]["rows"] == envelope["data"]["rows"]
+
+
+# --- formulas get their values at save time --------------------------------------------
+
+# A sheets-capable stand-in evaluator: XLOOKUP fails, everything else is 42.
+_GRID_EVALUATOR = (
+    sys.executable,
+    "-c",
+    (
+        "import json,sys; p=json.load(sys.stdin); r=[]\n"
+        "for i,s in enumerate(p.get('sheets') or []):\n"
+        "    for cell in s.get('celldata') or []:\n"
+        "        v=cell.get('v')\n"
+        "        f=v.get('f') if isinstance(v,dict) else None\n"
+        "        if f: r.append({'sheet': i, 'r': cell['r'], 'c': cell['c'],\n"
+        "                        'formula': f, 'value': '#ERR' if 'XLOOKUP' in f else 42})\n"
+        "print(json.dumps({'results': r}))"
+    ),
+)
+
+
+def _seeded_store() -> InMemoryCanvasStore:
+    """A working-copy-shaped table: one imported formula with its cached value."""
+    store = InMemoryCanvasStore()
+    data = {
+        "columns": [{"key": "a"}],
+        "rows": [{"a": 1}],
+        "sheet": [{"name": "Sheet1", "celldata": [
+            {"r": 0, "c": 7, "v": {"v": 5}},
+            {"r": 0, "c": 8, "v": {"v": 14300}},
+            {"r": 5, "c": 0, "v": {"v": 999, "f": "=SUM(H1:I1)", "m": "999"}},
+        ]}],
+    }
+    store.write("t1", "book.table.json", encode_table("Book", data), "copy", actor="agent")
+    return store
+
+
+def test_a_written_formula_lands_with_its_value_and_dependents_refresh() -> None:
+    """Measured (thread a87118dc): the agent's `=ROUND(H2*I2*2,0)` stored only
+    `f`; the grid showed a blank cell, and cells depending on a changed value
+    kept their stale cache. Now the whole sheet is recomputed at save."""
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(store, evaluator=_GRID_EVALUATOR)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J1": "=ROUND(H1*I1*2,0)"},
+        description="amount", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "Formulas: J1 =ROUND(H1*I1*2,0) → 42" in reply
+    assert "1 other formula cell(s) recomputed with them" in reply  # the stale A6
+    saved = json.loads(store.read("t1", "book.table.json").content)
+    cells = {(c["r"], c["c"]): c["v"] for c in saved["data"]["sheet"][0]["celldata"]}
+    written = cells[(0, 9)]
+    assert written["f"] == "=ROUND(H1*I1*2,0)" and written["v"] == 42 and written["m"] == "42"
+    assert written["ct"] == {"fa": "General", "t": "n"}
+    dependent = cells[(5, 0)]
+    assert dependent["v"] == 42 and dependent["m"] == "42"  # stale 999 refreshed
+
+
+def test_a_formula_the_grid_cannot_run_is_flagged_not_stamped() -> None:
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(store, evaluator=_GRID_EVALUATOR)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J2": "=XLOOKUP(1,A1:A2,B1:B2)"},
+        description="lookup", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "J2 =XLOOKUP(1,A1:A2,B1:B2) → #ERR" in reply
+    saved = json.loads(store.read("t1", "book.table.json").content)
+    cells = {(c["r"], c["c"]): c["v"] for c in saved["data"]["sheet"][0]["celldata"]}
+    assert "v" not in cells[(1, 9)]  # never stamp a value the engine could not compute
+
+
+def test_without_an_evaluator_the_reply_says_values_were_not_computed() -> None:
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(store)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J1": "=SUM(H1:I1)"},
+        description="sum", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "NOT recomputed" in reply and "no evaluator configured" in reply

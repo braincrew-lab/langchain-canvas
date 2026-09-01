@@ -4,9 +4,40 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.7.27] — 2026-08-30
+## [0.7.27] — 2026-09-01
 
 ### Added
+- **A written formula lands with its value.** Measured: an agent's
+  `=ROUND(H2*I2*2,0)` stored only the formula; the grid showed a blank cell,
+  and cells depending on a changed value kept their stale cache. Now
+  `write_table_cells` recomputes the whole sheet at save — dependents
+  included — stamps every formula cell's display value, and grades the write
+  in its reply (`J1 =ROUND(H1*I1*2,0) → 143000`). A formula the grid cannot
+  run is flagged `#ERR` with a hint instead of showing a wrong number.
+  `check_table` now verifies grid formulas too (it assumed "they evaluate in
+  the grid"; an agent-written one did not), and the formula CLI gains a
+  `sheets` mode (`computeSheetFormulas`) — same engine on both sides.
+- **`set_slide_texts` — one slide, one save.** Replace the words of several
+  text elements by id in a single call. Fourteen single-element edits with
+  eight collisions (same-string matches, revision races) became one save per
+  slide, one check, one image.
+- **`review_deck` — look over the whole deck before handing it off.** The
+  full check, a per-slide note of what changed against the original (and
+  what still reads as the template's placeholder), and the deck's pages
+  rendered next to the original's — grid to grid, or one slide large.
+- **The export gate.** `export_canvas` refuses a deck whose check still
+  names content-hiding findings (text past its box, boxes off the page,
+  missing images) — those export as invisible words. `accept_findings=True`
+  is the escape, for after the user has said to ship it as is.
+- **Findings the copy inherited fold away.** The original's own overflowing
+  boxes (recorded in the deck baseline, keyed by geometry) no longer repeat
+  on every save; they fold into one closing line. A list that cannot reach
+  zero is a list the model learns to ignore — measured riding along on all
+  fourteen saves of one run.
+- **The eye follows the change, at glance size.** A save's slide images now
+  prefer the slides that save touched (not the lowest-numbered flagged
+  ones), and arrive resized to 1024px JPEG — a third of the vision tokens,
+  a tenth of the bytes of the full render it used to attach.
 - **A text box can grow with its text, or shrink its type to fit.** `SlideElement`
   gains `autofit`: `shape` (the box takes the height its words need), `text`
   (the type shrinks to stay inside), `none` (the default — the deck check names
@@ -22,6 +53,14 @@ project adheres to [Semantic Versioning](https://semver.org/).
   `shrinks` after the size in `read_canvas`, and a count in the
   `open_deck_for_editing` reply, with the choice spelled out: let a growing box
   take its height, shorten the words, set `autofit`, or ask.
+
+- **A canvas `.md` document leaves as a Word file.** `MarkdownDocxExporter`
+  carries the same deliberate subset as the HTML door — headings, inline bold
+  and italic, bullet and numbered lists, pipe tables, fenced code, page breaks,
+  `data:` images. Before it, a canvas document could not be exported at all.
+- **The Export menu takes host entries.** `Canvas` gains `exportExtras(artifact)`;
+  entries are appended after the built-in ones (nothing is replaced) — the seam
+  for server-side exports such as slides→pptx or table→xlsx.
 
 ## [0.7.26] — 2026-08-30
 
