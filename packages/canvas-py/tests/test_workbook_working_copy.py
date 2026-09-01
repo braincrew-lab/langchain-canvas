@@ -254,3 +254,135 @@ def test_without_an_evaluator_the_reply_says_values_were_not_computed() -> None:
         runtime=_runtime(thread_id="t1"),
     )
     assert "NOT recomputed" in reply and "no evaluator configured" in reply
+
+
+def test_a_formula_the_grid_cannot_run_falls_through_to_the_workbook_engine() -> None:
+    """The light engine flags #ERR; the host's xlsx_recalc (LibreOffice in the
+    reference deployment) recalculates the exported workbook and its values
+    land on the cells — the engine that opens the file fills the screen."""
+    from openpyxl import Workbook, load_workbook
+
+    def fake_recalc(data: bytes) -> bytes:
+        # Stands in for the LibreOffice endpoint: same sheet shape, every
+        # formula cell answered with 777.
+        source = load_workbook(io.BytesIO(data))
+        out = Workbook()
+        out.remove(out.active)
+        for ws in source.worksheets:
+            fresh = out.create_sheet(ws.title)
+            for row in ws.iter_rows():
+                for cell in row:
+                    if cell.value is None:
+                        continue
+                    is_formula = isinstance(cell.value, str) and cell.value.startswith("=")
+                    fresh.cell(row=cell.row, column=cell.column,
+                               value=777 if is_formula else cell.value)
+        buffer = io.BytesIO()
+        out.save(buffer)
+        return buffer.getvalue()
+
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(
+        store, evaluator=_GRID_EVALUATOR, xlsx_recalc=fake_recalc)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J2": "=XLOOKUP(1,A1:A2,B1:B2)"},
+        description="lookup", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "Recalculated with the full spreadsheet engine: J2 → 777" in reply
+    saved = json.loads(store.read("t1", "book.table.json").content)
+    cells = {(c["r"], c["c"]): c["v"] for c in saved["data"]["sheet"][0]["celldata"]}
+    lookup = cells[(1, 9)]
+    assert lookup["v"] == 777 and lookup["m"] == "777"
+    assert lookup["f"] == "=XLOOKUP(1,A1:A2,B1:B2)"  # still a live formula
+
+
+def test_a_failing_workbook_engine_leaves_an_honest_note_and_the_save_lands() -> None:
+    def broken_recalc(data: bytes) -> bytes:
+        raise RuntimeError("endpoint unreachable")
+
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(
+        store, evaluator=_GRID_EVALUATOR, xlsx_recalc=broken_recalc)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J2": "=XLOOKUP(1,A1:A2,B1:B2)"},
+        description="lookup", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "Full recalculation failed" in reply and "endpoint unreachable" in reply
+    assert "revision v2" in reply  # the save landed anyway
+
+
+def test_a_supported_formula_never_calls_the_workbook_engine() -> None:
+    calls: list[int] = []
+
+    def counting_recalc(data: bytes) -> bytes:
+        calls.append(1)
+        return data
+
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(
+        store, evaluator=_GRID_EVALUATOR, xlsx_recalc=counting_recalc)}
+    tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0", cells={"J1": "=SUM(H1:I1)"},
+        description="sum", revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert calls == []  # the light engine handled it; no seconds spent
+
+
+import shutil as _shutil  # noqa: E402 — soffice discovery for the real-engine test
+from pathlib import Path as _Path  # noqa: E402
+
+_SOFFICE = _shutil.which("soffice") or (
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    if _Path("/Applications/LibreOffice.app/Contents/MacOS/soffice").exists()
+    else None
+)
+
+
+@pytest.mark.skipif(_SOFFICE is None, reason="needs LibreOffice for the real recalc")
+def test_libreoffice_really_fills_the_cells_the_grid_engine_cannot() -> None:
+    """End to end with the real workbook engine: SUMPRODUCT — outside the
+    grid engine's surface — lands on the cell with LibreOffice's value."""
+    import subprocess
+    import tempfile
+
+    def soffice_recalc(data: bytes) -> bytes:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = _Path(tmp)
+            (tmp_path / "in.xlsx").write_bytes(data)
+            profile = tmp_path / "profile" / "user"
+            profile.mkdir(parents=True)
+            (profile / "registrymodifications.xcu").write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<oor:items xmlns:oor="http://openoffice.org/2001/registry">\n'
+                ' <item oor:path="/org.openoffice.Office.Calc/Formula/Load">\n'
+                '  <prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop>\n'
+                " </item>\n</oor:items>\n"
+            )
+            out = tmp_path / "out"
+            out.mkdir()
+            subprocess.run(
+                [_SOFFICE, "--headless", "--norestore", "--nolockcheck", "--nodefault",
+                 f"-env:UserInstallation={(tmp_path / 'profile').as_uri()}",
+                 "--convert-to", "xlsx", "--outdir", str(out), str(tmp_path / "in.xlsx")],
+                check=True, capture_output=True, timeout=120,
+            )
+            return (out / "in.xlsx").read_bytes()
+
+    store = _seeded_store()
+    tools = {t.name: t for t in create_table_tools(
+        store, evaluator=_GRID_EVALUATOR, xlsx_recalc=soffice_recalc)}
+    reply = tools["write_table_cells"].func(
+        path="book.table.json", sheet="s0",
+        cells={"J2": "=XLOOKUP(1,A1:A2,B1:B2)", "J3": "=SUMPRODUCT(H1:I1,H1:I1)"},
+        description="beyond the grid engine",
+        revision=store.read("t1", "book.table.json").revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert "Recalculated with the full spreadsheet engine" in reply
+    saved = json.loads(store.read("t1", "book.table.json").content)
+    cells = {(c["r"], c["c"]): c["v"] for c in saved["data"]["sheet"][0]["celldata"]}
+    assert cells[(2, 9)]["v"] == 5 * 5 + 14300 * 14300  # SUMPRODUCT, LibreOffice's number
+    assert cells[(2, 9)]["f"] == "=SUMPRODUCT(H1:I1,H1:I1)"

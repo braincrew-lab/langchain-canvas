@@ -1837,3 +1837,127 @@ def test_review_deck_renders_now_and_original_side_by_side() -> None:
                                     runtime=_runtime(thread_id="t1"))
     assert isinstance(one, list)
     assert eye.calls[-2:] == [("skin.pptx", [1]), ("skin.pptx", [1])]
+
+
+# --- the master rides behind the copy --------------------------------------------------
+
+
+def _deck_with_master_logo() -> bytes:
+    import io as iolib
+
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    deck = Presentation()
+    deck.slides.add_slide(deck.slide_layouts[6])
+    deck.slides.add_slide(deck.slide_layouts[6])
+    donor = deck.slides[0].shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.2), Inches(7), Inches(1), Inches(0.3)
+    )
+    donor.fill.solid()
+    element = donor._element
+    element.getparent().remove(element)
+    deck.slide_masters[0].shapes._spTree.append(element)
+    out = iolib.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def test_the_copy_gets_the_master_as_a_display_backdrop() -> None:
+    pytest.importorskip("pptx")
+    from langchain_canvas.tools import create_deck_tools
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/logo.pptx", _deck_with_master_logo(), "Upload", actor="human")
+    eye = _PptxEye()
+    tools = {t.name: t for t in create_deck_tools(store, converters=[eye])}
+    reply = tools["open_deck_for_editing"].func(
+        source="sources/logo.pptx", runtime=_runtime(thread_id="t1")
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert "drawn behind 2 slide(s)" in text
+    deck = json.loads(store.read("t1", "logo.slides.json").content)["data"]
+    backdrops = [slide.get("masterImage") for slide in deck["slides"]]
+    assert all(b and b.startswith("assets/logo/master-") for b in backdrops)
+    # identical pages share one stored file
+    assert len(set(backdrops)) == 1
+    stored = [info.path for info in store.list_files("t1") if "master-" in info.path]
+    assert len(stored) == 1
+
+
+def test_without_a_renderer_the_reply_says_the_master_is_safe() -> None:
+    pytest.importorskip("pptx")
+    from langchain_canvas.tools import create_deck_tools
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/logo.pptx", _deck_with_master_logo(), "Upload", actor="human")
+    tools = {t.name: t for t in create_deck_tools(store, converters=None)}
+    reply = tools["open_deck_for_editing"].func(
+        source="sources/logo.pptx", runtime=_runtime(thread_id="t1")
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert "returns on export" in text
+    deck = json.loads(store.read("t1", "logo.slides.json").content)["data"]
+    assert all("masterImage" not in slide for slide in deck["slides"])
+
+
+def test_read_canvas_fields_projects_a_deck_and_refuses_other_files() -> None:
+    from langchain_canvas import encode_slides
+
+    store = InMemoryCanvasStore()
+    runtime = _runtime(thread_id="t1")
+    tools = _tools(store)
+    _invoke(tools["write_canvas"], runtime, path="d.slides.json", description="d",
+            content=encode_slides("d", {"slides": [{"elements": [
+                {"id": "e0", "type": "text", "x": 1, "y": 1, "w": 50, "h": 10,
+                 "fontSize": 20, "color": "#111111", "text": "hello"}]}]}))
+    out = _invoke(tools["read_canvas"], runtime, path="d.slides.json", fields="color,fontSize")
+    assert "revision:" in out and "[s1] e0 color=#111111 fontSize=20" in out
+    assert '"hello"' not in out  # only the asked keys
+    _invoke(tools["write_canvas"], runtime, path="a.md", content="x", description="c")
+    refused = _invoke(tools["read_canvas"], runtime, path="a.md", fields="color")
+    assert refused.startswith("Error: `fields` applies to .slides.json")
+
+
+# --- export with a workbook-engine recalc ----------------------------------------------
+
+
+def _table_store() -> InMemoryCanvasStore:
+    from langchain_canvas.replay import encode_table
+
+    store = InMemoryCanvasStore()
+    data = {"columns": [{"key": "a"}], "rows": [{"a": 1}],
+            "sheet": [{"name": "S", "celldata": [
+                {"r": 0, "c": 0, "v": {"v": 2}},
+                {"r": 1, "c": 0, "v": {"f": "=A1*3"}},
+            ]}]}
+    store.write("t1", "book.table.json", encode_table("Book", data), "seed", actor="agent")
+    return store
+
+
+def test_an_xlsx_export_leaves_through_the_recalc_hook() -> None:
+    pytest.importorskip("openpyxl")
+    from langchain_canvas.tools import create_export_tool
+
+    store = _table_store()
+    tool = create_export_tool(store, xlsx_recalc=lambda data: b"FRESH-XLSX-BYTES")
+    reply = tool.func(path="book.table.json", target="xlsx", runtime=_runtime(thread_id="t1"))
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert "exports/" in text
+    assert store.read_bytes("t1", "exports/book.xlsx").data == b"FRESH-XLSX-BYTES"
+
+
+def test_a_failing_recalc_hook_still_lands_the_export_with_a_note() -> None:
+    pytest.importorskip("openpyxl")
+    from langchain_canvas.tools import create_export_tool
+
+    def broken(data: bytes) -> bytes:
+        raise RuntimeError("endpoint down")
+
+    store = _table_store()
+    tool = create_export_tool(store, xlsx_recalc=broken)
+    reply = tool.func(path="book.table.json", target="xlsx", runtime=_runtime(thread_id="t1"))
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert "Formula caches were not recalculated" in text and "endpoint down" in text
+    assert store.read_bytes("t1", "exports/book.xlsx").data[:2] == b"PK"  # the real workbook

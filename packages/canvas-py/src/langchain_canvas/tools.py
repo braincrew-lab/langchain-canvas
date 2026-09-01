@@ -56,7 +56,7 @@ from .converters import (
     default_converters,
     ensure_archive_within_limits,
 )
-from .deck_outline import deck_outline
+from .deck_outline import deck_outline, deck_projection
 from .document_lint import (
     format_document_warnings,
     is_document_path,
@@ -75,8 +75,10 @@ from .document_ops import (
 )
 from .exporters import (
     DEFAULT_SLIDE_PAGE_IN,
+    ExportedFile,
     Exporter,
     MissingExporterDependencyError,
+    TableXlsxExporter,
     default_exporters,
     exporter_for,
     pptx_page_size_inches,
@@ -1105,6 +1107,7 @@ def create_canvas_tools(
         limit: int = _DEFAULT_READ_LIMIT,
         pages: str | None = None,
         sheet: str | None = None,
+        fields: str | None = None,
     ) -> str | list[dict]:
         """Read one canvas file before viewing or editing it.
 
@@ -1129,6 +1132,16 @@ def create_canvas_tools(
         data twice — `rows`, which is yours, and the grid sheets, which are
         the person's — and the grid is where the size is. Read one with
         `sheet="rows"` or `sheet="s0"`; `offset`/`limit` window that one.
+
+        A `.slides.json` deck can be read as a *projection*: pass
+        `fields="color,fontSize,fontFamily"` (any comma-separated element
+        keys — type, text, x, y, w, h, fontSize, bold, color, align, fill,
+        stroke, strokeWidth, fontFamily, lineHeight, autofit, ... — plus
+        slide keys like background, layout) to get one compact line per
+        element with just those values. That is how to see a deck's style
+        at a glance — check the outline's `colors:`/`fonts:` lines first,
+        then project the slide you are about to touch and give a new
+        element its neighbours' values instead of inventing new ones.
         """
         canvas_id = _canvas_id(runtime)
         if pages is not None:
@@ -1165,6 +1178,14 @@ def create_canvas_tools(
                     f"{_revision_header(canvas_id, path, got.revision)}\n{header}\n{sliced}"
                     + (f"\n{note}" if note else "")
                 )
+        if fields is not None:
+            if not path.lower().endswith(".slides.json"):
+                return (
+                    f"Error: `fields` applies to .slides.json decks; {path} is not "
+                    "one — read it without `fields`."
+                )
+            projection = deck_projection(got.content, fields)
+            return f"{_revision_header(canvas_id, path, got.revision)}\n{projection}"
         sliced, note = _sliced(got.content, offset, limit)
         header = _revision_header(canvas_id, path, got.revision)
         if path.lower().endswith(".slides.json") and offset == 0:
@@ -2042,8 +2063,72 @@ def _stamp_sheet_formulas(
     return _rewritten(envelope), note
 
 
+def _recalc_with_workbook_engine(
+    content: str, xlsx_recalc: Callable[[bytes], bytes]
+) -> tuple[str, str]:
+    """Stamp every grid formula with a full spreadsheet engine's values.
+
+    Called when the light engine left ``#ERR`` cells: the table exports to
+    xlsx, the host's ``xlsx_recalc`` (LibreOffice behind an endpoint, in the
+    reference deployment) recalculates the whole workbook, and the computed
+    values come back onto the formula cells — the engine that will open the
+    exported file is the engine that filled the screen. Any failure returns
+    the content unchanged with an honest note.
+    """
+    try:
+        from openpyxl import load_workbook  # type: ignore[import-untyped]
+
+        envelope = json.loads(content)
+        data = envelope.get("data") or {}
+        sheets = data.get("sheet") or []
+        if not sheets:
+            return content, ""
+        exported = TableXlsxExporter().export(content, path="recalc.table.json")
+        fresh = load_workbook(io.BytesIO(xlsx_recalc(exported.data)), data_only=True)
+        stamped: list[str] = []
+        from .table_outline import _a1
+
+        for index, sheet in enumerate(sheets):
+            if index >= len(fresh.worksheets):
+                break
+            ws = fresh.worksheets[index]
+            for cell in sheet.get("celldata") or []:
+                v = cell.get("v")
+                if not (isinstance(v, dict) and isinstance(v.get("f"), str) and v["f"].strip()):
+                    continue
+                value = ws.cell(row=int(cell["r"]) + 1, column=int(cell["c"]) + 1).value
+                if value is None:
+                    continue
+                if not isinstance(value, (int, float, str, bool)):
+                    value = str(value)
+                had_value = "v" in v
+                v["v"] = value
+                v["m"] = str(value)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    v["ct"] = {"fa": "General", "t": "n"}
+                elif "ct" in v:
+                    v.pop("ct")
+                if not had_value:
+                    stamped.append(f"{_a1(int(cell['r']), int(cell['c']))} → {value}")
+        note = (
+            "\nRecalculated with the full spreadsheet engine: "
+            + " · ".join(stamped[:8])
+            if stamped
+            else "\nRecalculated with the full spreadsheet engine."
+        )
+        return json.dumps(envelope, ensure_ascii=False), note
+    except Exception as exc:  # noqa: BLE001 - the save must land either way
+        return content, (
+            f"\nFull recalculation failed ({exc}) — the flagged cells keep no value "
+            "until check_table or the export recalculates them."
+        )
+
+
 def create_table_tools(
-    store: CanvasStore, *, evaluator: Sequence[str] | None = None
+    store: CanvasStore,
+    *,
+    evaluator: Sequence[str] | None = None,
+    xlsx_recalc: Callable[[bytes], bytes] | None = None,
 ) -> list[Any]:
     """Build the table-writing tools bound to ``store``.
 
@@ -2136,6 +2221,9 @@ def create_table_tools(
             content, note = table_write_cells(got.content, sheet, cells)
             stamped, formula_note = _stamp_sheet_formulas(content, sheet, cells, evaluator)
             content, note = stamped, note + formula_note
+            if xlsx_recalc is not None and "#ERR" in formula_note:
+                content, recalc_note = _recalc_with_workbook_engine(content, xlsx_recalc)
+                note += recalc_note
         except CanvasFileNotFoundError as exc:
             return f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
@@ -2179,6 +2267,7 @@ def create_export_tool(
     *,
     exporters: list[Exporter] | None = None,
     converters: list[SourceConverter] | None = None,
+    xlsx_recalc: Callable[[bytes], bytes] | None = None,
 ) -> Any:
     """Build an ``export_canvas`` tool bound to ``store``.
 
@@ -2315,6 +2404,20 @@ def create_export_tool(
         except ValueError as exc:
             return f"Error: {exc}"
 
+        recalc_note = ""
+        if xlsx_recalc is not None and exported.filename.lower().endswith(".xlsx"):
+            # The file leaves with every cached value freshly computed, so it
+            # opens showing numbers — including formulas no lighter engine
+            # covers, and whatever a person typed straight into the grid.
+            try:
+                exported = ExportedFile(
+                    xlsx_recalc(exported.data), exported.filename, exported.media_type
+                )
+            except Exception as exc:  # noqa: BLE001 - the export still lands
+                recalc_note = (
+                    f" (Formula caches were not recalculated: {exc}; spreadsheet "
+                    "apps recalculate on open.)"
+                )
         out_path = f"exports/{exported.filename}"
         commit = store.write_bytes(
             canvas_id,
@@ -2325,7 +2428,8 @@ def create_export_tool(
         )
         reply = (
             f"Exported {path} to {out_path} ({len(exported.data)} bytes, revision "
-            f"{commit.revision}). The user can download it from the canvas file list."
+            f"{commit.revision}). The user can download it from the canvas file "
+            f"list.{recalc_note}"
         )
         renderer = _renderer_for(out_path, active_converters)
         if renderer is None:
@@ -2709,7 +2813,11 @@ def create_deck_tools(
         except CanvasStoreError as exc:
             return f"Error: {exc}."
 
-        from .pptx_import import PptxImportError, pptx_to_slides
+        from .pptx_import import (
+            PptxImportError,
+            master_has_content,
+            pptx_to_slides,
+        )
 
         try:
             deck = pptx_to_slides(got.data)
@@ -2719,6 +2827,7 @@ def create_deck_tools(
         try:
             pictures = _extract_pictures(canvas_id, source, target, deck)
             charts, charts_dropped = _charts_as_pictures(canvas_id, source, target, deck, got.data)
+            backdrops = _master_backdrops(canvas_id, target, deck, got.data)
         except CanvasStoreError as exc:
             return f"Error: {exc}."
         try:
@@ -2772,6 +2881,16 @@ def create_deck_tools(
             extras.append(f"{grows} text box(es) grow with their text (autofit: shape)")
         if shrinks:
             extras.append(f"{shrinks} text box(es) shrink their type to fit (autofit: text)")
+        if backdrops:
+            extras.append(
+                f"the master's own logo/footer drawn behind {backdrops} slide(s) "
+                "(display only — not editable, exports from the original)"
+            )
+        elif master_has_content(got.data):
+            extras.append(
+                "the master carries a logo/footer this copy cannot draw here; "
+                "it is safe and returns on export"
+            )
         if charts:
             extras.append(f"{charts} chart(s) as pictures (not editable)")
         if charts_dropped:
@@ -2789,6 +2908,60 @@ def create_deck_tools(
             f"or ask the user which they prefer. Export it to pptx when done; {source} "
             "keeps the user's original."
         )
+
+    def _master_backdrops(
+        canvas_id: str, target: str, deck: dict[str, Any], original: bytes
+    ) -> int:
+        """Give each slide the master/layout as a display-only backdrop.
+
+        The logo and footer live on the master, out of reach on the slide —
+        the editable copy used to lose them. With a page renderer mounted the
+        deck is rendered once with every slide's own shapes removed, so each
+        page shows exactly what the master and layout draw; identical pages
+        (same layout) share one ``assets/`` file. The pptx exporter ignores
+        the field — the template skin carries the real master. Returns how
+        many slides got a backdrop; without a renderer, master content, or a
+        clean render, none do and the copy behaves as before.
+        """
+        from .pptx_import import blank_slides_pptx, master_has_content
+
+        slides = deck.get("slides", [])
+        if not slides or not master_has_content(original):
+            return 0
+        renderer = _renderer_for(f"{_deck_stem(target)}.pptx", active_converters)
+        if renderer is None:
+            return 0
+        blank = blank_slides_pptx(original)
+        if blank is None:
+            return 0
+        try:
+            converted = renderer.render_pages(
+                blank, path=f"{_deck_stem(target)}.pptx", pages=list(range(1, len(slides) + 1))
+            )
+        except Exception:  # noqa: BLE001 — the backdrop is a bonus, never a failure
+            return 0
+        images = [block for block in converted.blocks if block.get("type") == "image"]
+        if len(images) < len(slides):
+            return 0
+        folder = f"{ASSETS_PREFIX}{_deck_stem(target)}/"
+        stored: dict[str, str] = {}
+        given = 0
+        for slide, block in zip(slides, images, strict=False):
+            try:
+                data = base64.b64decode(block["data"])
+            except (KeyError, ValueError, binascii.Error):
+                continue
+            digest = hashlib.sha256(data).hexdigest()[:12]
+            path = stored.get(digest)
+            if path is None:
+                path = f"{folder}master-{digest}.png"
+                store.write_bytes(
+                    canvas_id, path, data, f"Master backdrop for {target}", actor="agent"
+                )
+                stored[digest] = path
+            slide["masterImage"] = path
+            given += 1
+        return given
 
     def _charts_as_pictures(
         canvas_id: str, source: str, target: str, deck: dict[str, Any], original: bytes

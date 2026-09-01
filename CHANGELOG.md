@@ -7,6 +7,15 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.7.27] — 2026-09-01
 
 ### Added
+- **What the grid engine cannot run, the workbook engine can.** The table
+  tools and the export tool take an `xlsx_recalc` hook (bytes → bytes; the
+  reference deployment puts LibreOffice behind it). A save whose check left
+  `#ERR` cells exports the sheet, recalculates the whole workbook, and lands
+  the full-surface values on the cells — measured: `SUMPRODUCT`, outside
+  every lighter engine, came back with LibreOffice's number, and a save with
+  only supported formulas never spends the seconds. An `.xlsx` export leaves
+  through the same hook, so the file opens showing numbers — including
+  formulas a person typed straight into the grid.
 - **A written formula lands with its value.** Measured: an agent's
   `=ROUND(H2*I2*2,0)` stored only the formula; the grid showed a blank cell,
   and cells depending on a changed value kept their stale cache. Now
@@ -61,6 +70,30 @@ project adheres to [Semantic Versioning](https://semver.org/).
 - **The Export menu takes host entries.** `Canvas` gains `exportExtras(artifact)`;
   entries are appended after the built-in ones (nothing is replaced) — the seam
   for server-side exports such as slides→pptx or table→xlsx.
+
+- **A deck's tone is counted, and readable by key.** The outline now opens
+  with `colors:` / `fonts:` / `sizes:` lines — every colour, face and size in
+  the deck with usage counts, from every place a colour lives. And
+  `read_canvas(fields="color,fontSize,...")` reads a deck as a projection:
+  one compact line per element with just the asked keys, so a model checks
+  the neighbours' style before adding an element instead of rereading the
+  whole JSON. Unknown field names answer with the full vocabulary.
+- **The fills a real deck uses all arrive.** Shape fills and outlines are
+  read from the XML: theme references, preset colours, the style reference a
+  shape inherits, and a gradient's first stop all resolve to hex — measured,
+  only 23% of shape fills were explicit RGB, and a bank template painted 70%
+  with theme references that used to arrive empty and render as black boxes.
+  An explicit noFill becomes `fill: "none"`, the renderers stop guessing a
+  colour for a silent shape (transparent, not the text colour), the exporter
+  keeps "none" unfilled, and an unfilled, unbordered, textless spacer is not
+  imported at all. A shape with no fill and no stroke is a new check finding.
+- **The master rides behind the copy.** With a page renderer mounted,
+  `open_deck_for_editing` renders the deck with every slide's own shapes
+  removed and puts each page behind its slide as a display-only backdrop
+  (`masterImage`, deduped per layout) — the logo and footer PowerPoint keeps
+  out of reach on the slide stay visible while editing. The pptx exporter
+  ignores it; the template skin carries the real master. Without a renderer
+  the copy reply says the master is safe and returns on export.
 
 ## [0.7.26] — 2026-08-30
 
