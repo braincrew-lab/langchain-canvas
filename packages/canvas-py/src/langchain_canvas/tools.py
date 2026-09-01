@@ -1980,7 +1980,7 @@ def _run_formula_evaluator(
 
 def _stamp_sheet_formulas(
     content: str, sheet: str, written: dict[str, Any], evaluator: Sequence[str] | None
-) -> tuple[str, str]:
+) -> tuple[str, str, bool]:
     """Compute the touched sheet's formulas and stamp their values.
 
     Measured before this existed: an agent-written ``=ROUND(H2*I2*2,0)``
@@ -1990,8 +1990,10 @@ def _stamp_sheet_formulas(
     and every formula cell gets the value the person will see (``v``/``m``),
     the same way the importer carries the file's own cached values across.
 
-    Returns ``(content, note)`` — content unchanged and a note that says so
-    when there is nothing to compute or no way to compute it.
+    Returns ``(content, note, needs_workbook_engine)`` — content unchanged
+    and a note that says so when there is nothing to compute or no way to
+    compute it here; the flag is True when a full engine should take over
+    (cells the light engine could not run, or no light engine at all).
     """
     from .table_outline import _a1, _at, _grid_index, _rewritten, _table, cell_map
 
@@ -1999,7 +2001,7 @@ def _stamp_sheet_formulas(
         envelope, data, sheets = _table(content)
         index = _grid_index(sheet, sheets)
     except ValueError:
-        return content, ""
+        return content, "", False
     grid = cell_map(sheets[index])
     formula_cells = {
         at: cell
@@ -2007,19 +2009,22 @@ def _stamp_sheet_formulas(
         if isinstance(cell, dict) and isinstance(cell.get("f"), str) and cell["f"].strip()
     }
     if not formula_cells:
-        return content, ""
+        return content, "", False
     if evaluator is None:
+        # No light engine at all: the workbook engine (when wired) takes the
+        # whole save, so a deployment that ships LibreOffice but not the
+        # formula CLI still gets values on screen instead of blank cells.
         return content, (
-            f"\nFormulas: {len(formula_cells)} formula cell(s) were NOT recomputed "
-            "(no evaluator configured) — the grid may show stale or blank values."
-        )
+            f"\nFormulas: {len(formula_cells)} formula cell(s) were not computed "
+            "by the grid engine (no evaluator configured)."
+        ), True
     celldata = [{"r": r, "c": c, "v": v} for (r, c), v in sorted(grid.items())]
     results = _run_formula_evaluator(evaluator, {"sheets": [{"celldata": celldata}]})
     if not results:
         return content, (
             f"\nFormulas: {len(formula_cells)} formula cell(s) were NOT recomputed "
             "(the evaluator could not run or predates grid mode) — run check_table."
-        )
+        ), True
     written_at = set()
     for ref in written:
         try:
@@ -2060,7 +2065,7 @@ def _stamp_sheet_formulas(
     if stamped_others:
         parts.append(f"{stamped_others} other formula cell(s) recomputed with them")
     note = "\nFormulas: " + " · ".join(parts) if parts else ""
-    return _rewritten(envelope), note
+    return _rewritten(envelope), note, bool(errors)
 
 
 def _recalc_with_workbook_engine(
@@ -2219,9 +2224,11 @@ def create_table_tools(
         try:
             got = _load(canvas_id, path)
             content, note = table_write_cells(got.content, sheet, cells)
-            stamped, formula_note = _stamp_sheet_formulas(content, sheet, cells, evaluator)
+            stamped, formula_note, needs_engine = _stamp_sheet_formulas(
+                content, sheet, cells, evaluator
+            )
             content, note = stamped, note + formula_note
-            if xlsx_recalc is not None and "#ERR" in formula_note:
+            if xlsx_recalc is not None and needs_engine:
                 content, recalc_note = _recalc_with_workbook_engine(content, xlsx_recalc)
                 note += recalc_note
         except CanvasFileNotFoundError as exc:
