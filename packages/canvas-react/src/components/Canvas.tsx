@@ -16,7 +16,7 @@ import { visibleTabs } from "../client/workingCopies";
 import { CanvasRegistryProvider, useRenderer, type ArtifactRegistry } from "../registry/registry";
 import { IMPORTABLE_EXTENSIONS } from "../io/importers";
 import { builtinRenderers } from "./renderers";
-import { ExportMenu } from "./ExportMenu";
+import { ExportMenu, type ExportExtra } from "./ExportMenu";
 import { RendererBoundary } from "./RendererBoundary";
 import { SelectionBar } from "./SelectionBar";
 import { StylePanel } from "./StylePanel";
@@ -31,6 +31,12 @@ export interface CanvasProps {
   registry?: ArtifactRegistry;
   /** Rendered when no artifact has been opened yet. */
   emptyState?: ReactNode;
+  /**
+   * Extra Export-menu entries for the shown artifact, appended after the
+   * built-in ones — the seam for host-side (server) exports such as
+   * slides→pptx or table→xlsx. Return `[]`/`undefined` for none.
+   */
+  exportExtras?: (artifact: Artifact) => ExportExtra[] | undefined;
   /**
    * Handle a targeted edit of the selected element (from `useCanvasStream`'s
    * `editSelection`). When provided, clicking an element in an `html` artifact
@@ -79,6 +85,7 @@ export interface CanvasProps {
 export function Canvas({
   registry = builtinRenderers,
   emptyState,
+  exportExtras,
   onEditElement,
   onUserEdit,
   onSave,
@@ -92,6 +99,7 @@ export function Canvas({
     <CanvasRegistryProvider registry={registry}>
       <CanvasPanel
         emptyState={emptyState}
+        exportExtras={exportExtras}
         onEditElement={onEditElement}
         onUserEdit={onUserEdit}
         onSave={onSave}
@@ -107,6 +115,7 @@ export function Canvas({
 
 function CanvasPanel({
   emptyState,
+  exportExtras,
   onEditElement,
   onUserEdit,
   onSave,
@@ -118,6 +127,7 @@ function CanvasPanel({
 }: Pick<
   CanvasProps,
   | "emptyState"
+  | "exportExtras"
   | "onEditElement"
   | "onUserEdit"
   | "onSave"
@@ -241,7 +251,13 @@ function CanvasPanel({
       )}
 
       {/* key by id so per-artifact view state (which version) resets on tab switch */}
-      <ArtifactView key={active.id} artifact={active} versions={versions} busyLabel={busyLabel} />
+      <ArtifactView
+        key={active.id}
+        artifact={active}
+        versions={versions}
+        busyLabel={busyLabel}
+        exportExtras={exportExtras}
+      />
 
       {showSelection && onEditElement && (
         <>
@@ -260,10 +276,12 @@ function ArtifactView({
   artifact,
   versions,
   busyLabel,
+  exportExtras,
 }: {
   artifact: Artifact;
   versions: Artifact[];
   busyLabel: string;
+  exportExtras?: CanvasProps["exportExtras"];
 }) {
   // The freeze lives in the store (it is what refuses hand edits); the view
   // only reflects it.
@@ -305,7 +323,7 @@ function ArtifactView({
               onSelect={(i) => setViewIndex(i === versions.length - 1 ? null : i)}
             />
           )}
-          <ExportMenu artifact={shown} getRenderedHtml={getRenderedHtml} />
+          <ExportMenu artifact={shown} getRenderedHtml={getRenderedHtml} extras={exportExtras?.(shown)} />
         </div>
       </header>
 

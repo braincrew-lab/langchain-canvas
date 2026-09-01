@@ -458,7 +458,7 @@ def test_a_box_drawn_by_its_outline_alone_survives() -> None:
     element = next(e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape")
     assert element["stroke"] == "#FF0000"
     assert element["strokeWidth"] == pytest.approx(3 * 4 / 3, abs=0.1)  # px
-    assert "fill" not in element  # an outline-only box has none
+    assert element["fill"] == "none"  # explicitly unfilled, said out loud
 
 
 def test_the_type_face_comes_across() -> None:
@@ -708,7 +708,7 @@ def test_the_copy_tells_the_model_to_edit_it_rather_than_start_over() -> None:
     """The reply is the one place the model learns the way to revise a deck."""
     store = _store_with_deck()
     reply = _run(_copy_tool(store), source="sources/deck.pptx")
-    assert "edit_canvas" in reply
+    assert "set_slide_texts" in reply
     assert "keeps the look" in reply
 
 
@@ -997,3 +997,144 @@ def test_a_text_outline_comes_across_as_stroke_and_goes_back_out() -> None:
     run = box.text_frame.paragraphs[0].runs[0]
     line = run.font._rPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}ln")
     assert line is not None and line.get("w") == "19050"
+
+
+# --- autofit comes across --------------------------------------------------------------
+
+
+def test_a_box_that_grows_with_its_text_comes_across_as_such() -> None:
+    """Forty-five of forty-five text boxes in one uploaded deck grew with
+    their text; the copy froze every one at its placeholder's height, and a
+    body written longer than the placeholder ran past the box."""
+    from pptx.enum.text import MSO_AUTO_SIZE
+
+    def build(slide: Any) -> None:
+        grows = _textbox(slide, "grows", top=Inches(1))
+        grows.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+        shrinks = _textbox(slide, "shrinks", top=Inches(2.5))
+        shrinks.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        fixed = _textbox(slide, "fixed", top=Inches(4))
+        fixed.text_frame.auto_size = MSO_AUTO_SIZE.NONE
+        # python-pptx's fresh textbox says spAutoFit on its own; a box whose
+        # file says nothing at all has no autofit element.
+        unsaid = _textbox(slide, "unsaid", top=Inches(5.5))
+        unsaid.text_frame.auto_size = None
+
+    by_text = {e["text"]: e for e in _elements(pptx_to_slides(_deck(build)))}
+    assert by_text["grows"]["autofit"] == "shape"
+    assert by_text["shrinks"]["autofit"] == "text"
+    assert "autofit" not in by_text["fixed"]
+    assert "autofit" not in by_text["unsaid"]
+
+
+def test_the_baseline_records_the_decks_own_overflowing_boxes() -> None:
+    from pptx.enum.text import MSO_AUTO_SIZE
+    from pptx.util import Pt
+
+    from langchain_canvas.pptx_import import deck_baseline, overflow_key
+
+    def build(slide: Any) -> None:
+        # A fixed one-line box holding three lines' worth of text.
+        crowded = _textbox(slide, "가나다라마바사아자차카타파하 " * 6,
+                           width=Inches(4), height=Inches(0.4))
+        crowded.text_frame.auto_size = None
+        crowded.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+        # The same crowding in a box that grows with its text: not an overflow.
+        growing = _textbox(slide, "가나다라마바사아자차카타파하 " * 6,
+                           top=Inches(3), width=Inches(4), height=Inches(0.4))
+        growing.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+        growing.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+        # Room to spare: not recorded.
+        roomy = _textbox(slide, "short", top=Inches(5), width=Inches(4), height=Inches(1.5))
+        roomy.text_frame.auto_size = None
+        roomy.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+
+    baseline = deck_baseline(_deck(build))
+    assert baseline is not None
+    assert len(baseline.overflow) == 1
+    ((key, ratio),) = baseline.overflow.items()
+    # 1in left, 1in top, 4in wide, 0.4in tall on a 13.333x7.5in page.
+    assert key == overflow_key(100 / 13.333, 100 / 7.5, 400 / 13.333, 40 / 7.5)
+    assert ratio > 1.5
+
+
+# --- fills the deck actually uses: theme, inheritance, "none" ---------------------------
+
+
+def test_theme_and_inherited_fills_resolve_to_hex() -> None:
+    """A bank template painted 70% of its shapes with theme references, and
+    every one used to arrive with no fill at all — drawn as a black box."""
+    from pptx.dml.color import RGBColor
+    from pptx.enum.dml import MSO_THEME_COLOR
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        themed = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1)
+        )
+        themed.fill.solid()
+        themed.fill.fore_color.theme_color = MSO_THEME_COLOR.ACCENT_1
+        themed.line.fill.background()
+        # add_shape leaves a style reference: no fill of its own, inherits accent.
+        inherited = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(4), Inches(1), Inches(2), Inches(1)
+        )
+        inherited.line.color.rgb = RGBColor(0x11, 0x22, 0x33)
+
+    shapes = [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape"]
+    assert len(shapes) == 2
+    for element in shapes:
+        assert element["fill"].startswith("#") and element["fill"] != "#000000"
+
+
+def test_an_invisible_spacer_shape_is_not_imported() -> None:
+    """Unfilled, unbordered and textless draws nothing in PowerPoint either."""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        spacer = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1)
+        )
+        spacer.fill.background()
+        spacer.line.fill.background()
+        # strip the inherited style so the shape truly says nothing
+        style = spacer._element.find(
+            "{http://schemas.openxmlformats.org/presentationml/2006/main}style"
+        )
+        if style is not None:
+            spacer._element.remove(style)
+
+    assert [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape"] == []
+
+
+def test_master_content_probe_and_blanking() -> None:
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    from langchain_canvas.pptx_import import blank_slides_pptx, master_has_content
+
+    plain = _deck(lambda slide: _textbox(slide, "hello"))
+    assert master_has_content(plain) is False
+
+    def build(slide: Any) -> None:
+        _textbox(slide, "hello")
+
+    deck = Presentation(io.BytesIO(_deck(build)))
+    # Master shapes have no add_shape; draw on a slide and move the XML over,
+    # the way a real template carries its logo.
+    donor = deck.slides[0].shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.2), Inches(7), Inches(1), Inches(0.3)
+    )
+    donor.fill.solid()
+    element = donor._element
+    element.getparent().remove(element)
+    deck.slide_masters[0].shapes._spTree.append(element)
+    buffer = io.BytesIO()
+    deck.save(buffer)
+    with_logo = buffer.getvalue()
+    assert master_has_content(with_logo) is True
+    blank = blank_slides_pptx(with_logo)
+    assert blank is not None
+    assert all(len(s.shapes) == 0 for s in Presentation(io.BytesIO(blank)).slides)

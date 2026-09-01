@@ -17,6 +17,7 @@
 
 import type { TableColumn, TableData } from "../protocol/artifacts";
 import { computeFormulas } from "./formula";
+import { computeSheetFormulas, type SheetCellData } from "./sheetFormula";
 
 declare const process: {
   stdin: AsyncIterable<Uint8Array>;
@@ -36,10 +37,38 @@ async function main(): Promise<void> {
     }, new Uint8Array()),
   );
 
-  const { columns, rows } = JSON.parse(input) as {
-    columns: TableColumn[];
-    rows: TableData["rows"];
+  const payload = JSON.parse(input) as {
+    columns?: TableColumn[];
+    rows?: TableData["rows"];
+    sheets?: Array<{ celldata?: SheetCellData[] }>;
   };
+
+  // Grid mode: `{sheets: [{celldata}]}` — every formula cell of each sheet,
+  // in the sheet's own 0-based coordinates. Used to stamp computed values
+  // at save time and to verify what the person's grid will show.
+  if (payload.sheets) {
+    const results: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < payload.sheets.length; index++) {
+      const celldata = payload.sheets[index]?.celldata ?? [];
+      const values = await computeSheetFormulas(celldata);
+      for (const cell of celldata) {
+        const v = cell?.v;
+        const formula = v && typeof v === "object" ? (v as Record<string, unknown>).f : null;
+        if (typeof formula !== "string" || !formula.trim()) continue;
+        results.push({
+          sheet: index,
+          r: cell.r,
+          c: cell.c,
+          formula,
+          value: values.get(`${cell.r},${cell.c}`) ?? null,
+        });
+      }
+    }
+    process.stdout.write(JSON.stringify({ results }));
+    return;
+  }
+
+  const { columns, rows } = payload;
   const values = await computeFormulas(columns ?? [], rows ?? []);
 
   const results: Array<Record<string, unknown>> = [];

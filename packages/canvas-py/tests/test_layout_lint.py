@@ -74,7 +74,7 @@ def test_an_off_page_element_is_named_with_its_numbers() -> None:
 
 def test_negative_origin_is_off_page() -> None:
     warnings = lint_slides_data(
-        _deck(_el("a", "shape", -5, -2, 10, 10, shape="rect"))
+        _deck(_el("a", "shape", -5, -2, 10, 10, shape="rect", fill="#dddddd"))
     )
     assert len(warnings) == 1
     assert "x = -5" in warnings[0] and "y = -2" in warnings[0]
@@ -82,7 +82,7 @@ def test_negative_origin_is_off_page() -> None:
 
 def test_a_zero_sized_element_is_flagged() -> None:
     warnings = lint_slides_data(
-        _deck(_el("z", "shape", 10, 10, 0, 5, shape="rect"))
+        _deck(_el("z", "shape", 10, 10, 0, 5, shape="rect", fill="#dddddd"))
     )
     assert warnings == [
         'slide 1, element "z": w = 0, h = 5 (zero or negative size renders nothing)'
@@ -151,7 +151,7 @@ def test_the_same_mistake_across_many_elements_is_summarized() -> None:
 
 
 def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
-    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", rotation=45))
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", rotation=45))
     warnings = lint_slides_data(deck)
     assert len(warnings) == 1
     assert "the canvas and the export both ignore them" in warnings[0]
@@ -225,14 +225,14 @@ def test_partial_overlap_is_not_a_finding() -> None:
     assert lint_slides_data(
         _deck(
             _el("text", "text", 20, 20, 40, 10, text="Hi"),
-            _el("panel", "shape", 30, 15, 40, 40, shape="rect"),
+            _el("panel", "shape", 30, 15, 40, 40, shape="rect", fill="#dddddd"),
         )
     ) == []
 
 
 def test_an_ellipse_or_translucent_fill_never_counts_as_cover() -> None:
     base = _el("under", "text", 20, 20, 10, 10, text="Hi")
-    ellipse = _el("e", "shape", 0, 0, 100, 100, shape="ellipse")
+    ellipse = _el("e", "shape", 0, 0, 100, 100, shape="ellipse", fill="#dddddd")
     alpha = _el("a", "shape", 0, 0, 100, 100, shape="rect", fill="#0d1b3e80")
     assert lint_slides_data(_deck(base, ellipse)) == []
     assert lint_slides_data(_deck(base, alpha)) == []
@@ -249,7 +249,7 @@ def test_edge_touching_elements_are_clean() -> None:
     # (paint order: array end is the front).
     assert lint_slides_data(
         _deck(
-            _el("full", "shape", 0, 0, 100, 100, shape="rect"),
+            _el("full", "shape", 0, 0, 100, 100, shape="rect", fill="#dddddd"),
             _el("r", "text", 55.0001, 0, 45, 10, text="Hi"),
         )
     ) == []
@@ -649,7 +649,8 @@ def test_text_at_or_above_the_floor_stays_silent(size: int) -> None:
 
 def test_a_shape_with_no_font_size_is_not_small_text() -> None:
     data = {"slides": [{"elements": [
-        {"id": "s", "type": "shape", "shape": "rect", "x": 5, "y": 5, "w": 10, "h": 10}
+        {"id": "s", "type": "shape", "shape": "rect",
+         "x": 5, "y": 5, "w": 10, "h": 10, "fill": "#dddddd"}
     ]}]}
     assert lint_slides_data(data) == []
 
@@ -793,3 +794,109 @@ def test_a_table_without_rows_is_refused_and_a_cells_unknown_key_is_named() -> N
     odd = {**bare, "rows": [["a"]], "cells": [{"r": 0, "c": 0, "colour": "#fff"}]}
     warnings = lint_slides_data({"slides": [{"elements": [odd]}]})
     assert any('cell: "colour"' in w for w in warnings)
+
+
+# --- autofit: a box that grows, type that shrinks ---------------------------------------
+
+
+def test_a_growing_box_is_not_an_overflow() -> None:
+    """The same title as above, in a box that grows with its text: nothing
+    runs past anything, so the finding that told the model to shorten the
+    words — which it did, six times, on the wrong slide — is gone."""
+    data = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 12, "autofit": "shape",
+         "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
+    ]}]}
+    assert not [w for w in lint_slides_data(data) if "run past" in w]
+
+
+def test_a_growing_box_that_reaches_off_the_page_is_named_with_its_grown_bottom() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "body", "type": "text", "x": 5, "y": 80, "w": 30, "h": 5, "autofit": "shape",
+         "text": "가나다라마바사아자차카타파하 " * 12, "fontSize": 24}
+    ]}]}
+    found = [w for w in lint_slides_data(data) if "grows with its text" in w]
+    assert len(found) == 1
+    assert "line(s)" in found[0] and "y + h = " in found[0] and "off the page" in found[0]
+
+
+def test_a_growing_box_that_stays_on_the_page_is_silent() -> None:
+    data = {"slides": [{"elements": [
+        {"id": "body", "type": "text", "x": 5, "y": 10, "w": 60, "h": 5, "autofit": "shape",
+         "text": "가나다라마바사아자차카타파하 " * 4, "fontSize": 24}
+    ]}]}
+    assert not [w for w in lint_slides_data(data) if "grows" in w or "run past" in w]
+
+
+def test_shrinking_type_is_not_an_overflow_until_it_shrinks_below_readable() -> None:
+    fits = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 54, "h": 12, "autofit": "text",
+         "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
+    ]}]}
+    assert not [w for w in lint_slides_data(fits) if "run past" in w or "shrinks" in w]
+    tiny = {"slides": [{"elements": [
+        {"id": "t", "type": "text", "x": 5, "y": 10, "w": 20, "h": 4, "autofit": "text",
+         "text": "가나다라마바사아자차카타파하 " * 10, "fontSize": 24}
+    ]}]}
+    found = [w for w in lint_slides_data(tiny) if "shrinks to fit its box" in w]
+    assert len(found) == 1 and "below the 14px" in found[0]
+
+
+def test_a_growing_box_that_did_not_grow_is_named_once_by_the_off_page_check() -> None:
+    """Seen on a skin: a footer at y + h = 105 that grows with its one line
+    was named twice — as off the page, and as grown off the page."""
+    data = {"slides": [{"elements": [
+        {"id": "foot", "type": "text", "x": 5, "y": 100, "w": 30, "h": 5.2, "autofit": "shape",
+         "text": "footer", "fontSize": 12}
+    ]}]}
+    found = [w for w in lint_slides_data(data) if "off the page" in w]
+    assert len(found) == 1 and "grows" not in found[0]
+
+
+# --- overflow the copy merely inherited -------------------------------------------------
+
+
+def test_an_inherited_overflow_folds_into_one_closing_line() -> None:
+    """The template's own box already overflowed; the copy repeats it. Seen in
+    a run: four such findings rode along on all fourteen saves, and the model
+    learned to ignore the list — including the one finding that was its own."""
+    box = {"id": "e2", "type": "text", "x": 3.574, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "상세 내용을 작성해 주세요 " * 4}
+    data = {"slides": [{"elements": [box]}]}
+    plain = lint_slides_data(data)
+    assert [w for w in plain if "run past" in w], "sanity: it does overflow"
+    from langchain_canvas.pptx_import import overflow_key
+
+    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): 2.2}
+    folded = lint_slides_data(data, known_overflow=known)
+    assert not [w for w in folded if "run past" in w]
+    assert any("inherited, not yours to fix" in w and "1 of these" in w for w in folded)
+
+
+def test_an_inherited_overflow_made_worse_is_reported_again() -> None:
+    box = {"id": "e2", "type": "text", "x": 3.574, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "원본보다 훨씬 길게 다시 쓴 본문 " * 6}
+    from langchain_canvas.pptx_import import overflow_key
+
+    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): 1.3}
+    found = lint_slides_data({"slides": [{"elements": [box]}]}, known_overflow=known)
+    assert [w for w in found if "run past" in w]
+    assert not [w for w in found if "inherited" in w]
+
+
+def test_a_moved_box_gives_up_its_inherited_pass() -> None:
+    from langchain_canvas.pptx_import import overflow_key
+
+    box = {"id": "e2", "type": "text", "x": 10, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "상세 내용을 작성해 주세요 " * 4}
+    known = {overflow_key(3.574, 24.01, 59.245, 5.834): 2.2}
+    found = lint_slides_data({"slides": [{"elements": [box]}]}, known_overflow=known)
+    assert [w for w in found if "run past" in w]
+
+
+def test_a_shape_with_no_fill_and_no_stroke_is_called_invisible() -> None:
+    warnings = lint_slides_data(_deck(_el("g", "shape", 5, 5, 20, 10, shape="rect")))
+    assert len(warnings) == 1 and "renders as nothing" in warnings[0]
+    with_stroke = _deck(_el("g", "shape", 5, 5, 20, 10, shape="rect",
+                            fill="none", stroke="#112233"))
+    assert lint_slides_data(with_stroke) == []

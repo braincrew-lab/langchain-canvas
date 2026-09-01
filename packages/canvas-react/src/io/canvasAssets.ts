@@ -168,6 +168,13 @@ export async function inlineArtifactAssets<T extends Artifact>(
     const slides = await Promise.all(
       (data.slides ?? []).map(async (slide) => {
         let next = slide;
+        if (isAssetReference(slide.masterImage)) {
+          const uri = await fetchAssetDataUri(slide.masterImage, assetBaseUrl);
+          if (uri) {
+            next = { ...next, masterImage: uri };
+            changed = true;
+          }
+        }
         if (isAssetReference(slide.image)) {
           const uri = await fetchAssetDataUri(slide.image, assetBaseUrl);
           if (uri) {

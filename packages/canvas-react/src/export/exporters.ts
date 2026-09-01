@@ -21,6 +21,7 @@ import type { Artifact, DocumentData, SlideElement, SlidesData, TableData } from
 import { defaultTextColor, resolveElements } from "../client/slideElements";
 import { deckPage, PAGE_DPI } from "../client/slidePage";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../client/slideTable";
+import { boxHeightPct, textFitScale } from "../client/slideText";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
 
@@ -137,15 +138,18 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
       const fg = slide.textColor ?? defaultTextColor(slide.background);
+      const backdrop = slide.masterImage
+        ? `<img src="${escapeAttr(slide.masterImage)}" style="position:absolute;inset:0;width:100%;height:100%" alt=""/>`
+        : "";
       const els = resolveElements(slide, page)
         .map((el) => {
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${el.h}%`;
+          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el)}%`;
           if (el.type === "text") {
             // box is numeric; colours and the face are escaped individually — the
             // composed style string is then safe to place in the attribute as-is.
             const style = [
               box,
-              `font-size:${el.fontSize ?? 24}px`,
+              `font-size:${(el.fontSize ?? 24) * textFitScale(el)}px`,
               `font-weight:${el.bold ? 700 : 400}`,
               `color:${escapeAttr(el.color ?? fg)}`,
               el.stroke ? `-webkit-text-stroke:${Math.max(0.5, el.strokeWidth ?? 1)}px ${escapeAttr(el.stroke)}` : "",
@@ -173,8 +177,9 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             // would hide whatever the border is meant to frame.
             const isLine = el.shape === "line";
             // A line is its stroke (see shapeStyle); a box may be outline-only.
+            const bodyFill = el.fill && el.fill !== "none" ? el.fill : undefined;
             const fill = escapeAttr(
-              isLine ? (el.fill ?? el.stroke ?? fg) : (el.fill ?? (el.stroke ? "transparent" : fg)),
+              isLine ? (bodyFill ?? el.stroke ?? fg) : (bodyFill ?? "transparent"),
             );
             const radius = el.shape === "ellipse" ? "50%" : isLine ? "2px" : "8px";
             const outline =
@@ -192,7 +197,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
         .join("");
       const pad = slide.padding ?? 0;
       const inner = pad ? `<div style="position:absolute;inset:${pad}%">${els}</div>` : els;
-      return `<section class="slide" style="background:${escapeAttr(bg)}">${inner}</section>`;
+      return `<section class="slide" style="background:${escapeAttr(bg)}">${backdrop}${inner}</section>`;
     })
     .join("");
 

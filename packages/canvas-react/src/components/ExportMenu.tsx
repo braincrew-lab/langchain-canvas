@@ -19,12 +19,23 @@ import { useCanvasStore } from "../hooks/useCanvasStore";
 /** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
 const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
 
+/** One host-supplied entry appended to the menu (a server-side export, say). */
+export interface ExportExtra {
+  /** Menu label, e.g. "PowerPoint". */
+  label: string;
+  /** Small extension chip after the label, e.g. "pptx". */
+  extension?: string;
+  run: () => void | Promise<void>;
+}
+
 interface ExportMenuProps {
   artifact: Artifact;
   getRenderedHtml: () => string | null;
+  /** Extra entries appended after the built-in ones — nothing is replaced. */
+  extras?: ExportExtra[];
 }
 
-export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
+export function ExportMenu({ artifact, getRenderedHtml, extras }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
   const stem = slugify(artifact.title);
   const dataOptions = dataExporters[artifact.type] ?? [];
@@ -138,6 +149,19 @@ export function ExportMenu({ artifact, getRenderedHtml }: ExportMenuProps) {
             {dataOptions.map((option) => (
               <button key={option.extension} role="menuitem" onClick={() => exportData(option)}>
                 {option.label} <span className="cv-export__ext">.{option.extension}</span>
+              </button>
+            ))}
+            {(extras ?? []).map((extra) => (
+              <button
+                key={`extra-${extra.label}`}
+                role="menuitem"
+                onClick={() => {
+                  void extra.run();
+                  setOpen(false);
+                }}
+              >
+                {extra.label}
+                {extra.extension && <span className="cv-export__ext">.{extra.extension}</span>}
               </button>
             ))}
           </div>

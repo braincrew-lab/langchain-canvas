@@ -4,6 +4,97 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.27] — 2026-09-01
+
+### Added
+- **What the grid engine cannot run, the workbook engine can.** The table
+  tools and the export tool take an `xlsx_recalc` hook (bytes → bytes; the
+  reference deployment puts LibreOffice behind it). A save whose check left
+  `#ERR` cells exports the sheet, recalculates the whole workbook, and lands
+  the full-surface values on the cells — measured: `SUMPRODUCT`, outside
+  every lighter engine, came back with LibreOffice's number, and a save with
+  only supported formulas never spends the seconds. An `.xlsx` export leaves
+  through the same hook, so the file opens showing numbers — including
+  formulas a person typed straight into the grid.
+- **A written formula lands with its value.** Measured: an agent's
+  `=ROUND(H2*I2*2,0)` stored only the formula; the grid showed a blank cell,
+  and cells depending on a changed value kept their stale cache. Now
+  `write_table_cells` recomputes the whole sheet at save — dependents
+  included — stamps every formula cell's display value, and grades the write
+  in its reply (`J1 =ROUND(H1*I1*2,0) → 143000`). A formula the grid cannot
+  run is flagged `#ERR` with a hint instead of showing a wrong number.
+  `check_table` now verifies grid formulas too (it assumed "they evaluate in
+  the grid"; an agent-written one did not), and the formula CLI gains a
+  `sheets` mode (`computeSheetFormulas`) — same engine on both sides.
+- **`set_slide_texts` — one slide, one save.** Replace the words of several
+  text elements by id in a single call. Fourteen single-element edits with
+  eight collisions (same-string matches, revision races) became one save per
+  slide, one check, one image.
+- **`review_deck` — look over the whole deck before handing it off.** The
+  full check, a per-slide note of what changed against the original (and
+  what still reads as the template's placeholder), and the deck's pages
+  rendered next to the original's — grid to grid, or one slide large.
+- **The export gate.** `export_canvas` refuses a deck whose check still
+  names content-hiding findings (text past its box, boxes off the page,
+  missing images) — those export as invisible words. `accept_findings=True`
+  is the escape, for after the user has said to ship it as is.
+- **Findings the copy inherited fold away.** The original's own overflowing
+  boxes (recorded in the deck baseline, keyed by geometry) no longer repeat
+  on every save; they fold into one closing line. A list that cannot reach
+  zero is a list the model learns to ignore — measured riding along on all
+  fourteen saves of one run.
+- **The eye follows the change, at glance size.** A save's slide images now
+  prefer the slides that save touched (not the lowest-numbered flagged
+  ones), and arrive resized to 1024px JPEG — a third of the vision tokens,
+  a tenth of the bytes of the full render it used to attach.
+- **A text box can grow with its text, or shrink its type to fit.** `SlideElement`
+  gains `autofit`: `shape` (the box takes the height its words need), `text`
+  (the type shrinks to stay inside), `none` (the default — the deck check names
+  the overflow). The pptx importer carries the original's setting across, the
+  exporter writes `spAutoFit` / `normAutofit` with the grown height or the
+  shrink, the editor, thumbnails, present view and print export draw the same
+  box, and the deck check swaps the overflow finding for what an autofit box
+  can still do wrong: grow off the page, or shrink below readable. One
+  estimate on both sides (`slide_text.py` / `slideText.ts`, golden-tested).
+  Counted before: four in ten text boxes in uploaded decks grow with their
+  text, and every one arrived frozen at its placeholder's height.
+- **The deck outline and the copy reply say which boxes do.** `grows` /
+  `shrinks` after the size in `read_canvas`, and a count in the
+  `open_deck_for_editing` reply, with the choice spelled out: let a growing box
+  take its height, shorten the words, set `autofit`, or ask.
+
+- **A canvas `.md` document leaves as a Word file.** `MarkdownDocxExporter`
+  carries the same deliberate subset as the HTML door — headings, inline bold
+  and italic, bullet and numbered lists, pipe tables, fenced code, page breaks,
+  `data:` images. Before it, a canvas document could not be exported at all.
+- **The Export menu takes host entries.** `Canvas` gains `exportExtras(artifact)`;
+  entries are appended after the built-in ones (nothing is replaced) — the seam
+  for server-side exports such as slides→pptx or table→xlsx.
+
+- **A deck's tone is counted, and readable by key.** The outline now opens
+  with `colors:` / `fonts:` / `sizes:` lines — every colour, face and size in
+  the deck with usage counts, from every place a colour lives. And
+  `read_canvas(fields="color,fontSize,...")` reads a deck as a projection:
+  one compact line per element with just the asked keys, so a model checks
+  the neighbours' style before adding an element instead of rereading the
+  whole JSON. Unknown field names answer with the full vocabulary.
+- **The fills a real deck uses all arrive.** Shape fills and outlines are
+  read from the XML: theme references, preset colours, the style reference a
+  shape inherits, and a gradient's first stop all resolve to hex — measured,
+  only 23% of shape fills were explicit RGB, and a bank template painted 70%
+  with theme references that used to arrive empty and render as black boxes.
+  An explicit noFill becomes `fill: "none"`, the renderers stop guessing a
+  colour for a silent shape (transparent, not the text colour), the exporter
+  keeps "none" unfilled, and an unfilled, unbordered, textless spacer is not
+  imported at all. A shape with no fill and no stroke is a new check finding.
+- **The master rides behind the copy.** With a page renderer mounted,
+  `open_deck_for_editing` renders the deck with every slide's own shapes
+  removed and puts each page behind its slide as a display-only backdrop
+  (`masterImage`, deduped per layout) — the logo and footer PowerPoint keeps
+  out of reach on the slide stay visible while editing. The pptx exporter
+  ignores it; the template skin carries the real master. Without a renderer
+  the copy reply says the master is safe and returns on export.
+
 ## [0.7.26] — 2026-08-30
 
 ### Added
