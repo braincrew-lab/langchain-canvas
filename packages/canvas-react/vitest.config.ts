@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     // jsdom so the reconciler's DOMParser-based HTML patching runs under test.
     environment: "jsdom",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     globals: true,
   },
 });

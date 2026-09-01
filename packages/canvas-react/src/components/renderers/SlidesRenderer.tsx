@@ -214,6 +214,9 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <button className="cv-deck__thumb" onClick={() => setIndex(i)}>
               <span className="cv-deck__thumb-n">{i + 1}</span>
               <div ref={i === 0 ? thumbBox.ref : undefined} className="cv-deck__thumb-slide" style={{ aspectRatio: aspect, ...(s.background ? { background: s.background } : {}) }}>
+                {s.masterImage && (
+                  <img src={assetUrl(s.masterImage)} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+                )}
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s, page).map((el) =>
                   el.type === "text" ? (
@@ -290,6 +293,9 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         </div>
 
         <div className="cv-slide cv-slide--blank" ref={editBox.ref} style={{ aspectRatio: aspect, ...slideStyle }}>
+          {slide.masterImage && (
+            <img src={assetUrl(slide.masterImage)} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+          )}
           <FreeSlide elements={resolveElements(slide, page)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} />
         </div>
 
@@ -311,6 +317,9 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         <div className="cv-present" onClick={() => setIndex(Math.min(at + 1, slides.length - 1))}>
           {/* key on the slide index so each advance re-triggers the fade-in. */}
           <div key={at} ref={presentBox.ref} className="cv-present__slide cv-present__fade cv-slide cv-slide--blank" style={{ aspectRatio: aspect, ...slideStyle }}>
+            {slide.masterImage && (
+              <img src={assetUrl(slide.masterImage)} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+            )}
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (

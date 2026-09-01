@@ -17,9 +17,10 @@ import { boxHeightPct, textFitScale } from "../../client/slideText";
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
 export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
-  // A box drawn by its outline alone carries no fill: painting `currentColor`
-  // in that case would hide what the border is meant to frame.
-  const fill = el.fill ?? (el.stroke ? "transparent" : "currentColor");
+  // "none" is an explicitly unfilled shape; absent means the deck said
+  // nothing. Either way the canvas draws nothing — guessing a colour here is
+  // what painted theme-filled bank shapes black.
+  const fill = el.fill && el.fill !== "none" ? el.fill : "transparent";
   const border = el.stroke
     ? { border: `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px solid ${el.stroke}`, boxSizing: "border-box" as const }
     : {};
@@ -29,7 +30,7 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
     // A line is drawn by its stroke, not its fill — the deck reader and the
     // pptx exporter both put its colour in `stroke`. It also keeps a visible
     // thickness however thin its box is (a 0.2%-tall box is one pixel).
-    const colour = el.fill ?? el.stroke ?? "currentColor";
+    const colour = (el.fill !== "none" ? el.fill : undefined) ?? el.stroke ?? "currentColor";
     return {
       width: "100%",
       height: "100%",

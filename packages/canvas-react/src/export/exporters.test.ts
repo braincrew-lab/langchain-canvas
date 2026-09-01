@@ -222,4 +222,21 @@ describe("slidesToPrintHtml (tables)", () => {
     expect(html).toMatch(/font-weight:400[^>]*>a</);
     expect(html.match(/<td/g)).toHaveLength(3); // the covered cell is not drawn
   });
+
+  it("draws the master backdrop behind the elements and never guesses a shape colour", () => {
+    const deck: SlidesData = {
+      slides: [{
+        masterImage: "data:image/png;base64,AAAA",
+        elements: [
+          { id: "u", type: "shape", shape: "rect", x: 0, y: 0, w: 40, h: 10, fill: "none" },
+          { id: "v", type: "shape", shape: "rect", x: 0, y: 20, w: 40, h: 10 },
+        ],
+      }],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toContain('src="data:image/png;base64,AAAA"');
+    const fills = [...html.matchAll(/background:([^;"']+)/g)].map((m) => m[1]);
+    expect(fills.filter((f) => f === "transparent").length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toContain("currentColor");
+  });
 });

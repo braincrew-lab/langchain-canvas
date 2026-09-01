@@ -138,6 +138,9 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     .map((slide) => {
       const bg = slide.background ?? "#ffffff";
       const fg = slide.textColor ?? defaultTextColor(slide.background);
+      const backdrop = slide.masterImage
+        ? `<img src="${escapeAttr(slide.masterImage)}" style="position:absolute;inset:0;width:100%;height:100%" alt=""/>`
+        : "";
       const els = resolveElements(slide, page)
         .map((el) => {
           const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el)}%`;
@@ -174,8 +177,9 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             // would hide whatever the border is meant to frame.
             const isLine = el.shape === "line";
             // A line is its stroke (see shapeStyle); a box may be outline-only.
+            const bodyFill = el.fill && el.fill !== "none" ? el.fill : undefined;
             const fill = escapeAttr(
-              isLine ? (el.fill ?? el.stroke ?? fg) : (el.fill ?? (el.stroke ? "transparent" : fg)),
+              isLine ? (bodyFill ?? el.stroke ?? fg) : (bodyFill ?? "transparent"),
             );
             const radius = el.shape === "ellipse" ? "50%" : isLine ? "2px" : "8px";
             const outline =
@@ -193,7 +197,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
         .join("");
       const pad = slide.padding ?? 0;
       const inner = pad ? `<div style="position:absolute;inset:${pad}%">${els}</div>` : els;
-      return `<section class="slide" style="background:${escapeAttr(bg)}">${inner}</section>`;
+      return `<section class="slide" style="background:${escapeAttr(bg)}">${backdrop}${inner}</section>`;
     })
     .join("");
 
