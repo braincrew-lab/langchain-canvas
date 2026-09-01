@@ -56,6 +56,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from langchain_canvas.assets import normalize_asset_reference
+from langchain_canvas.pptx_import import overflow_key
 from langchain_canvas.protocol.artifacts import (
     Slide,
     SlideElement,
@@ -129,6 +130,7 @@ def lint_slides_data(
     ref_exists: Callable[[str], bool] | None = None,
     min_text_px: float | None = None,
     max_overhang: float = 0.0,
+    known_overflow: Mapping[tuple[float, float, float, float], float] | None = None,
 ) -> list[str]:
     """Certain-only warnings for one deck's ``data`` dict, or ``[]``.
 
@@ -139,8 +141,16 @@ def lint_slides_data(
     from an upload is judged by the sizes its author actually used, so the
     original's footnotes pass and only text set smaller than anything in it
     is called out.
+
+    ``known_overflow`` is the original deck's own overflowing boxes
+    (:func:`langchain_canvas.pptx_import.deck_baseline`), keyed by rounded
+    geometry. A text-fit finding the copy merely inherited folds into one
+    closing line instead of repeating on every save — a list that cannot
+    reach zero is a list the model learns to ignore. A box whose text was
+    made longer than the original's, or moved, reports as usual.
     """
     warnings: list[str] = []
+    inherited: list[str] = []
     floor = MIN_TEXT_PX if min_text_px is None else min_text_px
     edge = _EDGE_TOLERANCE + max(0.0, max_overhang)
     _check_schema(data, warnings)
@@ -187,11 +197,19 @@ def lint_slides_data(
                 continue
             _check_off_page(number, label, x, y, w, h, warnings, edge)
             _check_empty_text(element, number, label, warnings)
-            _check_text_fit(element, number, label, w, h, warnings)
+            _check_text_fit(
+                element, number, label, x, y, w, h, warnings, known_overflow, inherited
+            )
             _check_autofit(element, number, label, y, w, h, warnings, edge, floor)
             _check_broken_reference(element, number, label, ref_exists, warnings)
             _check_full_cover(number, index, label, box, boxed, warnings)
-    return _capped(warnings)
+    capped = _capped(warnings)
+    if inherited:
+        capped.append(
+            f"the original deck already overflowed {len(inherited)} of these box(es) "
+            "itself — inherited, not yours to fix"
+        )
+    return capped
 
 
 # The keys a stored ``.slides.json`` envelope carries. The deck itself —
@@ -568,9 +586,13 @@ def _check_text_fit(
     element: dict[str, Any],
     number: int,
     label: str,
+    x: float,
+    y: float,
     w: float,
     h: float,
     warnings: list[str],
+    known_overflow: Mapping[tuple[float, float, float, float], float] | None = None,
+    inherited: list[str] | None = None,
 ) -> None:
     """Text that needs clearly more height than its box has.
 
@@ -613,6 +635,13 @@ def _check_text_fit(
     # autofit, not an overflow the canvas will draw wrong; the finding is for
     # text that wraps past what the box can show.
     if lines >= 2 and needed > box_h * _FIT_SLACK:
+        # An overflow the copy merely inherited: same box (geometry key), and
+        # no worse than the original's own text made it. Folded, not listed.
+        if known_overflow is not None and inherited is not None:
+            base = known_overflow.get(overflow_key(x, y, w, h))
+            if base is not None and needed / box_h <= base + 0.05:
+                inherited.append(label)
+                return
         warnings.append(
             f"slide {number}, element {label}: the text needs about {lines} line(s) "
             f"(~{_fmt(needed)}px) but the box is {_fmt(box_h)}px tall — it will run "

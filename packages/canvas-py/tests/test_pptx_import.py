@@ -708,7 +708,7 @@ def test_the_copy_tells_the_model_to_edit_it_rather_than_start_over() -> None:
     """The reply is the one place the model learns the way to revise a deck."""
     store = _store_with_deck()
     reply = _run(_copy_tool(store), source="sources/deck.pptx")
-    assert "edit_canvas" in reply
+    assert "set_slide_texts" in reply
     assert "keeps the look" in reply
 
 
@@ -1025,3 +1025,34 @@ def test_a_box_that_grows_with_its_text_comes_across_as_such() -> None:
     assert by_text["shrinks"]["autofit"] == "text"
     assert "autofit" not in by_text["fixed"]
     assert "autofit" not in by_text["unsaid"]
+
+
+def test_the_baseline_records_the_decks_own_overflowing_boxes() -> None:
+    from pptx.enum.text import MSO_AUTO_SIZE
+    from pptx.util import Pt
+
+    from langchain_canvas.pptx_import import deck_baseline, overflow_key
+
+    def build(slide: Any) -> None:
+        # A fixed one-line box holding three lines' worth of text.
+        crowded = _textbox(slide, "가나다라마바사아자차카타파하 " * 6,
+                           width=Inches(4), height=Inches(0.4))
+        crowded.text_frame.auto_size = None
+        crowded.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+        # The same crowding in a box that grows with its text: not an overflow.
+        growing = _textbox(slide, "가나다라마바사아자차카타파하 " * 6,
+                           top=Inches(3), width=Inches(4), height=Inches(0.4))
+        growing.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+        growing.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+        # Room to spare: not recorded.
+        roomy = _textbox(slide, "short", top=Inches(5), width=Inches(4), height=Inches(1.5))
+        roomy.text_frame.auto_size = None
+        roomy.text_frame.paragraphs[0].runs[0].font.size = Pt(18)
+
+    baseline = deck_baseline(_deck(build))
+    assert baseline is not None
+    assert len(baseline.overflow) == 1
+    ((key, ratio),) = baseline.overflow.items()
+    # 1in left, 1in top, 4in wide, 0.4in tall on a 13.333x7.5in page.
+    assert key == overflow_key(100 / 13.333, 100 / 7.5, 400 / 13.333, 40 / 7.5)
+    assert ratio > 1.5

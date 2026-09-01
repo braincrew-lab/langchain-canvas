@@ -74,16 +74,28 @@ class DeckBaseline:
     past the page edge (in percent points) the original's own shapes reach;
     decks routinely carry a bleed box at 101 or a footer at 105, and flagging
     those on every save buried the one real overflow among them.
+    ``overflow`` — the boxes whose own text already needs more height than
+    they have, keyed by rounded percent geometry, valued by the need/have
+    ratio. A copy inherits those overflows untouched, and a finding the
+    editor cannot bring to zero is a finding the editor learns to ignore.
     """
 
-    def __init__(self, smallest_text_px: float | None, max_overhang: float) -> None:
+    def __init__(
+        self,
+        smallest_text_px: float | None,
+        max_overhang: float,
+        overflow: dict[tuple[float, float, float, float], float] | None = None,
+    ) -> None:
         self.smallest_text_px = smallest_text_px
         self.max_overhang = max_overhang
+        self.overflow = overflow or {}
 
 
 def deck_baseline(data: bytes) -> DeckBaseline | None:
     """The original's own floor, from a light pass over its shapes (no pictures)."""
     from pptx import Presentation  # type: ignore[import-untyped]
+
+    from .slide_text import PAGE_H_PX, PAGE_W_PX, needed_height
 
     try:
         deck = Presentation(BytesIO(data))
@@ -92,6 +104,7 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
     width, height = int(deck.slide_width or 0), int(deck.slide_height or 0)
     smallest: float | None = None
     overhang = 0.0
+    overflow: dict[tuple[float, float, float, float], float] = {}
     for slide in deck.slides:
         for shape in slide.shapes:
             geometry = (shape.left, shape.top, shape.width, shape.height)
@@ -114,7 +127,42 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
                     px = round(size.pt * _PT_TO_PX, 1)
                     if px > 0 and (smallest is None or px < smallest):
                         smallest = px
-    return DeckBaseline(smallest, round(overhang, 3))
+            # The box's own overflow, keyed by geometry rather than id so the
+            # record survives slide reordering. Only frames the check would
+            # look at count: fixed boxes with an explicit size (autofit boxes
+            # never produce an overflow finding, and tables size from their
+            # grid). Geometry is the key on purpose — an agent that edits the
+            # words keeps the key, one that moves the box gives it up.
+            if (
+                getattr(shape, "has_text_frame", False)
+                and width
+                and height
+                and None not in geometry
+                and _autofit(shape.text_frame) is None
+                and (shape.text_frame.text or "").strip()
+            ):
+                runs = [r for p in shape.text_frame.paragraphs for r in p.runs]
+                size = runs[0].font.size if runs else None
+                if size is not None:
+                    left, top, w, h = (int(v) for v in geometry)
+                    x_pct, y_pct = 100 * left / width, 100 * top / height
+                    w_pct, h_pct = 100 * w / width, 100 * h / height
+                    needed = needed_height(
+                        shape.text_frame.text,
+                        round(size.pt * _PT_TO_PX, 1),
+                        w_pct / 100.0 * PAGE_W_PX,
+                        _line_height(list(shape.text_frame.paragraphs)),
+                    )
+                    box_h = h_pct / 100.0 * PAGE_H_PX
+                    if box_h > 0 and needed > box_h:
+                        key = overflow_key(x_pct, y_pct, w_pct, h_pct)
+                        overflow[key] = max(overflow.get(key, 0.0), round(needed / box_h, 3))
+    return DeckBaseline(smallest, round(overhang, 3), overflow)
+
+
+def overflow_key(x: float, y: float, w: float, h: float) -> tuple[float, float, float, float]:
+    """A box's identity for the overflow baseline: its geometry, to one decimal."""
+    return (round(x, 1), round(y, 1), round(w, 1), round(h, 1))
 
 
 def smallest_text_px(data: bytes) -> float | None:

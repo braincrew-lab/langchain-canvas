@@ -850,3 +850,44 @@ def test_a_growing_box_that_did_not_grow_is_named_once_by_the_off_page_check() -
     ]}]}
     found = [w for w in lint_slides_data(data) if "off the page" in w]
     assert len(found) == 1 and "grows" not in found[0]
+
+
+# --- overflow the copy merely inherited -------------------------------------------------
+
+
+def test_an_inherited_overflow_folds_into_one_closing_line() -> None:
+    """The template's own box already overflowed; the copy repeats it. Seen in
+    a run: four such findings rode along on all fourteen saves, and the model
+    learned to ignore the list — including the one finding that was its own."""
+    box = {"id": "e2", "type": "text", "x": 3.574, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "상세 내용을 작성해 주세요 " * 4}
+    data = {"slides": [{"elements": [box]}]}
+    plain = lint_slides_data(data)
+    assert [w for w in plain if "run past" in w], "sanity: it does overflow"
+    from langchain_canvas.pptx_import import overflow_key
+
+    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): 2.2}
+    folded = lint_slides_data(data, known_overflow=known)
+    assert not [w for w in folded if "run past" in w]
+    assert any("inherited, not yours to fix" in w and "1 of these" in w for w in folded)
+
+
+def test_an_inherited_overflow_made_worse_is_reported_again() -> None:
+    box = {"id": "e2", "type": "text", "x": 3.574, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "원본보다 훨씬 길게 다시 쓴 본문 " * 6}
+    from langchain_canvas.pptx_import import overflow_key
+
+    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): 1.3}
+    found = lint_slides_data({"slides": [{"elements": [box]}]}, known_overflow=known)
+    assert [w for w in found if "run past" in w]
+    assert not [w for w in found if "inherited" in w]
+
+
+def test_a_moved_box_gives_up_its_inherited_pass() -> None:
+    from langchain_canvas.pptx_import import overflow_key
+
+    box = {"id": "e2", "type": "text", "x": 10, "y": 24.01, "w": 59.245, "h": 5.834,
+           "fontSize": 26.7, "text": "상세 내용을 작성해 주세요 " * 4}
+    known = {overflow_key(3.574, 24.01, 59.245, 5.834): 2.2}
+    found = lint_slides_data({"slides": [{"elements": [box]}]}, known_overflow=known)
+    assert [w for w in found if "run past" in w]
