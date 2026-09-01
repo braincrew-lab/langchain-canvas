@@ -1,0 +1,63 @@
+[
+  {
+    "name": "one short latin line",
+    "text": "Hello world",
+    "size": 24,
+    "w": 50,
+    "h": 6,
+    "lines": 1,
+    "grownHeightPct": 6,
+    "fitScale": 1.0
+  },
+  {
+    "name": "latin that wraps twice",
+    "text": "a bullet long enough that it has to wrap onto a second line inside its box",
+    "size": 24,
+    "w": 40,
+    "h": 5,
+    "lines": 2,
+    "grownHeightPct": 8.0,
+    "fitScale": 0.625
+  },
+  {
+    "name": "korean body in a placeholder box",
+    "text": "디지털 금융 고객 경험 고도화와 실무 적용 가능한 AI 협업 모델 구축을 목표로 합니다. 브레인크루의 기획 역량과 신한은행의 금융 서비스 노하우를 결합합니다.",
+    "size": 26.7,
+    "w": 59.245,
+    "h": 5.834,
+    "lines": 3,
+    "grownHeightPct": 13.35,
+    "fitScale": 0.437
+  },
+  {
+    "name": "explicit line breaks",
+    "text": "one\ntwo\n\nfour",
+    "size": 20,
+    "w": 30,
+    "h": 4,
+    "lineHeight": 1.5,
+    "lines": 4,
+    "grownHeightPct": 16.667,
+    "fitScale": 0.25
+  },
+  {
+    "name": "already fits",
+    "text": "short",
+    "size": 18,
+    "w": 30,
+    "h": 20,
+    "lines": 1,
+    "grownHeightPct": 20,
+    "fitScale": 1.0
+  },
+  {
+    "name": "shrinks to the floor",
+    "text": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+    "size": 40,
+    "w": 20,
+    "h": 4,
+    "lines": 63,
+    "grownHeightPct": 420.0,
+    "fitScale": 0.25
+  }
+]

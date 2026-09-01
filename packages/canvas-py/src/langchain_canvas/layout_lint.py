@@ -49,7 +49,6 @@ there means the layout is wrong, not the deck.
 
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -57,6 +56,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from langchain_canvas.assets import normalize_asset_reference
+from langchain_canvas.pptx_import import overflow_key
 from langchain_canvas.protocol.artifacts import (
     Slide,
     SlideElement,
@@ -66,6 +66,13 @@ from langchain_canvas.protocol.artifacts import (
 )
 from langchain_canvas.slide_layout import BULLET_PREFIX, DerivedLayout, derive_layout
 from langchain_canvas.slide_table import table_grid
+from langchain_canvas.slide_text import (
+    PAGE_H_PX,
+    PAGE_W_PX,
+    fit_scale,
+    grown_height_pct,
+    wrapped_lines,
+)
 
 # Percent-point slack so the 4-decimal rounding the re-fit writes can never
 # trip the boundary checks.
@@ -123,6 +130,7 @@ def lint_slides_data(
     ref_exists: Callable[[str], bool] | None = None,
     min_text_px: float | None = None,
     max_overhang: float = 0.0,
+    known_overflow: Mapping[tuple[float, float, float, float], float] | None = None,
 ) -> list[str]:
     """Certain-only warnings for one deck's ``data`` dict, or ``[]``.
 
@@ -133,8 +141,16 @@ def lint_slides_data(
     from an upload is judged by the sizes its author actually used, so the
     original's footnotes pass and only text set smaller than anything in it
     is called out.
+
+    ``known_overflow`` is the original deck's own overflowing boxes
+    (:func:`langchain_canvas.pptx_import.deck_baseline`), keyed by rounded
+    geometry. A text-fit finding the copy merely inherited folds into one
+    closing line instead of repeating on every save — a list that cannot
+    reach zero is a list the model learns to ignore. A box whose text was
+    made longer than the original's, or moved, reports as usual.
     """
     warnings: list[str] = []
+    inherited: list[str] = []
     floor = MIN_TEXT_PX if min_text_px is None else min_text_px
     edge = _EDGE_TOLERANCE + max(0.0, max_overhang)
     _check_schema(data, warnings)
@@ -180,11 +196,21 @@ def lint_slides_data(
                 )
                 continue
             _check_off_page(number, label, x, y, w, h, warnings, edge)
+            _check_invisible_shape(element, number, label, warnings)
             _check_empty_text(element, number, label, warnings)
-            _check_text_fit(element, number, label, w, h, warnings)
+            _check_text_fit(
+                element, number, label, x, y, w, h, warnings, known_overflow, inherited
+            )
+            _check_autofit(element, number, label, y, w, h, warnings, edge, floor)
             _check_broken_reference(element, number, label, ref_exists, warnings)
             _check_full_cover(number, index, label, box, boxed, warnings)
-    return _capped(warnings)
+    capped = _capped(warnings)
+    if inherited:
+        capped.append(
+            f"the original deck already overflowed {len(inherited)} of these box(es) "
+            "itself — inherited, not yours to fix"
+        )
+    return capped
 
 
 # The keys a stored ``.slides.json`` envelope carries. The deck itself —
@@ -523,6 +549,20 @@ def _check_padding(slide: dict[str, Any], number: int, warnings: list[str]) -> N
         )
 
 
+def _check_invisible_shape(
+    element: dict[str, Any], number: int, label: str, warnings: list[str]
+) -> None:
+    """A box or ellipse with no fill and no outline draws nothing at all."""
+    if element.get("type") != "shape" or element.get("shape") == "line":
+        return
+    fill = element.get("fill")
+    if (fill is None or fill == "none") and not element.get("stroke"):
+        warnings.append(
+            f"slide {number}, element {label}: no fill and no stroke — the shape "
+            'renders as nothing. Give it a "fill" colour, a "stroke", or remove it.'
+        )
+
+
 def _check_off_page(
     number: int,
     label: str,
@@ -551,30 +591,23 @@ def _check_off_page(
         )
 
 
-# The px canvas the deck model measures type on (see write_canvas): a 1280 x
-# 720 page, so a box of w% x h% is (w * 12.8) by (h * 7.2) px.
-_PAGE_W_PX, _PAGE_H_PX = 1280.0, 720.0
-# Rough glyph widths as a fraction of the font size. Only ever used with a
-# wide margin, so the estimate errs toward silence.
-_WIDE_GLYPH = 1.0  # CJK, full-width
-_NARROW_GLYPH = 0.55  # Latin, digits, punctuation
-_SPACE_GLYPH = 0.3
+# The text estimate lives in slide_text (shared with the exporter and, as a
+# twin, the renderer); the check keeps only its own margin.
+_PAGE_W_PX, _PAGE_H_PX = PAGE_W_PX, PAGE_H_PX
 _FIT_SLACK = 1.25  # the box may be up to a quarter too small before we say so
-
-
-def _glyph_width(char: str) -> float:
-    if char.isspace():
-        return _SPACE_GLYPH
-    return _WIDE_GLYPH if ord(char) > 0x2E7F else _NARROW_GLYPH
 
 
 def _check_text_fit(
     element: dict[str, Any],
     number: int,
     label: str,
+    x: float,
+    y: float,
     w: float,
     h: float,
     warnings: list[str],
+    known_overflow: Mapping[tuple[float, float, float, float], float] | None = None,
+    inherited: list[str] | None = None,
 ) -> None:
     """Text that needs clearly more height than its box has.
 
@@ -596,6 +629,11 @@ def _check_text_fit(
         return
     if not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
         return
+    # A box that grows with its text, or text that shrinks to its box, does
+    # not run past anything; what those can do wrong is checked by
+    # _check_autofit.
+    if element.get("autofit") in ("shape", "text"):
+        return
     box_w = w / 100.0 * _PAGE_W_PX
     box_h = h / 100.0 * _PAGE_H_PX
     if box_w <= 0 or box_h <= 0:
@@ -612,6 +650,13 @@ def _check_text_fit(
     # autofit, not an overflow the canvas will draw wrong; the finding is for
     # text that wraps past what the box can show.
     if lines >= 2 and needed > box_h * _FIT_SLACK:
+        # An overflow the copy merely inherited: same box (geometry key), and
+        # no worse than the original's own text made it. Folded, not listed.
+        if known_overflow is not None and inherited is not None:
+            base = known_overflow.get(overflow_key(x, y, w, h))
+            if base is not None and needed / box_h <= base + 0.05:
+                inherited.append(label)
+                return
         warnings.append(
             f"slide {number}, element {label}: the text needs about {lines} line(s) "
             f"(~{_fmt(needed)}px) but the box is {_fmt(box_h)}px tall — it will run "
@@ -619,13 +664,62 @@ def _check_text_fit(
         )
 
 
-def _wrapped_lines(text: str, size: float, box_w: float) -> int:
-    """How many lines ``text`` takes at ``size`` px in a box ``box_w`` px wide."""
-    lines = 0
-    for paragraph in text.split("\n"):
-        width = sum(_glyph_width(ch) for ch in paragraph) * size
-        lines += max(1, math.ceil(width / box_w)) if paragraph else 1
-    return lines
+_wrapped_lines = wrapped_lines
+
+
+def _check_autofit(
+    element: dict[str, Any],
+    number: int,
+    label: str,
+    y: float,
+    w: float,
+    h: float,
+    warnings: list[str],
+    edge: float,
+    floor: float,
+) -> None:
+    """What an autofit box can still do wrong.
+
+    A box that grows with its text (``autofit: "shape"``) never clips, but it
+    can grow past the bottom of the page. Text that shrinks to its box
+    (``autofit: "text"``) never overflows, but it can shrink below what a
+    projector shows. Both are as certain as the estimate behind them, and
+    both are named with the number the author has to move.
+    """
+    fit = element.get("autofit")
+    if element.get("type") != "text" or fit not in ("shape", "text"):
+        return
+    text = element.get("text")
+    size = element.get("fontSize")
+    if not isinstance(text, str) or not text.strip():
+        return
+    if not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
+        return
+    line_height = element.get("lineHeight")
+    leading = (
+        float(line_height)
+        if isinstance(line_height, (int, float)) and line_height > 0
+        else None
+    )
+    if fit == "shape":
+        grown = grown_height_pct(text, float(size), w, h, leading)
+        # A box that has not grown is the off-page check's to name, once.
+        if grown > h and y + grown > 100.0 + edge:
+            lines = wrapped_lines(text, float(size), w / 100.0 * _PAGE_W_PX)
+            warnings.append(
+                f"slide {number}, element {label}: the box grows with its text to about "
+                f"{lines} line(s), and grown it reaches y + h = {_fmt(y + grown)} (off the "
+                "page — the page runs 0 to 100). Shorten the text or move the box up."
+            )
+        return
+    scale = fit_scale(text, float(size), w, h, leading)
+    shown = float(size) * scale
+    if scale < 1.0 and shown < floor:
+        warnings.append(
+            f"slide {number}, element {label}: the text shrinks to fit its box — about "
+            f"{_fmt(shown)}px, below the {_fmt(floor)}px the deck can show. Shorten the "
+            "text or make the box taller."
+        )
 
 
 # The cell inset PowerPoint applies (0.1in sides, 0.05in top and bottom at

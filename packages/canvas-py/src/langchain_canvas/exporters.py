@@ -30,6 +30,7 @@ from .converters import ensure_archive_within_limits
 from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
 from .slide_layout import BULLET_PREFIX, resolve_elements
 from .slide_table import table_grid
+from .slide_text import fit_scale, grown_height_pct
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -485,43 +486,201 @@ class HtmlDocxExporter:
     target: str = "docx"
 
     def export(self, content: str, *, path: str, title: str | None = None) -> ExportedFile:
-        try:
-            from docx import Document  # type: ignore[import-untyped]
-            from docx.enum.text import WD_BREAK  # type: ignore[import-untyped]
-            from docx.shared import Inches  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise MissingExporterDependencyError(
-                "exporting .html to docx needs python-docx — install "
-                "langchain-canvas[office] or register your own exporter"
-            ) from exc
-
         outline = _HtmlOutline()
         outline.feed(content)
         outline.finish()
+        return _blocks_to_docx(outline.blocks, path=path, title=title, source=".html")
 
-        document = Document()
-        for block in outline.blocks:
-            kind = block[0]
-            if kind == "heading":
-                paragraph = document.add_heading("", level=min(int(block[1]), 4))
-                _add_runs(paragraph, block[2])
-            elif kind == "bullet":
-                _add_runs(document.add_paragraph(style="List Bullet"), block[1])
-            elif kind == "para":
-                _add_runs(document.add_paragraph(), block[1])
-            elif kind == "table":
-                _add_table(document, block[1], block[2])
-            elif kind == "page_break":
-                document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-            elif kind == "image":
-                try:
-                    document.add_picture(io.BytesIO(block[1]), width=Inches(6))
-                except Exception:  # noqa: BLE001 — corrupt image data; keep the document
-                    continue
 
-        out = io.BytesIO()
-        document.save(out)
-        return ExportedFile(out.getvalue(), f"{_safe_name(title) or _stem(path)}.docx", DOCX_MIME)
+def _blocks_to_docx(
+    blocks: list[tuple[Any, ...]], *, path: str, title: str | None, source: str
+) -> ExportedFile:
+    """Assemble export blocks into a ``.docx`` — one door for every text format."""
+    try:
+        from docx import Document  # type: ignore[import-untyped]
+        from docx.enum.text import WD_BREAK  # type: ignore[import-untyped]
+        from docx.shared import Inches  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise MissingExporterDependencyError(
+            f"exporting {source} to docx needs python-docx — install "
+            "langchain-canvas[office] or register your own exporter"
+        ) from exc
+
+    document = Document()
+    for block in blocks:
+        kind = block[0]
+        if kind == "heading":
+            paragraph = document.add_heading("", level=min(int(block[1]), 4))
+            _add_runs(paragraph, block[2])
+        elif kind == "bullet":
+            _add_runs(document.add_paragraph(style="List Bullet"), block[1])
+        elif kind == "numbered":
+            _add_runs(document.add_paragraph(style="List Number"), block[1])
+        elif kind == "para":
+            _add_runs(document.add_paragraph(), block[1])
+        elif kind == "table":
+            _add_table(document, block[1], block[2])
+        elif kind == "page_break":
+            document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        elif kind == "image":
+            try:
+                document.add_picture(io.BytesIO(block[1]), width=Inches(6))
+            except Exception:  # noqa: BLE001 — corrupt image data; keep the document
+                continue
+
+    out = io.BytesIO()
+    document.save(out)
+    return ExportedFile(out.getvalue(), f"{_safe_name(title) or _stem(path)}.docx", DOCX_MIME)
+
+
+_MD_INLINE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_|`[^`]+`)")
+_MD_IMAGE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
+_MD_NUMBERED = re.compile(r"^\s*\d+[.)]\s+")
+_MD_BULLET = re.compile(r"^\s*[-*+]\s+")
+
+
+def _md_runs(text: str) -> list[_Run]:
+    """Inline markdown as runs: bold and italic; backticks drop their ticks."""
+    runs: list[_Run] = []
+    for part in _MD_INLINE.split(text):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            runs.append(_Run(part[2:-2], True, False))
+        elif part.startswith("__") and part.endswith("__") and len(part) > 4:
+            runs.append(_Run(part[2:-2], True, False))
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            runs.append(_Run(part[1:-1], False, True))
+        elif part.startswith("_") and part.endswith("_") and len(part) > 2:
+            runs.append(_Run(part[1:-1], False, True))
+        elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+            runs.append(_Run(part[1:-1], False, False))
+        else:
+            runs.append(_Run(part, False, False))
+    return runs
+
+
+def _md_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _md_is_separator(line: str) -> bool:
+    body = line.strip().strip("|").replace("|", "").replace(" ", "")
+    return bool(body) and set(body) <= {"-", ":"} and "-" in body
+
+
+def _decode_data_uri(url: str) -> bytes | None:
+    if not url.startswith("data:") or ";base64," not in url:
+        return None
+    try:
+        return base64.b64decode(url.split(";base64,", 1)[1], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
+    """A deliberate markdown subset as export blocks.
+
+    Headings, paragraphs with inline bold/italic, bullet and numbered items
+    (nesting flattens), pipe tables, fenced code kept verbatim, thematic
+    breaks as page breaks, and ``data:`` images. Everything else lands as
+    plain text — the canvas file stays the source of truth; the ``.docx``
+    is a snapshot at the door, exactly like the HTML one.
+    """
+    blocks: list[tuple[Any, ...]] = []
+    paragraph: list[str] = []
+    lines = text.split("\n")
+
+    def flush() -> None:
+        if paragraph:
+            blocks.append(("para", _md_runs(" ".join(paragraph))))
+            paragraph.clear()
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            index += 1
+            continue
+        if stripped.startswith("```"):
+            flush()
+            index += 1
+            while index < len(lines) and not lines[index].strip().startswith("```"):
+                blocks.append(("para", [_Run(lines[index], False, False)]))
+                index += 1
+            index += 1
+            continue
+        if stripped.startswith("#"):
+            flush()
+            level = len(stripped) - len(stripped.lstrip("#"))
+            blocks.append(("heading", level, _md_runs(stripped[level:].strip())))
+            index += 1
+            continue
+        if stripped in ("---", "***", "___"):
+            flush()
+            blocks.append(("page_break",))
+            index += 1
+            continue
+        image = _MD_IMAGE.match(stripped)
+        if image:
+            flush()
+            data = _decode_data_uri(image.group(2))
+            if data is not None:
+                blocks.append(("image", data))
+            elif image.group(1):
+                blocks.append(("para", [_Run(image.group(1), False, False)]))
+            index += 1
+            continue
+        if (
+            stripped.startswith("|")
+            and index + 1 < len(lines)
+            and _md_is_separator(lines[index + 1])
+        ):
+            flush()
+            rows = [_md_cells(stripped)]
+            index += 2  # past the separator line
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                rows.append(_md_cells(lines[index]))
+                index += 1
+            blocks.append(("table", rows, True))
+            continue
+        if _MD_BULLET.match(line):
+            flush()
+            blocks.append(("bullet", _md_runs(_MD_BULLET.sub("", line, count=1))))
+            index += 1
+            continue
+        if _MD_NUMBERED.match(line):
+            flush()
+            blocks.append(("numbered", _md_runs(_MD_NUMBERED.sub("", line, count=1))))
+            index += 1
+            continue
+        if stripped.startswith(">"):
+            flush()
+            blocks.append(("para", _md_runs(stripped.lstrip("> "))))
+            index += 1
+            continue
+        paragraph.append(stripped)
+        index += 1
+    flush()
+    return blocks
+
+
+class MarkdownDocxExporter:
+    """``.md`` documents as Word files.
+
+    The same deliberate subset as the HTML door (headings, inline bold and
+    italic, bullet and numbered lists, pipe tables, page breaks, ``data:``
+    images), read from markdown instead. Requires ``python-docx`` —
+    installed by the ``office`` extra.
+    """
+
+    suffixes: tuple[str, ...] = (".md", ".markdown")
+    target: str = "docx"
+
+    def export(self, content: str, *, path: str, title: str | None = None) -> ExportedFile:
+        return _blocks_to_docx(_markdown_blocks(content), path=path, title=title, source=".md")
 
 
 def _add_runs(paragraph: Any, runs: list[_Run]) -> None:
@@ -841,13 +1000,42 @@ class SlidesPptxExporter:
             for element in _resolved_slide_elements(slide_model, deck.page):
                 left, top, width, height = inch_box(element)
                 if element.type == "text":
+                    fit = element.autofit or "none"
+                    words = element.text or ""
+                    font_px = element.font_size or _DEFAULT_FONT_PX
+                    if fit == "shape":
+                        # The box grows with its text, as it did in the file
+                        # it came from. The height written is the grown one,
+                        # so a viewer that does not re-fit on open still
+                        # shows every line.
+                        grown = grown_height_pct(
+                            words, font_px, element.w, element.h, element.line_height
+                        )
+                        if grown > element.h:
+                            _, _, _, height = inch_box(element.model_copy(update={"h": grown}))
                     box = slide.shapes.add_textbox(left, top, width, height)
                     frame = box.text_frame
                     frame.word_wrap = True
-                    # Boxes are measured to hold their own text, so nothing
-                    # needs shrinking — and shrink-to-fit is what made two
-                    # bullets of the same size render at different sizes.
-                    frame.auto_size = MSO_AUTO_SIZE.NONE
+                    if fit == "shape":
+                        frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+                    elif fit == "text":
+                        # The type shrinks to its box. PowerPoint re-fits
+                        # when the text is next edited; the scale written
+                        # here is what shows until then.
+                        frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+                        shrink = fit_scale(
+                            words, font_px, element.w, element.h, element.line_height
+                        )
+                        if shrink < 1.0:
+                            frame._bodyPr.find(qn("a:normAutofit")).set(
+                                "fontScale", str(int(round(shrink * 100000)))
+                            )
+                    else:
+                        # Boxes are measured to hold their own text, so
+                        # nothing needs shrinking — and shrink-to-fit is what
+                        # made two bullets of the same size render at
+                        # different sizes.
+                        frame.auto_size = MSO_AUTO_SIZE.NONE
                     frame.margin_left = frame.margin_right = Emu(0)
                     frame.margin_top = frame.margin_bottom = Emu(0)
                     # Where the text sits inside its box. Left unset, a box
@@ -929,10 +1117,15 @@ class SlidesPptxExporter:
                     )
                 elif element.type == "shape":
                     outline = _hex_rgb(element.stroke)
-                    # A shape may be drawn by its outline alone. Defaulting the
-                    # fill in that case would paint over what the border frames.
-                    fill_color = _hex_rgb(element.fill) or (
-                        None if outline else _DEFAULT_SHAPE_FILL
+                    # A shape may be drawn by its outline alone, and "none"
+                    # says the shape is explicitly unfilled. Defaulting the
+                    # fill in either case would paint over what the border
+                    # frames. The default colour stays for a shape that says
+                    # nothing and has no border — an authored box should show.
+                    fill_color = (
+                        None
+                        if element.fill == "none"
+                        else _hex_rgb(element.fill) or (None if outline else _DEFAULT_SHAPE_FILL)
                     )
                     if element.shape == "line":
                         connector = slide.shapes.add_connector(
@@ -992,4 +1185,4 @@ class SlidesPptxExporter:
 
 def default_exporters() -> list[Exporter]:
     """The built-in exporters, in routing order."""
-    return [TableXlsxExporter(), HtmlDocxExporter(), SlidesPptxExporter()]
+    return [TableXlsxExporter(), HtmlDocxExporter(), MarkdownDocxExporter(), SlidesPptxExporter()]

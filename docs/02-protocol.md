@@ -125,6 +125,7 @@ type Slide = {
   background?: string;   // hex
   textColor?: string;    // hex
   notes?: string;        // speaker notes → exported to the .pptx notes pane
+  masterImage?: string;  // display-only master/layout backdrop (importer-set; pptx export ignores it)
   elements?: SlideElement[]; // free-positioned items for the "blank" layout
 };
 
@@ -132,8 +133,11 @@ type SlideElement = {
   id: string;
   type: "text" | "image" | "shape" | "table";
   x: number; y: number; w: number; h: number;   // percent of the slide
-  // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...
-  // image: src   ·   shape: shape ("rect" | "ellipse" | "line"), fill, stroke, strokeWidth
+  // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...,
+  //       autofit ("shape" grows the box with its text · "text" shrinks the
+  //       type to the box · "none", the default, leaves overflow to the check)
+  // image: src   ·   shape: shape ("rect" | "ellipse" | "line"), fill ("#hex",
+  //        or "none" for an explicitly unfilled shape), stroke, strokeWidth
   // table: rows (string[][]), header, colWidths, rowHeights, cells (per-cell
   //        fill / color / bold / align / fontSize / colSpan / rowSpan); the
   //        table's own stroke, fill, fontSize, fontFamily, color, bold, align

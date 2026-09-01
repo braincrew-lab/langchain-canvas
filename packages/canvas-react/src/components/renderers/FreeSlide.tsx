@@ -12,13 +12,15 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { SlideElement } from "../../protocol/artifacts";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../../client/slideTable";
+import { boxHeightPct, textFitScale } from "../../client/slideText";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
 export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
-  // A box drawn by its outline alone carries no fill: painting `currentColor`
-  // in that case would hide what the border is meant to frame.
-  const fill = el.fill ?? (el.stroke ? "transparent" : "currentColor");
+  // "none" is an explicitly unfilled shape; absent means the deck said
+  // nothing. Either way the canvas draws nothing — guessing a colour here is
+  // what painted theme-filled bank shapes black.
+  const fill = el.fill && el.fill !== "none" ? el.fill : "transparent";
   const border = el.stroke
     ? { border: `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px solid ${el.stroke}`, boxSizing: "border-box" as const }
     : {};
@@ -28,7 +30,7 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
     // A line is drawn by its stroke, not its fill — the deck reader and the
     // pptx exporter both put its colour in `stroke`. It also keeps a visible
     // thickness however thin its box is (a 0.2%-tall box is one pixel).
-    const colour = el.fill ?? el.stroke ?? "currentColor";
+    const colour = (el.fill !== "none" ? el.fill : undefined) ?? el.stroke ?? "currentColor";
     return {
       width: "100%",
       height: "100%",
@@ -47,7 +49,7 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
  *  paragraph spacing left at full size. */
 export function textStyle(el: SlideElement, scale = 1): CSSProperties {
   return {
-    fontSize: (el.fontSize ?? 24) * scale,
+    fontSize: (el.fontSize ?? 24) * scale * textFitScale(el),
     fontWeight: el.bold ? 700 : 400,
     color: el.color,
     // A text outline (WordArt) rides the element's stroke fields.
@@ -468,7 +470,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
           key={el.id}
           data-el-id={el.id}
           className={`cv-free__el ${selected === el.id ? "is-selected" : ""}`}
-          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}
+          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%` }}
           onPointerDown={(e) => onDown(e, el, "move")}
           onDoubleClick={(e) => {
             if (el.type === "text") {

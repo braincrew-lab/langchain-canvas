@@ -120,7 +120,8 @@ export interface SlideElement {
   align?: "left" | "center" | "right";
   /** Shape kind for `type: "shape"`. */
   shape?: "rect" | "ellipse" | "line";
-  /** Fill (rect/ellipse) or stroke (line) color for a shape. */
+  /** Fill (rect/ellipse) or stroke (line) colour — "#rrggbb", or "none" for
+   *  an explicitly unfilled shape. Absent means unsaid: nothing is drawn. */
   fill?: string;
   /** Outline color, independent of fill — a box drawn by its border alone. */
   stroke?: string;
@@ -138,6 +139,10 @@ export interface SlideElement {
   spaceBefore?: number;
   /** Space below the text, in px. */
   spaceAfter?: number;
+  /** What happens when the words outgrow the box, as PowerPoint's autofit
+   *  settles it: `shape` grows the box, `text` shrinks the type, `none`
+   *  (the default) leaves the overflow for the deck check to name. */
+  autofit?: "shape" | "text" | "none";
   /** A table's words: a grid of strings, row-major. `stroke` draws the grid;
    *  `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the
    *  cells' defaults. */
@@ -170,6 +175,10 @@ export interface Slide {
   textColor?: string;
   /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
   notes?: string;
+  /** Display-only backdrop: the original deck's master/layout rendered as an
+   *  image (assets/ path, set by the importer). Drawn behind the elements;
+   *  the pptx exporter ignores it — the template skin carries the real master. */
+  masterImage?: string;
   /** Content padding as a percent of the slide width (a safe margin around the
    *  free canvas). Applied in the editor, present view, thumbnails, and export. */
   padding?: number;
