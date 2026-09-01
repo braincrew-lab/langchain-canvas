@@ -572,7 +572,7 @@ def _element(
     if text is not None:
         return {**frame, "type": "text", **text}
 
-    drawing = _drawing(shape)
+    drawing = _drawing(shape, scheme)
     if drawing is not None:
         if drawing.get("shape") == "line":
             frame = _with_stroke(frame, shape, width, height)
@@ -938,6 +938,60 @@ def _line_height(paragraphs: list[Any]) -> float | None:
     return round(values.pop(), 3) if len(values) == 1 else None
 
 
+def master_has_content(data: bytes) -> bool:
+    """Whether any master or layout draws shapes of its own (logo, footer).
+
+    Placeholders are the slide's to fill and don't count; what counts is the
+    decoration PowerPoint keeps out of reach on the slide — exactly what the
+    editable copy used to lose.
+    """
+    from pptx import Presentation  # type: ignore[import-untyped]
+
+    try:
+        deck = Presentation(BytesIO(data))
+    except Exception:  # noqa: BLE001 — unreadable deck: nothing to show
+        return False
+    holders = list(deck.slide_masters) + [
+        layout for master in deck.slide_masters for layout in master.slide_layouts
+    ]
+    for holder in holders:
+        for shape in holder.shapes:
+            if not getattr(shape, "is_placeholder", False):
+                return True
+    return False
+
+
+def blank_slides_pptx(data: bytes) -> bytes | None:
+    """The deck with every slide's own shapes removed, as bytes.
+
+    Rendering the result shows what the master and layout draw on their own —
+    the backdrop the editable copy puts behind its elements. ``None`` when the
+    deck cannot be read.
+    """
+    from pptx import Presentation  # type: ignore[import-untyped]
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    try:
+        deck = Presentation(BytesIO(data))
+    except Exception:  # noqa: BLE001
+        return None
+    drawn = (
+        qn("p:sp"),
+        qn("p:pic"),
+        qn("p:graphicFrame"),
+        qn("p:cxnSp"),
+        qn("p:grpSp"),
+    )
+    for slide in deck.slides:
+        tree = slide.shapes._spTree
+        for child in list(tree):
+            if child.tag in drawn:
+                tree.remove(child)
+    out = BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
 def _autofit(frame: Any) -> str | None:
     """How the box and its text negotiate when the words outgrow the box.
 
@@ -1011,8 +1065,18 @@ def _align(paragraphs: list[Any]) -> str | None:
     return name if name in {"left", "center", "right"} else None
 
 
-def _drawing(shape: Any) -> dict[str, Any] | None:
-    """A rectangle, ellipse or line, with its solid fill if it has one."""
+def _drawing(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
+    """A rectangle, ellipse or line, with its fill and outline resolved.
+
+    Colours are read from the shape's XML so the sources a real deck uses
+    all land: explicit RGB, theme references, preset names, the style
+    reference the shape inherits from, and a gradient's first stop. An
+    explicit ``noFill`` becomes ``"none"`` — the shape *says* it is
+    transparent, which is different from saying nothing. Measured across
+    58 decks: explicit RGB is only 23% of shape fills; a bank template was
+    70% theme references, and every one of those used to fall back to the
+    renderer's text colour — a black box over the slide.
+    """
     kind = str(getattr(shape, "shape_type", "") or "").upper()
     name = str(getattr(shape, "name", "") or "").upper()
     if not kind or "PICTURE" in kind:
@@ -1028,10 +1092,14 @@ def _drawing(shape: Any) -> dict[str, Any] | None:
         return None
 
     out: dict[str, Any] = {"shape": drawn}
-    fill = _fill(shape, drawn)
+    stroke, weight = _shape_outline(shape, scheme)
+    fill = stroke if drawn == "line" else _shape_fill(shape, scheme)
+    # Unfilled, unbordered and textless draws nothing in PowerPoint either —
+    # a spacer. Importing it would only add invisible elements to the copy.
+    if drawn != "line" and fill in (None, "none") and not stroke:
+        return None
     if fill:
         out["fill"] = fill
-    stroke, weight = _outline(shape)
     if stroke:
         out["stroke"] = stroke
     if weight:
@@ -1039,39 +1107,66 @@ def _drawing(shape: Any) -> dict[str, Any] | None:
     return out
 
 
-def _outline(shape: Any) -> tuple[str | None, float | None]:
-    """A shape's outline colour and weight in points.
+def _shape_fill(shape: Any, scheme: dict[str, str]) -> str | None:
+    """``#rrggbb``, ``"none"`` for an explicit noFill, or ``None`` when unsaid."""
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
 
-    Boxes drawn by their border alone — an empty rectangle around content — are
-    the common annotation in a real deck, and they carry no fill at all. Read
-    separately from ``fill`` so both can be present, or just one.
+    spPr = shape._element.find(qn("p:spPr"))
+    if spPr is not None:
+        if spPr.find(qn("a:noFill")) is not None:
+            return "none"
+        solid = spPr.find(qn("a:solidFill"))
+        if solid is not None:
+            colour = _fill_colour(solid, scheme, qn)
+            if colour:
+                return colour
+        gradient = spPr.find(qn("a:gradFill"))
+        if gradient is not None:
+            # One field, one colour: the first stop stands for the ramp.
+            stop = gradient.find(qn("a:gsLst") + "/" + qn("a:gs"))
+            if stop is not None:
+                colour = _fill_colour(stop, scheme, qn)
+                if colour:
+                    return colour
+    # No fill of its own: the shape style names the theme fill it inherits.
+    style = shape._element.find(qn("p:style"))
+    if style is not None:
+        ref = style.find(qn("a:fillRef"))
+        if ref is not None and (ref.get("idx") or "0") != "0":
+            colour = _fill_colour(ref, scheme, qn)
+            if colour:
+                return colour
+    return None
+
+
+def _shape_outline(shape: Any, scheme: dict[str, str]) -> tuple[str | None, float | None]:
+    """The outline colour and weight in px, from the XML (theme resolved).
+
+    Boxes drawn by their border alone — an empty rectangle around content —
+    are the common annotation in a real deck; a border whose colour is a
+    theme reference used to vanish, and the box went black with it.
     """
-    line = getattr(shape, "line", None)
-    if line is None:
-        return None, None
-    colour = None
-    try:
-        rgb = line.color.rgb
-        colour = f"#{rgb}" if rgb is not None else None
-    except (AttributeError, ValueError, TypeError):
-        colour = None
-    weight = None
-    try:
-        if line.width:
-            weight = round(line.width / 12700 * _PT_TO_PX, 2)  # EMU -> px
-    except (AttributeError, ValueError, TypeError):
-        weight = None
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    colour: str | None = None
+    weight: float | None = None
+    spPr = shape._element.find(qn("p:spPr"))
+    line = spPr.find(qn("a:ln")) if spPr is not None else None
+    if line is not None:
+        if line.find(qn("a:noFill")) is not None:
+            return None, None
+        solid = line.find(qn("a:solidFill"))
+        if solid is not None:
+            colour = _fill_colour(solid, scheme, qn)
+        raw_width = line.get("w")
+        if raw_width:
+            weight = round(int(raw_width) / 12700 * _PT_TO_PX, 2)
+    if colour is None:
+        style = shape._element.find(qn("p:style"))
+        if style is not None:
+            ref = style.find(qn("a:lnRef"))
+            if ref is not None and (ref.get("idx") or "0") != "0":
+                colour = _fill_colour(ref, scheme, qn)
     return colour, weight
 
 
-def _fill(shape: Any, drawn: str) -> str | None:
-    """The solid fill (or, for a line, its stroke colour)."""
-    holder = shape.line if drawn == "line" else getattr(shape, "fill", None)
-    if holder is None:
-        return None
-    try:
-        colour = holder.color if drawn == "line" else holder.fore_color
-        rgb = colour.rgb
-    except (AttributeError, ValueError, TypeError):
-        return None
-    return f"#{rgb}" if rgb is not None else None

@@ -87,3 +87,42 @@ def test_the_outline_says_which_boxes_grow_or_shrink() -> None:
     assert 'e1 text 24px shrinks 50x10 "shrinks"' in out
     assert 'e2 text 24px 50x10 "fixed"' in out
     assert "`grows` marks a box that takes its text's height" in out
+
+
+def test_the_outline_counts_the_decks_colours_faces_and_sizes() -> None:
+    deck = encode_slides("d", {"slides": [
+        {"background": "#0A2A66", "elements": [
+            {"id": "e0", "type": "text", "x": 1, "y": 1, "w": 50, "h": 10,
+             "fontSize": 26.7, "color": "#FFFFFF", "fontFamily": "Pretendard", "text": "t"},
+            {"id": "e1", "type": "shape", "shape": "rect", "x": 1, "y": 20, "w": 10, "h": 10,
+             "fill": "#39A8FF", "stroke": "#0a2a66"},
+        ]},
+        {"elements": [
+            {"id": "e0", "type": "text", "x": 1, "y": 1, "w": 50, "h": 10,
+             "fontSize": 16, "color": "#0A2A66", "text": "s"},
+        ]},
+    ]})
+    out = deck_outline(deck)
+    assert out is not None
+    assert "colors: #0A2A66×3 " in out  # background + stroke (case-folded) + text
+    assert "fonts: Pretendard×1" in out and "sizes: 16/26.7" in out
+
+
+def test_a_projection_shows_only_the_asked_keys_and_teaches_unknown_ones() -> None:
+    from langchain_canvas.deck_outline import deck_projection
+
+    deck = encode_slides("d", {"slides": [{"background": "#0A2A66", "elements": [
+        {"id": "e0", "type": "text", "x": 1, "y": 1, "w": 50, "h": 10,
+         "fontSize": 26.7, "color": "#FFFFFF",
+         "text": "아주 길게 이어지는 제목 문장입니다 자름 확인"},
+        {"id": "e1", "type": "shape", "shape": "rect", "x": 1, "y": 20, "w": 10, "h": 10,
+         "fill": "#39A8FF"},
+    ]}]})
+    out = deck_projection(deck, "type,color,fill,background")
+    assert "projection: type, color, fill, background — 1 slide(s)" in out
+    assert "[s1] background=#0A2A66" in out
+    assert "[s1] e0 type=text color=#FFFFFF" in out and "fontSize" not in out
+    assert "[s1] e1 type=shape fill=#39A8FF" in out
+    taught = deck_projection(deck, "colour")
+    assert taught.startswith("unknown field(s) colour")
+    assert "color" in taught and "masterImage" in taught

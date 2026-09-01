@@ -74,7 +74,7 @@ def test_an_off_page_element_is_named_with_its_numbers() -> None:
 
 def test_negative_origin_is_off_page() -> None:
     warnings = lint_slides_data(
-        _deck(_el("a", "shape", -5, -2, 10, 10, shape="rect"))
+        _deck(_el("a", "shape", -5, -2, 10, 10, shape="rect", fill="#dddddd"))
     )
     assert len(warnings) == 1
     assert "x = -5" in warnings[0] and "y = -2" in warnings[0]
@@ -82,7 +82,7 @@ def test_negative_origin_is_off_page() -> None:
 
 def test_a_zero_sized_element_is_flagged() -> None:
     warnings = lint_slides_data(
-        _deck(_el("z", "shape", 10, 10, 0, 5, shape="rect"))
+        _deck(_el("z", "shape", 10, 10, 0, 5, shape="rect", fill="#dddddd"))
     )
     assert warnings == [
         'slide 1, element "z": w = 0, h = 5 (zero or negative size renders nothing)'
@@ -151,7 +151,7 @@ def test_the_same_mistake_across_many_elements_is_summarized() -> None:
 
 
 def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
-    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", rotation=45))
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", rotation=45))
     warnings = lint_slides_data(deck)
     assert len(warnings) == 1
     assert "the canvas and the export both ignore them" in warnings[0]
@@ -225,14 +225,14 @@ def test_partial_overlap_is_not_a_finding() -> None:
     assert lint_slides_data(
         _deck(
             _el("text", "text", 20, 20, 40, 10, text="Hi"),
-            _el("panel", "shape", 30, 15, 40, 40, shape="rect"),
+            _el("panel", "shape", 30, 15, 40, 40, shape="rect", fill="#dddddd"),
         )
     ) == []
 
 
 def test_an_ellipse_or_translucent_fill_never_counts_as_cover() -> None:
     base = _el("under", "text", 20, 20, 10, 10, text="Hi")
-    ellipse = _el("e", "shape", 0, 0, 100, 100, shape="ellipse")
+    ellipse = _el("e", "shape", 0, 0, 100, 100, shape="ellipse", fill="#dddddd")
     alpha = _el("a", "shape", 0, 0, 100, 100, shape="rect", fill="#0d1b3e80")
     assert lint_slides_data(_deck(base, ellipse)) == []
     assert lint_slides_data(_deck(base, alpha)) == []
@@ -249,7 +249,7 @@ def test_edge_touching_elements_are_clean() -> None:
     # (paint order: array end is the front).
     assert lint_slides_data(
         _deck(
-            _el("full", "shape", 0, 0, 100, 100, shape="rect"),
+            _el("full", "shape", 0, 0, 100, 100, shape="rect", fill="#dddddd"),
             _el("r", "text", 55.0001, 0, 45, 10, text="Hi"),
         )
     ) == []
@@ -649,7 +649,8 @@ def test_text_at_or_above_the_floor_stays_silent(size: int) -> None:
 
 def test_a_shape_with_no_font_size_is_not_small_text() -> None:
     data = {"slides": [{"elements": [
-        {"id": "s", "type": "shape", "shape": "rect", "x": 5, "y": 5, "w": 10, "h": 10}
+        {"id": "s", "type": "shape", "shape": "rect",
+         "x": 5, "y": 5, "w": 10, "h": 10, "fill": "#dddddd"}
     ]}]}
     assert lint_slides_data(data) == []
 
@@ -891,3 +892,11 @@ def test_a_moved_box_gives_up_its_inherited_pass() -> None:
     known = {overflow_key(3.574, 24.01, 59.245, 5.834): 2.2}
     found = lint_slides_data({"slides": [{"elements": [box]}]}, known_overflow=known)
     assert [w for w in found if "run past" in w]
+
+
+def test_a_shape_with_no_fill_and_no_stroke_is_called_invisible() -> None:
+    warnings = lint_slides_data(_deck(_el("g", "shape", 5, 5, 20, 10, shape="rect")))
+    assert len(warnings) == 1 and "renders as nothing" in warnings[0]
+    with_stroke = _deck(_el("g", "shape", 5, 5, 20, 10, shape="rect",
+                            fill="none", stroke="#112233"))
+    assert lint_slides_data(with_stroke) == []

@@ -11,13 +11,65 @@ a screen and an id points at the JSON below it.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
+
+from langchain_canvas.protocol.artifacts import Slide, SlideElement
 
 from .replay import display_title
 
 #: Elements named per slide before the line folds the rest into a count.
 MAX_ELEMENTS_PER_SLIDE = 14
 _TEXT_HEAD = 36
+
+
+def _style_lines(slides: list[dict[str, Any]]) -> list[str]:
+    """The deck's tone, counted: colours, faces and sizes with usage counts.
+
+    Two lines the model reads before touching anything — a new element that
+    picks from these lists lands in the deck's own voice instead of adding a
+    ninth colour nobody chose. Counts come from every place a colour lives
+    (text, fills, strokes, table cells, slide backgrounds).
+    """
+    colours: Counter[str] = Counter()
+    faces: Counter[str] = Counter()
+    sizes: Counter[float] = Counter()
+    for slide in slides:
+        background = slide.get("background")
+        if isinstance(background, str) and background.startswith("#"):
+            colours[background.upper()] += 1
+        for element in slide.get("elements") or []:
+            if not isinstance(element, dict):
+                continue
+            for key in ("color", "fill", "stroke", "highlight"):
+                value = element.get(key)
+                if isinstance(value, str) and value.startswith("#"):
+                    colours[value.upper()] += 1
+            face = element.get("fontFamily")
+            if isinstance(face, str) and face:
+                faces[face] += 1
+            size = element.get("fontSize")
+            if isinstance(size, (int, float)) and not isinstance(size, bool) and size > 0:
+                sizes[round(float(size), 1)] += 1
+            for cell in element.get("cells") or []:
+                if isinstance(cell, dict):
+                    for key in ("color", "fill"):
+                        value = cell.get(key)
+                        if isinstance(value, str) and value.startswith("#"):
+                            colours[value.upper()] += 1
+    lines: list[str] = []
+    if colours:
+        shown = " ".join(f"{c}×{n}" for c, n in colours.most_common(6))
+        extra = len(colours) - 6
+        lines.append(f"colors: {shown}" + (f" (+{extra} more)" if extra > 0 else ""))
+    ramp = "/".join(f"{s:g}" for s in sorted(sizes)[:10]) if sizes else ""
+    face_part = " ".join(f"{f}×{n}" for f, n in faces.most_common(3))
+    if ramp or face_part:
+        joined = " · ".join(part for part in (
+            f"fonts: {face_part}" if face_part else "", f"sizes: {ramp}" if ramp else ""
+        ) if part)
+        lines.append(joined)
+    return lines
 
 
 def _head(text: str) -> str:
@@ -72,6 +124,7 @@ def deck_outline(content: str) -> str | None:
     if isinstance(template, str):
         head += f", template {template}"
     lines = [head]
+    lines.extend(_style_lines(slides))
     for number, slide in enumerate(slides, start=1):
         elements = [e for e in (slide.get("elements") or []) if isinstance(e, dict)]
         if elements:
@@ -99,3 +152,69 @@ def deck_outline(content: str) -> str | None:
         "`grows` marks a box that takes its text's height; `shrinks` one whose type fits the box."
     )
     return "\n".join(lines)
+
+
+def deck_projection(content: str, fields: str) -> str:
+    """One compact line per element, showing only the requested keys.
+
+    ``fields`` is comma-separated element keys (camelCase, as stored) plus
+    slide-level keys; keys an element does not carry are simply left off its
+    line. Unknown names are named back with the full vocabulary — a model
+    that asks for "colour" learns "color" from the reply instead of assuming
+    the capability is missing.
+    """
+    try:
+        envelope = json.loads(content)
+    except ValueError:
+        return "Error: not a readable deck."
+    data = envelope.get("data") if isinstance(envelope, dict) else None
+    slides = [s for s in ((data or {}).get("slides") or []) if isinstance(s, dict)]
+    wanted = [f.strip() for f in fields.split(",") if f.strip()]
+    element_keys = set(SlideElement.model_json_schema(by_alias=True)["properties"])
+    slide_keys = set(Slide.model_json_schema(by_alias=True)["properties"]) - {"elements"}
+    unknown = [f for f in wanted if f not in element_keys and f not in slide_keys]
+    lines: list[str] = []
+    if unknown:
+        lines.append(
+            "unknown field(s) " + ", ".join(unknown) + " — element keys: "
+            + ", ".join(sorted(element_keys)) + "; slide keys: " + ", ".join(sorted(slide_keys))
+        )
+    valid = [f for f in wanted if f not in unknown]
+    if not valid:
+        return "\n".join(lines) if lines else "Error: no fields given."
+    lines.append(f"projection: {', '.join(valid)} — {len(slides)} slide(s)")
+    for number, slide in enumerate(slides, start=1):
+        slide_bits = [
+            f"{key}={_shown(slide.get(key))}"
+            for key in valid
+            if key in slide_keys and slide.get(key) is not None
+        ]
+        if slide_bits:
+            lines.append(f"[s{number}] " + " ".join(slide_bits))
+        for index, element in enumerate(slide.get("elements") or []):
+            if not isinstance(element, dict):
+                continue
+            bits = [
+                f"{key}={_shown(element.get(key))}"
+                for key in valid
+                if key in element_keys and element.get(key) is not None
+            ]
+            if bits:
+                ident = element.get("id", f"#{index}")
+                lines.append(f"[s{number}] {ident} " + " ".join(bits))
+    return "\n".join(lines)
+
+
+def _shown(value: Any) -> str:
+    """A field value on one projection line: short, and honest about shape."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    if isinstance(value, str):
+        return f'"{_head(value)}"' if (" " in value or len(value) > 24) else value
+    if isinstance(value, list):
+        return f"[{len(value)}]"
+    if isinstance(value, dict):
+        return "{…}"
+    return str(value)

@@ -196,6 +196,7 @@ def lint_slides_data(
                 )
                 continue
             _check_off_page(number, label, x, y, w, h, warnings, edge)
+            _check_invisible_shape(element, number, label, warnings)
             _check_empty_text(element, number, label, warnings)
             _check_text_fit(
                 element, number, label, x, y, w, h, warnings, known_overflow, inherited
@@ -545,6 +546,20 @@ def _check_padding(slide: dict[str, Any], number: int, warnings: list[str]) -> N
         warnings.append(
             f"slide {number}: padding = {_fmt(float(padding))} leaves no content "
             "area (must be 0 to below 50)"
+        )
+
+
+def _check_invisible_shape(
+    element: dict[str, Any], number: int, label: str, warnings: list[str]
+) -> None:
+    """A box or ellipse with no fill and no outline draws nothing at all."""
+    if element.get("type") != "shape" or element.get("shape") == "line":
+        return
+    fill = element.get("fill")
+    if (fill is None or fill == "none") and not element.get("stroke"):
+        warnings.append(
+            f"slide {number}, element {label}: no fill and no stroke — the shape "
+            'renders as nothing. Give it a "fill" colour, a "stroke", or remove it.'
         )
 
 

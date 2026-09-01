@@ -120,7 +120,8 @@ export interface SlideElement {
   align?: "left" | "center" | "right";
   /** Shape kind for `type: "shape"`. */
   shape?: "rect" | "ellipse" | "line";
-  /** Fill (rect/ellipse) or stroke (line) color for a shape. */
+  /** Fill (rect/ellipse) or stroke (line) colour — "#rrggbb", or "none" for
+   *  an explicitly unfilled shape. Absent means unsaid: nothing is drawn. */
   fill?: string;
   /** Outline color, independent of fill — a box drawn by its border alone. */
   stroke?: string;
@@ -174,6 +175,10 @@ export interface Slide {
   textColor?: string;
   /** Speaker notes (not shown on the slide; exported to the .pptx notes pane). */
   notes?: string;
+  /** Display-only backdrop: the original deck's master/layout rendered as an
+   *  image (assets/ path, set by the importer). Drawn behind the elements;
+   *  the pptx exporter ignores it — the template skin carries the real master. */
+  masterImage?: string;
   /** Content padding as a percent of the slide width (a safe margin around the
    *  free canvas). Applied in the editor, present view, thumbnails, and export. */
   padding?: number;

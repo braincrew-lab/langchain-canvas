@@ -458,7 +458,7 @@ def test_a_box_drawn_by_its_outline_alone_survives() -> None:
     element = next(e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape")
     assert element["stroke"] == "#FF0000"
     assert element["strokeWidth"] == pytest.approx(3 * 4 / 3, abs=0.1)  # px
-    assert "fill" not in element  # an outline-only box has none
+    assert element["fill"] == "none"  # explicitly unfilled, said out loud
 
 
 def test_the_type_face_comes_across() -> None:
@@ -1056,3 +1056,85 @@ def test_the_baseline_records_the_decks_own_overflowing_boxes() -> None:
     # 1in left, 1in top, 4in wide, 0.4in tall on a 13.333x7.5in page.
     assert key == overflow_key(100 / 13.333, 100 / 7.5, 400 / 13.333, 40 / 7.5)
     assert ratio > 1.5
+
+
+# --- fills the deck actually uses: theme, inheritance, "none" ---------------------------
+
+
+def test_theme_and_inherited_fills_resolve_to_hex() -> None:
+    """A bank template painted 70% of its shapes with theme references, and
+    every one used to arrive with no fill at all — drawn as a black box."""
+    from pptx.dml.color import RGBColor
+    from pptx.enum.dml import MSO_THEME_COLOR
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        themed = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1)
+        )
+        themed.fill.solid()
+        themed.fill.fore_color.theme_color = MSO_THEME_COLOR.ACCENT_1
+        themed.line.fill.background()
+        # add_shape leaves a style reference: no fill of its own, inherits accent.
+        inherited = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(4), Inches(1), Inches(2), Inches(1)
+        )
+        inherited.line.color.rgb = RGBColor(0x11, 0x22, 0x33)
+
+    shapes = [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape"]
+    assert len(shapes) == 2
+    for element in shapes:
+        assert element["fill"].startswith("#") and element["fill"] != "#000000"
+
+
+def test_an_invisible_spacer_shape_is_not_imported() -> None:
+    """Unfilled, unbordered and textless draws nothing in PowerPoint either."""
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    def build(slide: Any) -> None:
+        spacer = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1)
+        )
+        spacer.fill.background()
+        spacer.line.fill.background()
+        # strip the inherited style so the shape truly says nothing
+        style = spacer._element.find(
+            "{http://schemas.openxmlformats.org/presentationml/2006/main}style"
+        )
+        if style is not None:
+            spacer._element.remove(style)
+
+    assert [e for e in _elements(pptx_to_slides(_deck(build))) if e["type"] == "shape"] == []
+
+
+def test_master_content_probe_and_blanking() -> None:
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches
+
+    from langchain_canvas.pptx_import import blank_slides_pptx, master_has_content
+
+    plain = _deck(lambda slide: _textbox(slide, "hello"))
+    assert master_has_content(plain) is False
+
+    def build(slide: Any) -> None:
+        _textbox(slide, "hello")
+
+    deck = Presentation(io.BytesIO(_deck(build)))
+    # Master shapes have no add_shape; draw on a slide and move the XML over,
+    # the way a real template carries its logo.
+    donor = deck.slides[0].shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.2), Inches(7), Inches(1), Inches(0.3)
+    )
+    donor.fill.solid()
+    element = donor._element
+    element.getparent().remove(element)
+    deck.slide_masters[0].shapes._spTree.append(element)
+    buffer = io.BytesIO()
+    deck.save(buffer)
+    with_logo = buffer.getvalue()
+    assert master_has_content(with_logo) is True
+    blank = blank_slides_pptx(with_logo)
+    assert blank is not None
+    assert all(len(s.shapes) == 0 for s in Presentation(io.BytesIO(blank)).slides)

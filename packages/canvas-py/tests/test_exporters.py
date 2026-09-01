@@ -875,3 +875,80 @@ def test_slides_pptx_shrinking_type_is_written_with_its_scale():
     assert box.text_frame.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     fit = box.text_frame._bodyPr.find(qn("a:normAutofit"))
     assert 25000 <= int(fit.get("fontScale")) < 100000
+
+
+def test_markdown_docx_keeps_headings_lists_tables_and_breaks():
+    """The .md door carries the same deliberate subset as the .html one —
+    before it existed, a canvas document could not leave as a file at all."""
+    from docx import Document
+
+    from langchain_canvas.exporters import MarkdownDocxExporter
+
+    md = "\n".join([
+        "# 협업 제안서",
+        "",
+        "본 문서는 **브레인크루**와 *신한은행*의 협업 범위를 정리한다.",
+        "이어지는 줄은 같은 문단이다.",
+        "",
+        "## 일정",
+        "| 단계 | 기간 |",
+        "|---|---|",
+        "| 기획 | 2주 |",
+        "| 개발 | 6주 |",
+        "",
+        "1. 첫째",
+        "2) 둘째",
+        "- 항목 A",
+        "* 항목 B",
+        "",
+        "```",
+        "uv run python -m app",
+        "```",
+        "",
+        "---",
+        "",
+        "끝.",
+    ])
+    exported = MarkdownDocxExporter().export(md, path="report.md", title="협업 제안서")
+    assert exported.filename.endswith(".docx")
+    doc = Document(io.BytesIO(exported.data))
+    styles = [p.style.name for p in doc.paragraphs if p.text.strip()]
+    assert "Heading 1" in styles and "Heading 2" in styles
+    assert styles.count("List Number") == 2 and styles.count("List Bullet") == 2
+    body = next(p for p in doc.paragraphs if "협업 범위" in p.text)
+    assert "이어지는 줄은 같은 문단이다" in body.text  # soft-wrap joins
+    assert any(r.bold for r in body.runs) and any(r.italic for r in body.runs)
+    assert len(doc.tables) == 1 and doc.tables[0].rows[0].cells[0].text == "단계"
+    assert any("uv run python -m app" == p.text for p in doc.paragraphs)
+    breaks = doc.element.body.findall(".//" + qn_docx("w:br"))
+    assert any(b.get(qn_docx("w:type")) == "page" for b in breaks)
+
+
+def test_markdown_docx_registered_for_md_canvas_files():
+    from langchain_canvas.exporters import default_exporters, exporter_for
+
+    exporter = exporter_for("notes.md", "docx", default_exporters())
+    assert exporter is not None and exporter.target == "docx"
+
+
+def qn_docx(tag: str) -> str:
+    from docx.oxml.ns import qn as _qn
+
+    return _qn(tag)
+
+
+def test_slides_pptx_an_explicitly_unfilled_shape_stays_unfilled():
+    """fill "none" is the shape saying it is transparent — the exporter must
+    not paint the default over what the border (or the slide) shows."""
+    from pptx.enum.dml import MSO_FILL
+
+    content = _deck([{"elements": [
+        {"id": "a", "type": "shape", "shape": "rect", "x": 5, "y": 5, "w": 20, "h": 10,
+         "fill": "none"},
+        {"id": "b", "type": "shape", "shape": "rect", "x": 40, "y": 5, "w": 20, "h": 10},
+    ]}])
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    shapes = [s for s in next(iter(deck.slides)).shapes if not s.has_text_frame or True]
+    unfilled, defaulted = shapes[0], shapes[1]
+    assert unfilled.fill.type == MSO_FILL.BACKGROUND
+    assert defaulted.fill.type == MSO_FILL.SOLID  # an authored box still shows

@@ -132,7 +132,11 @@ class SlideElement(_CamelModel):
     color: str | None = None
     align: Literal["left", "center", "right"] | None = None
     shape: Literal["rect", "ellipse", "line"] | None = None  # for `type: "shape"`
-    fill: str | None = None  # fill (rect/ellipse) or stroke (line) color
+    # Fill (rect/ellipse) or stroke (line) colour — "#rrggbb", or "none" for a
+    # shape that is explicitly unfilled (a border-only frame). "none" and
+    # absent are different words: absent means unsaid, and the canvas draws
+    # nothing rather than guessing a colour.
+    fill: str | None = None
     # A shape can be drawn by its outline alone — an empty box around content is
     # a common annotation, and with only `fill` it renders as nothing at all.
     stroke: str | None = None  # outline color, independent of fill
@@ -191,6 +195,12 @@ class Slide(_CamelModel):
     background: str | None = None
     text_color: str | None = None
     notes: str | None = None
+    # Display-only: the original deck's master/layout rendered as this
+    # slide's backdrop (an assets/ path, set by the importer) — the logo and
+    # footer PowerPoint keeps out of reach on the slide itself. Drawn behind
+    # the elements on the canvas; the pptx exporter ignores it because the
+    # template skin already carries the real master. Leave it as it is.
+    master_image: str | None = None
     # Content padding as a percent of the slide width — a safe margin around the
     # free canvas, applied in the editor, present view, thumbnails, and export.
     # Bounded below 50: at 50 the content span (1 - 2*pad) hits zero, past it
