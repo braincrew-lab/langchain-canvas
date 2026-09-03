@@ -23,6 +23,7 @@ import { StylePanel } from "./StylePanel";
 import { useCanvasImport, type CanvasImportOptions } from "../hooks/useCanvasImport";
 import { useCanvasSave, type CanvasSaveHandler } from "../hooks/useCanvasSave";
 import { useCanvasStore } from "../hooks/useCanvasStore";
+import { ChromeProvider, useChrome, useLabels, type CanvasChrome, type CanvasLabels } from "./chrome";
 
 const ACCEPT = IMPORTABLE_EXTENSIONS.join(",");
 
@@ -78,8 +79,19 @@ export interface CanvasProps {
   assetBaseUrl?: string;
   /** The agent is working: hand editing is frozen and a banner says so. */
   busy?: boolean;
-  /** What the banner reads while `busy` (default "Agent is working…"). */
+  /** What the banner reads while `busy` (default `labels.busy`). */
   busyLabel?: string;
+  /**
+   * Override any user-facing string the panel renders (a partial map — the
+   * rest keep their defaults). See `CanvasLabels` for every key.
+   */
+  labels?: Partial<CanvasLabels>;
+  /**
+   * Leave out pieces of chrome the host draws itself (header, status badge,
+   * undo/redo, version rail, export menu, Word-preview notes, file facts).
+   * Every flag defaults to `true`.
+   */
+  chrome?: Partial<CanvasChrome>;
 }
 
 export function Canvas({
@@ -93,22 +105,26 @@ export function Canvas({
   onImported,
   assetBaseUrl,
   busy = false,
-  busyLabel = "Agent is working…",
+  busyLabel,
+  labels,
+  chrome,
 }: CanvasProps) {
   return (
     <CanvasRegistryProvider registry={registry}>
-      <CanvasPanel
-        emptyState={emptyState}
-        exportExtras={exportExtras}
-        onEditElement={onEditElement}
-        onUserEdit={onUserEdit}
-        onSave={onSave}
-        onFilesOpened={onFilesOpened}
-        onImported={onImported}
-        assetBaseUrl={assetBaseUrl}
-        busy={busy}
-        busyLabel={busyLabel}
-      />
+      <ChromeProvider labels={labels} chrome={chrome}>
+        <CanvasPanel
+          emptyState={emptyState}
+          exportExtras={exportExtras}
+          onEditElement={onEditElement}
+          onUserEdit={onUserEdit}
+          onSave={onSave}
+          onFilesOpened={onFilesOpened}
+          onImported={onImported}
+          assetBaseUrl={assetBaseUrl}
+          busy={busy}
+          busyLabel={busyLabel}
+        />
+      </ChromeProvider>
     </CanvasRegistryProvider>
   );
 }
@@ -123,7 +139,7 @@ function CanvasPanel({
   onImported,
   assetBaseUrl,
   busy = false,
-  busyLabel = "Agent is working…",
+  busyLabel,
 }: Pick<
   CanvasProps,
   | "emptyState"
@@ -137,6 +153,7 @@ function CanvasPanel({
   | "busy"
   | "busyLabel"
 >) {
+  const labels = useLabels();
   const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
@@ -215,7 +232,7 @@ function CanvasPanel({
       if (e.dataTransfer.files.length) openFiles(e.dataTransfer.files);
     },
   };
-  const dropOverlay = dropping ? <div className="cv-canvas__drop">Drop to open on the canvas</div> : null;
+  const dropOverlay = dropping ? <div className="cv-canvas__drop">{labels.dropToOpen}</div> : null;
 
   if (!active) {
     return (
@@ -255,7 +272,7 @@ function CanvasPanel({
         key={active.id}
         artifact={active}
         versions={versions}
-        busyLabel={busyLabel}
+        busyLabel={busyLabel ?? labels.busy}
         exportExtras={exportExtras}
       />
 
@@ -286,6 +303,9 @@ function ArtifactView({
   // The freeze lives in the store (it is what refuses hand edits); the view
   // only reflects it.
   const busy = useCanvasStore((s) => s.isBusy);
+  const setRenderedHtml = useCanvasStore((s) => s.setRenderedHtml);
+  const labels = useLabels();
+  const chrome = useChrome();
   const [viewIndex, setViewIndex] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const shown = viewIndex === null ? artifact : versions[viewIndex];
@@ -307,30 +327,41 @@ function ArtifactView({
     return clone.innerHTML;
   };
 
+  // Publish the getter so a host-drawn export control exports what is shown.
+  useEffect(() => {
+    setRenderedHtml(getRenderedHtml);
+    return () => setRenderedHtml(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setRenderedHtml]);
+
   return (
     <>
-      <header className="cv-header">
-        <div className="cv-header__title">
-          <h2>{shown.title}</h2>
-          <StatusBadge status={shown.status} />
-        </div>
-        <div className="cv-header__actions">
-          <UndoRedo />
-          {versions.length > 1 && (
-            <VersionHistory
-              versions={versions}
-              index={viewIndex ?? versions.length - 1}
-              onSelect={(i) => setViewIndex(i === versions.length - 1 ? null : i)}
-            />
-          )}
-          <ExportMenu artifact={shown} getRenderedHtml={getRenderedHtml} extras={exportExtras?.(shown)} />
-        </div>
-      </header>
+      {chrome.header && (
+        <header className="cv-header">
+          <div className="cv-header__title">
+            <h2>{shown.title}</h2>
+            {chrome.statusBadge && <StatusBadge status={shown.status} />}
+          </div>
+          <div className="cv-header__actions">
+            {chrome.undoRedo && <UndoRedo />}
+            {chrome.versions && versions.length > 1 && (
+              <VersionHistory
+                versions={versions}
+                index={viewIndex ?? versions.length - 1}
+                onSelect={(i) => setViewIndex(i === versions.length - 1 ? null : i)}
+              />
+            )}
+            {chrome.exportMenu && (
+              <ExportMenu artifact={shown} getRenderedHtml={getRenderedHtml} extras={exportExtras?.(shown)} />
+            )}
+          </div>
+        </header>
+      )}
 
       {viewingHistory && (
         <div className="cv-history-banner" role="status">
-          Viewing v{(viewIndex ?? 0) + 1} of {versions.length} — read-only.{" "}
-          <button onClick={() => setViewIndex(null)}>Back to latest</button>
+          {labels.viewingVersion((viewIndex ?? 0) + 1, versions.length)}{" "}
+          <button onClick={() => setViewIndex(null)}>{labels.backToLatest}</button>
         </div>
       )}
       {busy && (
@@ -345,15 +376,15 @@ function ArtifactView({
         ref={bodyRef}
       >
         {Renderer ? (
-          <RendererBoundary resetKey={`${shown.id}:${shown.version}`}>
+          <RendererBoundary resetKey={`${shown.id}:${shown.version}`} label={labels.renderFailed}>
             {/* Structured renderers are lazy (recharts / react-markdown / fortune-sheet
                 split into on-demand chunks); Suspense covers their first load. */}
-            <Suspense fallback={<div className="cv-fallback">Loading…</div>}>
+            <Suspense fallback={<div className="cv-fallback">{labels.loading}</div>}>
               <Renderer artifact={shown} />
             </Suspense>
           </RendererBoundary>
         ) : (
-          <div className="cv-fallback">No renderer registered for type “{shown.type}”.</div>
+          <div className="cv-fallback">{labels.noRenderer(shown.type)}</div>
         )}
       </div>
     </>
@@ -362,6 +393,7 @@ function ArtifactView({
 
 /** Undo / redo for user edits, plus the ⌘Z / ⌘⇧Z (Ctrl on Windows) shortcuts. */
 function UndoRedo() {
+  const labels = useLabels();
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => !s.isBusy && (s.canvas.activeId ? (s.undoStack[s.canvas.activeId]?.length ?? 0) : 0) > 0);
@@ -384,9 +416,9 @@ function UndoRedo() {
   }, [undo, redo]);
 
   return (
-    <div className="cv-undo" role="group" aria-label="Undo and redo">
-      <button onClick={undo} disabled={!canUndo} title="Undo (⌘Z)" aria-label="Undo">↶</button>
-      <button onClick={redo} disabled={!canRedo} title="Redo (⌘⇧Z)" aria-label="Redo">↷</button>
+    <div className="cv-undo" role="group" aria-label={labels.undoRedoGroup}>
+      <button onClick={undo} disabled={!canUndo} title={labels.undo} aria-label={labels.undo}>↶</button>
+      <button onClick={redo} disabled={!canRedo} title={labels.redo} aria-label={labels.redo}>↷</button>
     </div>
   );
 }
@@ -405,6 +437,7 @@ function VersionHistory({
   index: number;
   onSelect: (i: number) => void;
 }) {
+  const labels = useLabels();
   const [open, setOpen] = useState(false);
   const total = versions.length;
   const pick = (i: number) => {
@@ -412,28 +445,28 @@ function VersionHistory({
     onSelect(i);
   };
   return (
-    <div className="cv-versions" role="group" aria-label="Version history">
-      <button className="cv-versions__nav" disabled={index === 0} onClick={() => pick(index - 1)} aria-label="Previous version">
+    <div className="cv-versions" role="group" aria-label={labels.versionsGroup}>
+      <button className="cv-versions__nav" disabled={index === 0} onClick={() => pick(index - 1)} aria-label={labels.previousVersion}>
         ‹
       </button>
       <button
         className="cv-versions__label"
         aria-expanded={open}
-        aria-label="Open version history"
+        aria-label={labels.openVersions}
         onClick={() => setOpen((v) => !v)}
       >
-        v{index + 1} / {total}
+        {labels.versionOf(index + 1, total)}
       </button>
       <button
         className="cv-versions__nav"
         disabled={index === total - 1}
         onClick={() => pick(index + 1)}
-        aria-label="Next version"
+        aria-label={labels.nextVersion}
       >
         ›
       </button>
       {open && (
-        <ul className="cv-versions__list" role="listbox" aria-label="Versions">
+        <ul className="cv-versions__list" role="listbox" aria-label={labels.versionsList}>
           {versions
             .map((snapshot, i) => ({ snapshot, i }))
             .reverse()
@@ -445,11 +478,11 @@ function VersionHistory({
                   className={i === index ? "is-current" : undefined}
                   onClick={() => pick(i)}
                 >
-                  <span className="cv-versions__v">v{i + 1}</span>
+                  <span className="cv-versions__v">{labels.versionItem(i + 1)}</span>
                   <span className="cv-versions__desc">
                     {typeof snapshot.meta?.commitDescription === "string"
                       ? snapshot.meta.commitDescription
-                      : "Snapshot"}
+                      : labels.snapshot}
                   </span>
                 </button>
               </li>
@@ -461,7 +494,8 @@ function VersionHistory({
 }
 
 function StatusBadge({ status }: { status: Artifact["status"] }) {
-  const label = status === "streaming" ? "Writing…" : status === "error" ? "Error" : "Ready";
+  const labels = useLabels();
+  const label = status === "streaming" ? labels.statusWriting : status === "error" ? labels.statusError : labels.statusReady;
   return <span className={`cv-badge cv-badge--${status}`}>{label}</span>;
 }
 
@@ -474,14 +508,15 @@ function EmptyState({
   acceptAll?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const labels = useLabels();
   return (
     <div className="cv-empty">
-      <p className="cv-empty__title">Nothing on the canvas yet</p>
-      <p className="cv-empty__hint">Ask for a report or a chart — or open a file to edit it here.</p>
+      <p className="cv-empty__title">{labels.emptyTitle}</p>
+      <p className="cv-empty__hint">{labels.emptyHint}</p>
       {onOpenFiles && (
         <>
           <button className="cv-empty__open" onClick={() => inputRef.current?.click()}>
-            Open file
+            {labels.emptyOpen}
           </button>
           <input
             ref={inputRef}
@@ -495,7 +530,7 @@ function EmptyState({
             }}
           />
           <p className="cv-empty__formats">
-            {acceptAll ? "Any file — tables and pages open here, the rest goes to the agent" : "CSV · Excel · Markdown · HTML · JSON"}
+            {acceptAll ? labels.emptyFormatsAny : labels.emptyFormats}
           </p>
         </>
       )}

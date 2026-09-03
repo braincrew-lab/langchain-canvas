@@ -22,6 +22,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { ChartData, ChartSeries } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import type { RendererProps } from "../../registry/registry";
+import { useLabels, type CanvasLabels } from "../chrome";
 
 echarts.use([BarChart, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
@@ -55,6 +56,7 @@ function EChart({ option, height, onInst }: { option: Record<string, unknown>; h
 }
 
 export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
+  const labels = useLabels();
   const { chart, rows, xKey, series, options, echartsOption } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [editing, setEditing] = useState(false);
@@ -80,7 +82,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
       <div className="cv-chart">
         <div className="cv-chart__toolbar cv-chrome">
           <span className="cv-chart__spacer" />
-          <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
+          <button className="cv-edit-btn" onClick={downloadPng} title={labels.downloadPngTitle}>{labels.downloadPng}</button>
         </div>
         <EChart option={option} height={320} onInst={(i) => (instRef.current = i)} />
       </div>
@@ -88,7 +90,7 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
   }
 
   if (rows.length === 0) {
-    return <div className="cv-chart cv-chart--empty">Waiting for data…</div>;
+    return <div className="cv-chart cv-chart--empty">{labels.chartWaiting}</div>;
   }
 
   const isPie = chart === "pie";
@@ -122,20 +124,20 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
         {(chart === "bar" || chart === "area") && (
           <label className="cv-chart__stack">
             <input type="checkbox" checked={!!options?.stacked} onChange={(e) => patch({ options: { ...options, stacked: e.target.checked } })} />
-            Stacked
+            {labels.stacked}
           </label>
         )}
         <input
           className="cv-chart__title-input"
           value={options?.title ?? ""}
-          placeholder="Chart title…"
+          placeholder={labels.chartTitlePlaceholder}
           onChange={(e) => patch({ options: { ...options, title: e.target.value || undefined } })}
-          title="Chart title"
+          title={labels.chartTitle}
         />
         <span className="cv-chart__spacer" />
-        <button className="cv-edit-btn" onClick={downloadPng} title="Download as PNG">⤓ PNG</button>
+        <button className="cv-edit-btn" onClick={downloadPng} title={labels.downloadPngTitle}>{labels.downloadPng}</button>
         <button className={`cv-edit-btn ${editing ? "is-primary" : ""}`} onClick={() => setEditing((v) => !v)}>
-          {editing ? "Done" : "Edit data"}
+          {editing ? labels.done : labels.editData}
         </button>
       </div>
 
@@ -145,18 +147,18 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
             {isPie
               ? rows.map((r, i) => (
                   <span key={i} className="cv-chart__swatch">
-                    <input type="color" value={sliceColor(options, i)} onChange={(e) => setSliceColor(i, e.target.value)} title={`Color: ${r[xKey]}`} />
+                    <input type="color" value={sliceColor(options, i)} onChange={(e) => setSliceColor(i, e.target.value)} title={labels.sliceColor(String(r[xKey]))} />
                     <span className="cv-chart__swatch-label">{String(r[xKey])}</span>
                   </span>
                 ))
               : series.map((s, i) => (
                   <span key={s.key} className="cv-chart__swatch">
-                    <input type="color" value={seriesColor(s, i)} onChange={(e) => setSeries(i, { color: e.target.value })} title="Series color" />
+                    <input type="color" value={seriesColor(s, i)} onChange={(e) => setSeries(i, { color: e.target.value })} title={labels.seriesColor} />
                     <input
                       className="cv-chart__series-name"
                       value={s.label ?? s.key}
                       onChange={(e) => setSeries(i, { label: e.target.value })}
-                      title="Series name"
+                      title={labels.seriesName}
                     />
                   </span>
                 ))}
@@ -164,12 +166,12 @@ export function ChartRenderer({ artifact }: RendererProps<ChartData>) {
 
           {!isPie && (
             <label className="cv-chart__ylabel">
-              Y-axis
-              <input value={options?.yLabel ?? ""} placeholder="label…" onChange={(e) => patch({ options: { ...options, yLabel: e.target.value } })} />
+              {labels.yAxis}
+              <input value={options?.yLabel ?? ""} placeholder={labels.axisLabelPlaceholder} onChange={(e) => patch({ options: { ...options, yLabel: e.target.value } })} />
             </label>
           )}
 
-          <DataGrid rows={rows} xKey={xKey} series={series} onCell={setCell} onAddRow={addRow} onRemoveRow={removeRow} />
+          <DataGrid rows={rows} xKey={xKey} series={series} onCell={setCell} onAddRow={addRow} onRemoveRow={removeRow} labels={labels} />
         </div>
       )}
 
@@ -186,7 +188,9 @@ function DataGrid({
   onCell,
   onAddRow,
   onRemoveRow,
+  labels,
 }: {
+  labels: CanvasLabels;
   rows: ChartData["rows"];
   xKey: string;
   series: ChartSeries[];
@@ -203,7 +207,7 @@ function DataGrid({
             {series.map((s) => (
               <th key={s.key}>{s.label ?? s.key}</th>
             ))}
-            <th aria-label="Remove" />
+            <th aria-label={labels.remove} />
           </tr>
         </thead>
         <tbody>
@@ -231,7 +235,7 @@ function DataGrid({
         </tbody>
       </table>
       <button className="cv-chart__addrow" onClick={onAddRow}>
-        + Add row
+        {labels.addChartRow}
       </button>
     </div>
   );

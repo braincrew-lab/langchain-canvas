@@ -13,6 +13,7 @@ import type { SlideElement } from "../../protocol/artifacts";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../../client/slideTable";
 import { boxHeightPct, textFitScale } from "../../client/slideText";
+import { useLabels } from "../chrome";
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
@@ -102,6 +103,7 @@ const MIN_COL = 5;
  *  its `cells`), the way the pptx exporter writes them. In the editor a cell
  *  edits on double-click and a column's right edge drags its width. */
 export function SlideTable({ el, scale = 1, editable = false, onChange, editingKey, onEditingKey }: SlideTableProps) {
+  const labels = useLabels();
   const grid = tableGrid(el);
   const tableRef = useRef<HTMLTableElement>(null);
   const editing = editable ? (editingKey ?? null) : null;
@@ -125,7 +127,7 @@ export function SlideTable({ el, scale = 1, editable = false, onChange, editingK
     observer.observe(table);
     return () => observer.disconnect();
   }, [editable, onChange, el.h]);
-  if (!grid) return <div className="cv-free__table-empty">table: no rows</div>;
+  if (!grid) return <div className="cv-free__table-empty">{labels.slideTableEmpty}</div>;
   const widths = live ?? grid.colWidths;
   const border = el.stroke ? `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px solid ${el.stroke}` : "none";
   const vAlign = el.verticalAlign === "middle" ? "middle" : el.verticalAlign === "bottom" ? "bottom" : "top";
@@ -253,7 +255,7 @@ export function SlideTable({ el, scale = 1, editable = false, onChange, editingK
           key={c}
           className="cv-free__colgrip"
           style={{ left: `calc(${left}% - 5px)` }}
-          title="Drag to resize the column"
+          title={labels.dragToResizeColumn}
           onPointerDown={(e) => onGripDown(e, c)}
         />
       ))}
@@ -319,6 +321,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
 }
 
 export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSlideProps) {
+  const labels = useLabels();
   const slideRef = useRef<HTMLDivElement>(null);
   // Display-only: a canvas-asset src resolves to a URL; stored elements keep
   // the relative reference (onChange never touches src).
@@ -528,7 +531,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
 
           {selected === el.id && (el.type === "text" || el.type === "table") && (
             <div className={`cv-free__fmt ${el.y < 16 ? "cv-free__fmt--below" : ""}`} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <button className={el.bold ? "is-on" : ""} onClick={() => updateEl(el.id, { bold: !el.bold })} title="Bold">
+              <button className={el.bold ? "is-on" : ""} onClick={() => updateEl(el.id, { bold: !el.bold })} title={labels.bold}>
                 <b>B</b>
               </button>
               <input
@@ -537,12 +540,12 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
                 max={120}
                 value={el.fontSize ?? 24}
                 onChange={(e) => updateEl(el.id, { fontSize: Number(e.target.value) })}
-                title="Font size"
+                title={labels.fontSize}
               />
-              <input type="color" value={el.color ?? "#1f2328"} onChange={(e) => updateEl(el.id, { color: e.target.value })} title="Text color" />
-              <button onClick={() => updateEl(el.id, { align: "left" })} title="Align left">⟸</button>
-              <button onClick={() => updateEl(el.id, { align: "center" })} title="Align center">≡</button>
-              <button onClick={() => updateEl(el.id, { align: "right" })} title="Align right">⟹</button>
+              <input type="color" value={el.color ?? "#1f2328"} onChange={(e) => updateEl(el.id, { color: e.target.value })} title={labels.textColor} />
+              <button onClick={() => updateEl(el.id, { align: "left" })} title={labels.alignLeft}>⟸</button>
+              <button onClick={() => updateEl(el.id, { align: "center" })} title={labels.alignCenter}>≡</button>
+              <button onClick={() => updateEl(el.id, { align: "right" })} title={labels.alignRight}>⟹</button>
             </div>
           )}
 
@@ -551,15 +554,15 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               <span className="cv-free__resize" onPointerDown={(e) => onDown(e, el, "resize")} />
               <div className={`cv-free__ctl ${el.y < 16 ? "cv-free__ctl--below" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
                 {el.type === "shape" && (
-                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title="Fill color" />
+                  <input className="cv-free__ctl-fill" type="color" value={el.fill ?? "#5b5bd6"} onChange={(e) => updateEl(el.id, { fill: e.target.value })} onClick={(e) => e.stopPropagation()} title={labels.fillColor} />
                 )}
                 {el.type === "table" && (
-                  <input className="cv-free__ctl-fill" type="color" value={el.stroke ?? "#9e9e9e"} onChange={(e) => updateEl(el.id, { stroke: e.target.value, strokeWidth: el.strokeWidth ?? 1 })} onClick={(e) => e.stopPropagation()} title="Grid line color" />
+                  <input className="cv-free__ctl-fill" type="color" value={el.stroke ?? "#9e9e9e"} onChange={(e) => updateEl(el.id, { stroke: e.target.value, strokeWidth: el.strokeWidth ?? 1 })} onClick={(e) => e.stopPropagation()} title={labels.gridLineColor} />
                 )}
-                <button onClick={(e) => { e.stopPropagation(); duplicate(el); }} title="Duplicate">⧉</button>
-                <button onClick={(e) => { e.stopPropagation(); zorder(el.id, 1); }} title="Bring forward">↑</button>
-                <button onClick={(e) => { e.stopPropagation(); zorder(el.id, -1); }} title="Send back">↓</button>
-                <button className="cv-free__ctl-del" onClick={(e) => { e.stopPropagation(); commit(els.filter((x) => x.id !== el.id)); }} title="Delete">×</button>
+                <button onClick={(e) => { e.stopPropagation(); duplicate(el); }} title={labels.duplicate}>⧉</button>
+                <button onClick={(e) => { e.stopPropagation(); zorder(el.id, 1); }} title={labels.bringForward}>↑</button>
+                <button onClick={(e) => { e.stopPropagation(); zorder(el.id, -1); }} title={labels.sendBack}>↓</button>
+                <button className="cv-free__ctl-del" onClick={(e) => { e.stopPropagation(); commit(els.filter((x) => x.id !== el.id)); }} title={labels.deleteElement}>×</button>
               </div>
             </>
           )}

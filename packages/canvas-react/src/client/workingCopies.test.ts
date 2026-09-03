@@ -20,3 +20,10 @@ describe("a source with a working copy has no tab of its own", () => {
     ]);
   });
 });
+
+describe("a source already named like a copy", () => {
+  it("hides behind a copy of the same name instead of a doubled marker", () => {
+    expect(workingCopyIds("sources/Editing - r.docx")).toEqual(["Editing - r.docx"]);
+    expect(visibleTabs(["sources/Editing - r.docx", "Editing - r.docx"])).toEqual(["Editing - r.docx"]);
+  });
+});

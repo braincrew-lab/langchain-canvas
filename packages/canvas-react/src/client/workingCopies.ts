@@ -21,7 +21,9 @@ export function workingCopyIds(sourceId: string): string[] {
   const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
   if (ext === "pptx") return [`${stem}.slides.json`];
   if (ext === "xlsx") return [`${stem}.table.json`];
-  if (ext === "docx") return [WORKING_COPY_MARKER + name];
+  // A source already carrying the marker (an exported copy uploaded again)
+  // gets its copy under the same name — the Python rule, not a doubled marker.
+  if (ext === "docx") return [name.startsWith(WORKING_COPY_MARKER) ? name : WORKING_COPY_MARKER + name];
   return [];
 }
 

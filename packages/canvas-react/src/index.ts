@@ -19,6 +19,8 @@ export * from "./protocol";
 
 // low-level client (reconciler + SSE parser) for headless integrations
 export * from "./client";
+// which store entries are tabs (an upload edited through a copy shows as the copy alone)
+export { visibleTabs, workingCopyIds, WORKING_COPY_MARKER, SOURCES_PREFIX } from "./client/workingCopies";
 export * from "./transports";
 
 // store + hooks
@@ -42,6 +44,8 @@ export type { ArtifactRegistry, ArtifactRenderer, RendererProps } from "./regist
 // components
 export { Canvas } from "./components/Canvas";
 export type { CanvasProps } from "./components/Canvas";
+export { DEFAULT_LABELS, DEFAULT_CHROME } from "./components/chrome";
+export type { CanvasLabels, CanvasChrome } from "./components/chrome";
 export { ExportMenu } from "./components/ExportMenu";
 export { SelectionBar } from "./components/SelectionBar";
 export { StylePanel } from "./components/StylePanel";
@@ -58,6 +62,8 @@ export {
 
 // export layer (artifact → file)
 export { downloadBlob, slugify } from "./export/download";
+export { buildExportActions } from "./export/actions";
+export type { ExportAction, ExportActionOptions } from "./export/actions";
 export { dataExporters, toStandaloneHtml, slidesToPrintHtml } from "./export/exporters";
 export type { FileExport } from "./export/exporters";
 export { printToPdf } from "./export/pdf";
