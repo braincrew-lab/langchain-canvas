@@ -13,13 +13,18 @@ export function downloadBlob(filename: string, mime: string, content: BlobPart):
   URL.revokeObjectURL(url);
 }
 
-/** Turn a title into a safe file stem: "Q1 Report!" -> "q1-report". */
+/**
+ * Turn a title into a safe file stem: "Q1 Report!" -> "q1-report",
+ * "매출 보고서 (초안)" -> "매출-보고서-초안". Letters and digits of any script
+ * survive; everything else (punctuation, path separators, whitespace) folds
+ * into single dashes.
+ */
 export function slugify(text: string): string {
   return (
     text
       .toLowerCase()
       .trim()
-      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
       .replace(/^-+|-+$/g, "") || "artifact"
   );
 }
