@@ -17,6 +17,7 @@ import type { RendererProps } from "../../registry/registry";
 import { boxHeightPct } from "../../client/slideText";
 import { FreeSlide, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
+import { useLabels } from "../chrome";
 
 /** Track a slide box's width and derive the display font scale for `page`.
  *  Re-measures on resize so the panel, present view, and window drags all
@@ -85,6 +86,7 @@ let elementSeq = 0;
 const newElementId = () => `el_${Date.now().toString(36)}_${elementSeq++}`;
 
 export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
+  const labels = useLabels();
   const slides = artifact.data.slides ?? [];
   const patch = useArtifactPatch(artifact.id);
   // Display-only resolution of canvas-asset image srcs (stored data stays relative).
@@ -118,7 +120,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
   }, [presenting]);
 
   if (slides.length === 0) {
-    return <div className="cv-deck cv-deck--empty">No slides yet…</div>;
+    return <div className="cv-deck cv-deck--empty">{labels.slidesEmpty}</div>;
   }
 
   const at = Math.min(index, slides.length - 1);
@@ -241,55 +243,55 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             </button>
           </div>
         ))}
-        <button className="cv-deck__addslide" onClick={addSlide}>+ Add slide</button>
+        <button className="cv-deck__addslide" onClick={addSlide}>{labels.addSlide}</button>
       </aside>
 
       <div className="cv-deck__main">
         <div className="cv-deck__toolbar cv-chrome">
-          <button onClick={addTextEl} title="Add text box">+ Text</button>
-          <button onClick={addTableEl} title="Add table">+ Table</button>
-          <button onClick={() => imgRef.current?.click()} title="Add image">+ Image</button>
+          <button onClick={addTextEl} title={labels.addTextTitle}>{labels.addText}</button>
+          <button onClick={addTableEl} title={labels.addTableTitle}>{labels.addTable}</button>
+          <button onClick={() => imgRef.current?.click()} title={labels.addImageTitle}>{labels.addImage}</button>
           <input ref={imgRef} type="file" accept="image/*" hidden onChange={(e) => addImageEl(e.target.files?.[0])} />
           <input ref={bgRef} type="file" accept="image/*" hidden onChange={(e) => setSlideBgImage(e.target.files?.[0])} />
-          <select className="cv-deck__theme" value="" title="Add a shape"
+          <select className="cv-deck__theme" value="" title={labels.addShapeTitle}
             onChange={(e) => { if (e.target.value) addShapeEl(e.target.value as NonNullable<SlideElement["shape"]>); e.currentTarget.value = ""; }}>
-            <option value="">+ Shape</option>
+            <option value="">{labels.addShape}</option>
             {SHAPES.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
           </select>
-          <select className="cv-deck__theme" value="" title="Apply a layout"
+          <select className="cv-deck__theme" value="" title={labels.layoutPickTitle}
             onChange={(e) => { if (e.target.value) applyLayout(e.target.value); e.currentTarget.value = ""; }}>
-            <option value="">Layout…</option>
+            <option value="">{labels.layoutPick}</option>
             {Object.entries(LAYOUTS).map(([k, v]) => (<option key={k} value={k}>{v.label}</option>))}
           </select>
           <select
             className="cv-deck__theme"
             value=""
-            title="Theme"
+            title={labels.theme}
             onChange={(e) => {
               const t = THEMES.find((x) => x.id === e.target.value);
               if (t) update({ background: t.bg, textColor: t.text });
               e.currentTarget.value = "";
             }}
           >
-            <option value="">Theme…</option>
+            <option value="">{labels.themePick}</option>
             {THEMES.map((t) => (
               <option key={t.id} value={t.id}>{t.label}</option>
             ))}
           </select>
-          <label className="cv-deck__bg" title="Background color">
+          <label className="cv-deck__bg" title={labels.backgroundColor}>
             <input type="color" value={/^#/.test(slide.background ?? "") ? slide.background : "#ffffff"} onChange={(e) => update({ background: e.target.value })} />
           </label>
-          <button onClick={() => bgRef.current?.click()} title="Background image">🖼 BG</button>
-          <label className="cv-deck__pad" title="Content padding (% of slide)">
-            Pad
+          <button onClick={() => bgRef.current?.click()} title={labels.backgroundImageTitle}>{labels.backgroundImage}</button>
+          <label className="cv-deck__pad" title={labels.paddingTitle}>
+            {labels.padding}
             <input type="number" min={0} max={20} value={slide.padding ?? 0} onChange={(e) => update({ padding: Number(e.target.value) || undefined })} />
           </label>
           <span className="cv-deck__spacer" />
-          <button className="cv-deck__present" onClick={() => setPresenting(true)} title="Present (full screen)">▶ Present</button>
-          <button onClick={() => moveSlide(-1)} title="Move up" disabled={at === 0}>▲</button>
-          <button onClick={() => moveSlide(1)} title="Move down" disabled={at === slides.length - 1}>▼</button>
-          <button onClick={duplicateSlide} title="Duplicate slide">⧉</button>
-          <button onClick={deleteSlide} title="Delete slide" disabled={slides.length === 1}>🗑</button>
+          <button className="cv-deck__present" onClick={() => setPresenting(true)} title={labels.presentTitle}>{labels.present}</button>
+          <button onClick={() => moveSlide(-1)} title={labels.moveUp} disabled={at === 0}>▲</button>
+          <button onClick={() => moveSlide(1)} title={labels.moveDown} disabled={at === slides.length - 1}>▼</button>
+          <button onClick={duplicateSlide} title={labels.duplicateSlide}>⧉</button>
+          <button onClick={deleteSlide} title={labels.deleteSlide} disabled={slides.length === 1}>🗑</button>
         </div>
 
         <div className="cv-slide cv-slide--blank" ref={editBox.ref} style={{ aspectRatio: aspect, ...slideStyle }}>
@@ -300,15 +302,15 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
         </div>
 
         <div className="cv-deck__nav cv-chrome">
-          <button disabled={at === 0} onClick={() => setIndex(at - 1)} aria-label="Previous slide">‹</button>
+          <button disabled={at === 0} onClick={() => setIndex(at - 1)} aria-label={labels.previousSlide}>‹</button>
           <span>{at + 1} / {slides.length}</span>
-          <button disabled={at === slides.length - 1} onClick={() => setIndex(at + 1)} aria-label="Next slide">›</button>
+          <button disabled={at === slides.length - 1} onClick={() => setIndex(at + 1)} aria-label={labels.nextSlide}>›</button>
         </div>
 
         <textarea
           className="cv-deck__notes cv-chrome"
           value={slide.notes ?? ""}
-          placeholder="Speaker notes…"
+          placeholder={labels.speakerNotes}
           onChange={(e) => update({ notes: e.target.value })}
         />
       </div>
