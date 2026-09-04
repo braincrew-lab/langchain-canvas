@@ -4,7 +4,7 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.29] — 2026-09-04
 
 ### Added
 - **The panel chrome is the host's to word and to trim.** `<Canvas labels>`
