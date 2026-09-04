@@ -94,7 +94,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
           <b>{name}</b>
           {chrome.fileFacts && facts && <span className="cv-file__facts">{facts}</span>}
         </span>
-        {href && (
+        {chrome.fileDownload && href && (
           <a className="cv-file__download" href={href} download={name}>
             {labels.download}
           </a>

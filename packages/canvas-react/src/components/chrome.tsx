@@ -415,6 +415,9 @@ export interface CanvasChrome {
   docxStatus: boolean;
   /** The "mime · size · detail" facts under a file card's name. */
   fileFacts: boolean;
+  /** The Download link on a file card — off when the host's own export
+   *  control is the one download door. */
+  fileDownload: boolean;
 }
 
 export const DEFAULT_CHROME: CanvasChrome = {
@@ -426,6 +429,7 @@ export const DEFAULT_CHROME: CanvasChrome = {
   docxBanner: true,
   docxStatus: true,
   fileFacts: true,
+  fileDownload: true,
 };
 
 const ChromeContext = createContext<{ labels: CanvasLabels; chrome: CanvasChrome }>({

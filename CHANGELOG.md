@@ -12,7 +12,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
   rest keep their defaults) and `<Canvas chrome>` leaves out pieces a host
   draws itself: the header, the status badge, undo/redo, the version rail,
   the Export menu, the Word-preview note and status line, a file card's
-  facts. Counted: 54 always-visible strings and 116 editor-toolbar strings
+  facts or its download link. Counted: 54 always-visible strings and 116 editor-toolbar strings
   now route through `labels`; catalog names (themes, templates, fonts) and
   default content stay in the renderers on purpose. Both props default to
   the package's own look, so nothing moves for a host that passes nothing.
