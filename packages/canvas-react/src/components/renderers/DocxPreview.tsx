@@ -40,6 +40,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useCanvasStore } from "../../hooks/useCanvasStore";
+import { useChrome, useLabels } from "../chrome";
 import {
   DOCX_ADDRESS_ATTRIBUTE,
   docxStats,
@@ -68,7 +69,6 @@ export interface DocxPreviewProps {
 
 type Status = "loading" | "ready" | "unavailable";
 
-const BANNER = "Preview only — to change it, ask in chat or select some text.";
 
 /** Which parts of the file hold body content, and so can hold shapes. */
 const CONTENT_PART = /^word\/(document|header\d*|footer\d*)\.xml$/;
@@ -95,6 +95,8 @@ export function DocxPreview({
   name,
   fallback,
 }: DocxPreviewProps) {
+  const labels = useLabels();
+  const chrome = useChrome();
   const hostRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [stats, setStats] = useState<DocxStats | null>(null);
@@ -206,9 +208,11 @@ export function DocxPreview({
 
   return (
     <div className="cv-docx">
-      <div className="cv-docx__banner" role="note">
-        {BANNER}
-      </div>
+      {chrome.docxBanner && (
+        <div className="cv-docx__banner" role="note">
+          {labels.docxBanner}
+        </div>
+      )}
       {status === "loading" && (
         <div className="cv-docx__loading">{fallback}</div>
       )}
@@ -216,38 +220,28 @@ export function DocxPreview({
         ref={hostRef}
         className="cv-docx__page"
         onMouseUp={onMouseUp}
-        aria-label={`${name} preview`}
+        aria-label={labels.previewOf(name)}
         hidden={status !== "ready"}
       />
-      {stats && (
-        <div
-          className="cv-docx__status"
-          title="The preview keeps the document's own page breaks; it does not repaginate, so it states no page number."
-        >
-          <span>{stats.words.toLocaleString()} words</span>
+      {chrome.docxStatus && stats && (
+        <div className="cv-docx__status" title={labels.docxNoPageNumbers}>
+          <span>{labels.docxWords(stats.words)}</span>
           {picked && (
-            <span className="cv-docx__picked">pointing at [{picked}]</span>
+            <span className="cv-docx__picked">{labels.docxPointingAt(picked)}</span>
           )}
           {stats.substitutedFonts.length > 0 && (
             <span className="cv-docx__fonts">
-              substituted: {stats.substitutedFonts.join(", ")}
+              {labels.docxSubstituted(stats.substitutedFonts.join(", "))}
             </span>
           )}
           {missingShapes > 0 && (
-            <span
-              className="cv-docx__missing"
-              title="This document draws shapes the preview cannot show. They are in the file — a download opens with them in place."
-            >
-              {missingShapes} shape{missingShapes === 1 ? "" : "s"} not shown —
-              download the file to see {missingShapes === 1 ? "it" : "them"}
+            <span className="cv-docx__missing" title={labels.docxShapesHiddenHint}>
+              {labels.docxShapesHidden(missingShapes)}
             </span>
           )}
           {redrawn.length > 0 && (
-            <span
-              className="cv-docx__redrawn"
-              title="This document writes its list bullets as characters in a symbol font's own private area, which no other font can draw. They are shown here as the standard characters that mean the same mark; the stored file is unchanged."
-            >
-              bullets redrawn: {redrawn.join(", ")}
+            <span className="cv-docx__redrawn" title={labels.docxBulletsRedrawnHint}>
+              {labels.docxBulletsRedrawn(redrawn.join(", "))}
             </span>
           )}
         </div>

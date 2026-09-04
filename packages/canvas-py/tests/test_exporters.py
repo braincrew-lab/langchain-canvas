@@ -931,6 +931,17 @@ def test_markdown_docx_registered_for_md_canvas_files():
     assert exporter is not None and exporter.target == "docx"
 
 
+def test_markdown_docx_filename_drops_the_md_suffix():
+    """A .md canvas file exports as `<stem>.docx`, never `<stem>.md.docx` —
+    the stem strips every canvas extension, markdown included."""
+    from langchain_canvas.exporters import MarkdownDocxExporter, _stem
+
+    assert _stem("report.md") == "report"
+    assert _stem("notes/보고서.markdown") == "보고서"
+    exported = MarkdownDocxExporter().export("# 제목\n\n본문", path="report.md")
+    assert exported.filename == "report.docx"
+
+
 def qn_docx(tag: str) -> str:
     from docx.oxml.ns import qn as _qn
 

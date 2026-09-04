@@ -13,6 +13,10 @@
   --cv-muted: #6b7280;
   --cv-accent: #6366f1;
   --cv-accent-weak: #eef2ff;
+  --cv-ok: #059669;
+  --cv-ok-weak: rgba(16, 185, 129, 0.12);
+  --cv-danger: #dc2626;
+  --cv-danger-weak: rgba(239, 68, 68, 0.12);
   --cv-radius: 12px;
   --cv-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --cv-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -132,8 +136,8 @@
   white-space: nowrap;
 }
 .cv-badge--streaming { color: var(--cv-accent); background: var(--cv-accent-weak); }
-.cv-badge--complete { color: #059669; background: rgba(16, 185, 129, 0.12); }
-.cv-badge--error { color: #dc2626; background: rgba(239, 68, 68, 0.12); }
+.cv-badge--complete { color: var(--cv-ok); background: var(--cv-ok-weak); }
+.cv-badge--error { color: var(--cv-danger); background: var(--cv-danger-weak); }
 
 .cv-undo { display: inline-flex; gap: 2px; }
 .cv-undo button {
@@ -695,7 +699,7 @@
 .cv-free__ctl--below { top: auto; bottom: -32px; }
 .cv-free__ctl button { width: 22px; height: 22px; border: none; border-radius: 5px; background: transparent; color: var(--cv-text); cursor: pointer; font-size: 12px; }
 .cv-free__ctl button:hover { background: var(--cv-surface); }
-.cv-free__ctl-del:hover { background: #fee2e2 !important; color: #dc2626; }
+.cv-free__ctl-del:hover { background: var(--cv-danger-weak) !important; color: var(--cv-danger); }
 .cv-free__fmt {
   position: absolute; top: -42px; left: 0; z-index: 5;
   display: flex; align-items: center; gap: 4px;
@@ -847,7 +851,7 @@
 .cv-chart__grid input { width: 100%; min-width: 72px; height: 28px; padding: 0 7px; border: 1px solid var(--cv-border); border-radius: 6px; background: var(--cv-bg); color: var(--cv-text); font: inherit; font-size: 13px; }
 .cv-chart__grid input[type="number"] { text-align: right; }
 .cv-chart__row-del { width: 26px; height: 26px; border: 1px solid var(--cv-border); border-radius: 6px; background: var(--cv-bg); color: var(--cv-muted); cursor: pointer; }
-.cv-chart__row-del:hover:not(:disabled) { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
+.cv-chart__row-del:hover:not(:disabled) { background: var(--cv-danger-weak); color: var(--cv-danger); border-color: var(--cv-danger-weak); }
 .cv-chart__row-del:disabled { opacity: 0.4; cursor: default; }
 .cv-chart__addrow { align-self: flex-start; margin-top: 4px; padding: 6px 12px; border: 1px dashed var(--cv-border); border-radius: 7px; background: transparent; color: var(--cv-muted); font-size: 13px; cursor: pointer; }
 .cv-chart__addrow:hover { border-color: var(--cv-accent); color: var(--cv-accent); }
@@ -938,7 +942,7 @@
   background: var(--cv-bg); color: var(--cv-text); cursor: pointer; font-size: 13px;
 }
 .cv-html-act:hover { background: var(--cv-surface); }
-.cv-html-act--del:hover { background: #fee2e2; color: #dc2626; border-color: #fecaca; }
+.cv-html-act--del:hover { background: var(--cv-danger-weak); color: var(--cv-danger); border-color: var(--cv-danger-weak); }
 .cv-html-bar__spacer { flex: 1; }
 
 /* ── Unified, polished toolbar controls ─────────────────────────────────────────

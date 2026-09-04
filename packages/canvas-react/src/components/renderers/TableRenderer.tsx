@@ -25,6 +25,7 @@ import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
 import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
+import { useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
 
 const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
@@ -142,6 +143,18 @@ function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: F
 }
 
 /** Columns from the union of row keys — a fallback when `columns` is omitted. */
+/**
+ * The key the mounted workbook lives under. It changes only when the data
+ * itself changes from outside (`dataKey`: agent writes, reloads) or a
+ * sort/filter view takes over. It deliberately does NOT depend on whether the
+ * artifact carries a `sheet` yet: the person's first edit of an agent-written
+ * table is what creates `sheet`, and re-keying on that remounted the grid
+ * under their hands — a sheet they had just added snapped back to Sheet1.
+ */
+export function workbookKey(dataKey: string, view: string): string {
+  return `${dataKey}:${view}`;
+}
+
 function deriveColumns(rows: TableData["rows"]): TableColumn[] {
   const keys = new Set<string>();
   for (let i = 0; i < Math.min(rows.length, 50); i++) Object.keys(rows[i] ?? {}).forEach((k) => keys.add(k));
@@ -151,6 +164,7 @@ function deriveColumns(rows: TableData["rows"]): TableColumn[] {
 const EMPTY_FORMULAS: FormulaValues = new Map();
 
 export function TableRenderer({ artifact }: RendererProps<TableData>) {
+  const labels = useLabels();
   // A table written by hand or by an agent may carry only `sheet`, or only
   // `rows`; neither absence is a reason to crash the tab.
   const rows = artifact.data.rows ?? [];
@@ -278,7 +292,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // rows (Fortune auto-serializes a `sheet` on mount, so we can't gate on that).
   // With no sort/filter, normal behavior — a rich sheet as-is, else the rows.
   const viewActive = !!appliedFilter.trim() || !!sortCol;
-  const wbKey = `${dataKey}:${viewActive ? `view-s${sortCol}${sortDir}-f${appliedFilter}` : hasSheet ? "sheet" : "rows"}`;
+  const wbKey = workbookKey(dataKey, viewActive ? `view-s${sortCol}${sortDir}-f${appliedFilter}` : "live");
 
   // The workbook's data is frozen at mount (keyed by wbKey). In-sheet edits are
   // owned by Fortune and mirrored back via onChange — they must NOT feed back into
@@ -344,53 +358,53 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   };
 
   if (!mounted) {
-    return <div className="cv-sheet cv-sheet--empty">Loading spreadsheet…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{labels.tableLoading}</div>;
   }
   if (!hasSheet && columns.length === 0) {
-    return <div className="cv-sheet cv-sheet--empty">Waiting for data…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{labels.tableWaiting}</div>;
   }
   // Wait for formula pre-computation before mounting, so the workbook mounts once
   // with final values — no remount that could interrupt an in-progress edit.
   // (Applies to sheet-backed tables too: the merge seeds cached results for
   // agent-written formula cells.)
   if (!formulasReady) {
-    return <div className="cv-sheet cv-sheet--empty">Calculating…</div>;
+    return <div className="cv-sheet cv-sheet--empty">{labels.tableCalculating}</div>;
   }
 
   return (
     <div className="cv-sheet-panel">
       <div className="cv-sheet-tools">
-        <button type="button" onClick={() => insert("column")}>＋ Column</button>
-        <button type="button" onClick={() => insert("row")}>＋ Row</button>
+        <button type="button" onClick={() => insert("column")}>{labels.addColumn}</button>
+        <button type="button" onClick={() => insert("row")}>{labels.addRow}</button>
         {columns.length > 0 && (
           <>
             <span className="cv-sheet-tools__sep" />
             <select
               className="cv-sheet-tools__sort"
               value={sortCol}
-              title="Sort by column"
+              title={labels.sortBy}
               onChange={(e) => setSortCol(e.target.value)}
             >
-              <option value="">Sort…</option>
+              <option value="">{labels.sortPick}</option>
               {columns.map((c) => (
                 <option key={c.key} value={c.key}>{c.label ?? c.key}</option>
               ))}
             </select>
             {sortCol && (
-              <button type="button" title={sortDir === 1 ? "Ascending" : "Descending"} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
+              <button type="button" title={sortDir === 1 ? labels.ascending : labels.descending} onClick={() => setSortDir((d) => (d === 1 ? -1 : 1))}>
                 {sortDir === 1 ? "▲" : "▼"}
               </button>
             )}
             <input
               className="cv-sheet-tools__filter"
               value={filter}
-              placeholder="Filter…"
+              placeholder={labels.filterPlaceholder}
               onChange={(e) => setFilter(e.target.value)}
-              title="Filter rows"
+              title={labels.filterRows}
             />
           </>
         )}
-        <span className="cv-sheet-tools__hint">Right-click a header for more, or drag to edit</span>
+        <span className="cv-sheet-tools__hint">{labels.tableHint}</span>
       </div>
       <div
         className="cv-sheet"
@@ -402,7 +416,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
           interactedRef.current = true;
         }}
       >
-        <Suspense fallback={<div className="cv-sheet--empty">Loading…</div>}>
+        <Suspense fallback={<div className="cv-sheet--empty">{labels.loading}</div>}>
           <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
         </Suspense>
       </div>

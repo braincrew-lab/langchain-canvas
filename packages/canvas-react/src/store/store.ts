@@ -103,6 +103,11 @@ export interface CanvasStore {
    *  stay unresolved, everything else behaves as before). */
   assetBaseUrl: string | null;
 
+  /** The shown artifact's rendered body HTML (editor chrome stripped), for a
+   *  host-drawn export control — `<Canvas>` registers it while an artifact is
+   *  on screen. Null = nothing on screen. */
+  renderedHtml: (() => string | null) | null;
+
   // actions
   applyEvent: (event: StreamEvent) => void;
   /** Apply a batch of events in a single store write (one re-render per frame). */
@@ -128,6 +133,7 @@ export interface CanvasStore {
   /** Register (or clear) the user-edit write-back handler. */
   setOnUserEdit: (handler: UserEditHandler | null) => void;
   setAssetBaseUrl: (url: string | null) => void;
+  setRenderedHtml: (getter: (() => string | null) | null) => void;
   reset: () => void;
 }
 
@@ -146,6 +152,7 @@ const initialState = () => ({
   saveFlusher: null as (() => Promise<void>) | null,
   onUserEdit: null as UserEditHandler | null,
   assetBaseUrl: null as string | null,
+  renderedHtml: null as (() => string | null) | null,
 });
 
 /** Create an isolated canvas store. */
@@ -271,6 +278,7 @@ function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, ge
 
     setOnUserEdit: (handler) => set({ onUserEdit: handler }),
     setAssetBaseUrl: (url) => set({ assetBaseUrl: url }),
+    setRenderedHtml: (getter) => set({ renderedHtml: getter }),
 
     // Host configuration (the asset endpoint) survives a session reset.
     reset: () => set({ ...initialState(), assetBaseUrl: get().assetBaseUrl }),

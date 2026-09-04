@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { ElementSelection } from "../protocol/selection";
 import { useCanvasStore } from "../hooks/useCanvasStore";
+import { useLabels } from "./chrome";
 
 const WEIGHTS = ["400", "500", "600", "700"];
 const ALIGNMENTS = ["left", "center", "right", "justify"];
@@ -24,6 +25,7 @@ const GRADIENTS = [
 ];
 
 export function StylePanel({ selection }: { selection: ElementSelection }) {
+  const labels = useLabels();
   const send = useCanvasStore((s) => s.sendIframeCommand);
   const setSelections = useCanvasStore((s) => s.setSelections);
   const styles = selection.styles ?? {};
@@ -72,7 +74,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       <div className="cv-style__title">Style</div>
 
       <label className="cv-style__row">
-        <span>Text</span>
+        <span>{labels.styleText}</span>
         <input
           type="color"
           value={color}
@@ -84,7 +86,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       </label>
 
       <label className="cv-style__row">
-        <span>Background</span>
+        <span>{labels.styleBackground}</span>
         <input
           type="color"
           value={background}
@@ -96,7 +98,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       </label>
 
       <label className="cv-style__row">
-        <span>Size</span>
+        <span>{labels.styleSize}</span>
         <input
           type="number"
           min={8}
@@ -111,7 +113,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       </label>
 
       <label className="cv-style__row">
-        <span>Weight</span>
+        <span>{labels.styleWeight}</span>
         <select
           value={fontWeight}
           onChange={(e) => {
@@ -128,7 +130,7 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       </label>
 
       <label className="cv-style__row">
-        <span>Align</span>
+        <span>{labels.styleAlign}</span>
         <select
           value={textAlign}
           onChange={(e) => {
@@ -145,45 +147,45 @@ export function StylePanel({ selection }: { selection: ElementSelection }) {
       </label>
 
       <label className="cv-style__row">
-        <span>Line height</span>
+        <span>{labels.styleLineHeight}</span>
         <input type="number" min={0} max={4} step={0.1} value={lineHeight}
           onChange={(e) => { const n = Number(e.target.value); setLineHeight(n); setStyle("lineHeight", n ? `${n}` : "normal"); }} />
       </label>
 
       <label className="cv-style__row">
-        <span>Letter spacing</span>
+        <span>{labels.styleLetterSpacing}</span>
         <input type="number" min={-5} max={20} step={0.5} value={letterSpacing}
           onChange={(e) => { const n = Number(e.target.value); setLetterSpacing(n); setStyle("letterSpacing", `${n}px`); }} />
       </label>
 
       <label className="cv-style__row">
-        <span>Padding</span>
+        <span>{labels.stylePadding}</span>
         <input type="number" min={0} max={120} value={padding}
           onChange={(e) => { const n = Number(e.target.value); setPadding(n); setStyle("padding", `${n}px`); }} />
       </label>
 
       <label className="cv-style__row">
-        <span>Radius</span>
+        <span>{labels.styleRadius}</span>
         <input type="number" min={0} max={80} value={radius}
           onChange={(e) => { const n = Number(e.target.value); setRadius(n); setStyle("borderRadius", `${n}px`); }} />
       </label>
 
       <label className="cv-style__row">
-        <span>Width</span>
+        <span>{labels.styleWidth}</span>
         <input type="number" min={0} max={2000} value={width}
           onChange={(e) => { const n = Number(e.target.value); setWidth(n); setStyle("width", n ? `${n}px` : "auto"); }} />
       </label>
 
       <div className="cv-style__bg">
-        <span>Background</span>
+        <span>{labels.styleBackground}</span>
         <div className="cv-style__grads">
           {GRADIENTS.map((g) => (
-            <button key={g} type="button" className="cv-style__grad" style={{ backgroundImage: g }} title="Gradient" onClick={() => setBg(g)} />
+            <button key={g} type="button" className="cv-style__grad" style={{ backgroundImage: g }} title={labels.styleGradient} onClick={() => setBg(g)} />
           ))}
-          <button type="button" className="cv-style__grad cv-style__grad--img" title="Background image" onClick={() => bgFileRef.current?.click()}>
+          <button type="button" className="cv-style__grad cv-style__grad--img" title={labels.backgroundImageTitle} onClick={() => bgFileRef.current?.click()}>
             🖼
           </button>
-          <button type="button" className="cv-style__grad cv-style__grad--none" title="Solid color (clear image)" onClick={() => { setBackground(background); setBg(background); }}>
+          <button type="button" className="cv-style__grad cv-style__grad--none" title={labels.styleSolidColor} onClick={() => { setBackground(background); setBg(background); }}>
             ⌀
           </button>
         </div>

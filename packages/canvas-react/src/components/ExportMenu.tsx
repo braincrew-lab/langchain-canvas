@@ -5,19 +5,16 @@
  * `.html` file) plus any data exporters registered for the artifact's type
  * (`.md`, `.csv`, `.json`, …). The rendered HTML is read lazily from the panel
  * body via `getRenderedHtml`, so the export always matches exactly what's shown.
+ * The entries themselves come from `buildExportActions`, which a host can call
+ * to draw the same menu in its own chrome.
  */
 
 import { useState } from "react";
 
-import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
-import { downloadBlob, slugify } from "../export/download";
-import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml, type FileExport } from "../export/exporters";
-import { printToPdf } from "../export/pdf";
-import { inlineArtifactAssets, inlineHtmlAssets } from "../io/canvasAssets";
+import type { Artifact } from "../protocol/artifacts";
+import { buildExportActions } from "../export/actions";
 import { useCanvasStore } from "../hooks/useCanvasStore";
-
-/** Types whose rendered DOM (or slide model) prints faithfully to PDF. */
-const PDF_TYPES = new Set(["html", "document", "chart", "slides"]);
+import { useLabels } from "./chrome";
 
 /** One host-supplied entry appended to the menu (a server-side export, say). */
 export interface ExportExtra {
@@ -37,85 +34,10 @@ interface ExportMenuProps {
 
 export function ExportMenu({ artifact, getRenderedHtml, extras }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
-  const stem = slugify(artifact.title);
-  const dataOptions = dataExporters[artifact.type] ?? [];
-  const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
-
-  // Every export path leaves through these two: canvas-asset references become
-  // data: URIs so the exported file is self-contained. Without an asset
-  // endpoint both are identity.
-  const prepare = () => inlineArtifactAssets(artifact, assetBaseUrl);
-  const prepareHtml = (html: string) =>
-    assetBaseUrl ? inlineHtmlAssets(html, assetBaseUrl) : Promise.resolve(html);
-
-  const exportHtml = async () => {
-    if (artifact.type === "html") {
-      // The artifact *is* a full HTML document — export the real source, not the
-      // iframe wrapper (capturing the rendered DOM would yield an empty <iframe>).
-      // A fixed-aspect slide gets slide sizing + an @page rule so the downloaded
-      // file both displays the slide correctly and prints to a slide-sized page.
-      const ratio = artifact.meta?.ratio as string | undefined;
-      const html = ((await prepare()).data as HtmlData).html;
-      downloadBlob(`${stem}.html`, "text/html", ratio ? htmlSlideToPrintHtml(html, ratio) : html);
-    } else {
-      const html = getRenderedHtml();
-      if (html == null) return;
-      downloadBlob(`${stem}.html`, "text/html", toStandaloneHtml(artifact.title, await prepareHtml(html)));
-    }
-    setOpen(false);
-  };
-
-  const exportData = async (option: FileExport) => {
-    const content = await option.build(await prepare());
-    downloadBlob(`${stem}.${option.extension}`, option.mime, content);
-    setOpen(false);
-  };
-
-  const exportPdf = async () => {
-    if (artifact.type === "slides") {
-      printToPdf(slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title));
-    } else if (artifact.type === "html") {
-      const ratio = artifact.meta?.ratio as string | undefined;
-      const html = ((await prepare()).data as HtmlData).html;
-      // A fixed-aspect slide prints to a slide-sized landscape page (no A4 clip);
-      // a fluid web page prints as-is.
-      printToPdf(ratio ? htmlSlideToPrintHtml(html, ratio) : html);
-    } else {
-      const html = getRenderedHtml();
-      if (html == null) return;
-      printToPdf(toStandaloneHtml(artifact.title, await prepareHtml(html)));
-    }
-    setOpen(false);
-  };
-
-  const openInTab = async () => {
-    const html =
-      artifact.type === "html"
-        ? (((await prepare()).data as HtmlData).html)
-        : artifact.type === "slides"
-          ? slidesToPrintHtml((await prepare()).data as SlidesData, artifact.title)
-          : await (async () => { const h = getRenderedHtml(); return h == null ? null : toStandaloneHtml(artifact.title, await prepareHtml(h)); })();
-    if (html == null) return;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-    window.open(url, "_blank", "noopener");
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    setOpen(false);
-  };
-
   const [copied, setCopied] = useState(false);
-  const copyHtml = async () => {
-    const html = artifact.type === "html" ? ((await prepare()).data as HtmlData).html : getRenderedHtml();
-    if (html == null) return;
-    try {
-      await navigator.clipboard.writeText(
-        artifact.type === "html" ? html : toStandaloneHtml(artifact.title, await prepareHtml(html)),
-      );
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      /* clipboard blocked — no-op */
-    }
-  };
+  const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
+  const labels = useLabels();
+  const actions = buildExportActions(artifact, { getRenderedHtml, assetBaseUrl, labels });
 
   return (
     <div className="cv-export">
@@ -125,32 +47,41 @@ export function ExportMenu({ artifact, getRenderedHtml, extras }: ExportMenuProp
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        Export ▾
+        {labels.exportMenu}
       </button>
 
       {open && (
         <>
           <div className="cv-export__scrim" onClick={() => setOpen(false)} />
           <div className="cv-export__menu" role="menu">
-            <button role="menuitem" onClick={openInTab}>
-              Open in new tab ↗
-            </button>
-            <button role="menuitem" onClick={copyHtml}>
-              {copied ? "Copied ✓" : "Copy HTML"}
-            </button>
-            <button role="menuitem" onClick={exportHtml}>
-              HTML <span className="cv-export__ext">.html</span>
-            </button>
-            {PDF_TYPES.has(artifact.type) && (
-              <button role="menuitem" onClick={exportPdf}>
-                PDF <span className="cv-export__ext">.pdf</span>
-              </button>
+            {actions.map((action) =>
+              action.id === "copy" ? (
+                // Copy stays open with a short "Copied" flash instead of closing.
+                <button
+                  key={action.id}
+                  role="menuitem"
+                  onClick={async () => {
+                    await action.run();
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1400);
+                  }}
+                >
+                  {copied ? labels.exportCopied : action.label}
+                </button>
+              ) : (
+                <button
+                  key={action.id}
+                  role="menuitem"
+                  onClick={async () => {
+                    await action.run();
+                    setOpen(false);
+                  }}
+                >
+                  {action.label}
+                  {action.extension && <span className="cv-export__ext">.{action.extension}</span>}
+                </button>
+              ),
             )}
-            {dataOptions.map((option) => (
-              <button key={option.extension} role="menuitem" onClick={() => exportData(option)}>
-                {option.label} <span className="cv-export__ext">.{option.extension}</span>
-              </button>
-            ))}
             {(extras ?? []).map((extra) => (
               <button
                 key={`extra-${extra.label}`}

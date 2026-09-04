@@ -83,7 +83,7 @@ def exporter_for(path: str, target: str, exporters: list[Exporter]) -> Exporter 
 def _stem(path: str) -> str:
     """The output filename stem for a canvas path (or directory prefix)."""
     name = path.rstrip("/").rsplit("/", 1)[-1]
-    for suffix in (".table.json", ".slides.json", ".html", ".htm"):
+    for suffix in (".table.json", ".slides.json", ".html", ".htm", ".md", ".markdown"):
         if name.lower().endswith(suffix):
             name = name[: -len(suffix)]
             break

@@ -4,6 +4,42 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.29] — 2026-09-04
+
+### Added
+- **The panel chrome is the host's to word and to trim.** `<Canvas labels>`
+  overrides any user-facing string the package renders (a partial map — the
+  rest keep their defaults) and `<Canvas chrome>` leaves out pieces a host
+  draws itself: the header, the status badge, undo/redo, the version rail,
+  the Export menu, the Word-preview note and status line, a file card's
+  facts or its download link. Counted: 54 always-visible strings and 116 editor-toolbar strings
+  now route through `labels`; catalog names (themes, templates, fonts) and
+  default content stay in the renderers on purpose. Both props default to
+  the package's own look, so nothing moves for a host that passes nothing.
+- **`buildExportActions`** lists the client-side exports for an artifact as
+  data (label, extension, run), the same list `<ExportMenu />` draws — a host
+  drawing its own export control gets identical files. The store publishes
+  `renderedHtml`, the panel body's markup with editor chrome stripped, while
+  an artifact is on screen.
+- **`visibleTabs`, `workingCopyIds`, `WORKING_COPY_MARKER`, `SOURCES_PREFIX`**
+  are public: a host can count and list files by the same rule the tab bar
+  uses.
+- CSS tokens `--cv-ok`, `--cv-ok-weak`, `--cv-danger`, `--cv-danger-weak`
+  for the semantic colours the badge and delete affordances used to hardcode.
+
+### Fixed
+- **The person's first edit of an agent-written table no longer remounts the
+  grid.** The workbook re-keyed when the artifact gained a `sheet` — which is
+  exactly what the first hand edit creates — so a sheet someone had just
+  added snapped back to Sheet1 with a flicker. The key now changes only for
+  outside data changes and sort/filter views.
+- **A `.md` file exports as `<stem>.docx`, not `<stem>.md.docx`.** The
+  export stem now strips `.md`/`.markdown` like it strips the other canvas
+  extensions.
+- **A Korean title downloads under its own name.** `slugify` keeps letters
+  and digits of any script; only punctuation and whitespace fold into
+  dashes. `"매출 보고서"` used to download as `artifact.html`.
+
 ## [0.7.28] — 2026-09-01
 
 ### Fixed

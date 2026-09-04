@@ -14,6 +14,8 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 interface Props {
   /** Changing this (e.g. the artifact id/version) clears a previous error. */
   resetKey: string;
+  /** The fallback's title (default: the package's English line). */
+  label?: string;
   children: ReactNode;
 }
 
@@ -45,7 +47,7 @@ export class RendererBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div className="cv-renderer-error" role="alert">
-          <p className="cv-renderer-error__title">This artifact couldn’t be displayed</p>
+          <p className="cv-renderer-error__title">{this.props.label ?? "This artifact couldn’t be displayed"}</p>
           <p className="cv-renderer-error__detail">{this.state.error.message}</p>
         </div>
       );

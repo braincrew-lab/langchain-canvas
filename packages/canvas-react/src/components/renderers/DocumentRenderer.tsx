@@ -14,6 +14,7 @@ import type { DocumentData } from "../../protocol/artifacts";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
+import { useLabels } from "../chrome";
 
 function wordStats(text: string): { words: number; minutes: number } {
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -21,6 +22,7 @@ function wordStats(text: string): { words: number; minutes: number } {
 }
 
 export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
+  const labels = useLabels();
   const { content } = artifact.data;
   const patch = useArtifactPatch(artifact.id);
   const [draft, setDraft] = useState<string | null>(null);
@@ -70,19 +72,19 @@ export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
     <div className="cv-word">
       {editing && (
         <div className="cv-doc-bar cv-chrome" onMouseDown={(e) => e.preventDefault()}>
-          <button title="Bold" onMouseDown={(e) => { e.preventDefault(); wrap("**"); }}><b>B</b></button>
-          <button title="Italic" onMouseDown={(e) => { e.preventDefault(); wrap("*"); }}><i>I</i></button>
-          <button title="Inline code" onMouseDown={(e) => { e.preventDefault(); wrap("`"); }}>{"<>"}</button>
+          <button title={labels.bold} onMouseDown={(e) => { e.preventDefault(); wrap("**"); }}><b>B</b></button>
+          <button title={labels.italic} onMouseDown={(e) => { e.preventDefault(); wrap("*"); }}><i>I</i></button>
+          <button title={labels.inlineCode} onMouseDown={(e) => { e.preventDefault(); wrap("`"); }}>{"<>"}</button>
           <span className="cv-doc-bar__sep" />
-          <button title="Heading 1" onMouseDown={(e) => { e.preventDefault(); prefixLines("# "); }}>H1</button>
-          <button title="Heading 2" onMouseDown={(e) => { e.preventDefault(); prefixLines("## "); }}>H2</button>
-          <button title="Bullet list" onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>•</button>
-          <button title="Numbered list" onMouseDown={(e) => { e.preventDefault(); prefixLines("1. "); }}>1.</button>
-          <button title="Quote" onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
-          <button title="Link" onMouseDown={(e) => { e.preventDefault(); link(); }}>🔗</button>
+          <button title={labels.heading1} onMouseDown={(e) => { e.preventDefault(); prefixLines("# "); }}>H1</button>
+          <button title={labels.heading2} onMouseDown={(e) => { e.preventDefault(); prefixLines("## "); }}>H2</button>
+          <button title={labels.bulletList} onMouseDown={(e) => { e.preventDefault(); prefixLines("- "); }}>•</button>
+          <button title={labels.numberedList} onMouseDown={(e) => { e.preventDefault(); prefixLines("1. "); }}>1.</button>
+          <button title={labels.quote} onMouseDown={(e) => { e.preventDefault(); prefixLines("> "); }}>❝</button>
+          <button title={labels.link} onMouseDown={(e) => { e.preventDefault(); link(); }}>🔗</button>
           <span className="cv-doc-bar__spacer" />
-          <span className="cv-doc-bar__count">{words} words · {minutes} min read</span>
-          <button className="cv-doc-bar__done" onMouseDown={(e) => { e.preventDefault(); commit(); }}>Done</button>
+          <span className="cv-doc-bar__count">{labels.readingTime(words, minutes)}</span>
+          <button className="cv-doc-bar__done" onMouseDown={(e) => { e.preventDefault(); commit(); }}>{labels.done}</button>
         </div>
       )}
       <div className="cv-word__page">
@@ -98,7 +100,7 @@ export function DocumentRenderer({ artifact }: RendererProps<DocumentData>) {
         ) : (
           <article
             className="cv-doc"
-            title="Click to edit"
+            title={labels.clickToEdit}
             onClick={() => artifact.status !== "streaming" && setDraft(content)}
           >
             <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform}>{content}</ReactMarkdown>

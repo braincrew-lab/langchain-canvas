@@ -19,6 +19,7 @@ import { Suspense, lazy } from "react";
 import type { FileData } from "../../protocol/artifacts";
 import { resolveCanvasFileUrl } from "../../io/canvasAssets";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
+import { useChrome, useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
 
 /** Human-readable byte size ("3.7 KB", "1.2 MB"). */
@@ -46,6 +47,8 @@ function iconFor(mediaType: string | undefined, name: string): string {
 export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const { path, name, mediaType, size, cover, excerpt, detail } = artifact.data;
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
+  const labels = useLabels();
+  const chrome = useChrome();
   // Without an asset endpoint the card still states the file's facts —
   // only the live image, the preview and the download link need the URL.
   const href = assetBaseUrl && path ? resolveCanvasFileUrl(path, assetBaseUrl) : null;
@@ -63,7 +66,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
       <img
         className="cv-file__cover"
         src={cover}
-        alt={`${name} — first page`}
+        alt={labels.firstPage(name)}
       />
     ) : excerpt ? (
       <pre className="cv-file__excerpt">{excerpt}</pre>
@@ -89,11 +92,11 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
         </span>
         <span className="cv-file__meta">
           <b>{name}</b>
-          {facts && <span className="cv-file__facts">{facts}</span>}
+          {chrome.fileFacts && facts && <span className="cv-file__facts">{facts}</span>}
         </span>
-        {href && (
+        {chrome.fileDownload && href && (
           <a className="cv-file__download" href={href} download={name}>
-            Download
+            {labels.download}
           </a>
         )}
       </div>
