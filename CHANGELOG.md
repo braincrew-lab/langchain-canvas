@@ -28,6 +28,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
   for the semantic colours the badge and delete affordances used to hardcode.
 
 ### Fixed
+- **The person's first edit of an agent-written table no longer remounts the
+  grid.** The workbook re-keyed when the artifact gained a `sheet` — which is
+  exactly what the first hand edit creates — so a sheet someone had just
+  added snapped back to Sheet1 with a flicker. The key now changes only for
+  outside data changes and sort/filter views.
 - **A `.md` file exports as `<stem>.docx`, not `<stem>.md.docx`.** The
   export stem now strips `.md`/`.markdown` like it strips the other canvas
   extensions.
