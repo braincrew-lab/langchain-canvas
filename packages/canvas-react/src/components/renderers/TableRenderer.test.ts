@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { normalizeSheets, sheetHasContent } from "./TableRenderer";
+import { normalizeSheets, sheetHasContent, workbookKey } from "./TableRenderer";
 
 describe("sheetHasContent", () => {
   it("is false for missing or empty sheet arrays", () => {
@@ -53,5 +53,17 @@ describe("normalizeSheets", () => {
     ])!;
     expect(sheets[0].celldata).toEqual([{ r: 0, c: 0, v: { v: "x" } }]);
     expect(sheets[0].luckysheet_select_save).toBeUndefined();
+  });
+});
+
+describe("workbookKey", () => {
+  it("re-keys only for outside data changes and sort/filter views — never for the sheet appearing", () => {
+    // The person's first edit turns a rows-only table into one with a `sheet`;
+    // the grid must keep its mount (and the sheet they are on).
+    expect(workbookKey("t:v1:r0:3x3:abc", "live")).toBe(workbookKey("t:v1:r0:3x3:abc", "live"));
+    // An agent write bumps remoteSeq inside dataKey.
+    expect(workbookKey("t:v1:r1:3x3:abc", "live")).not.toBe(workbookKey("t:v1:r0:3x3:abc", "live"));
+    // A sort/filter view is its own mount.
+    expect(workbookKey("t:v1:r0:3x3:abc", "view-sname1-f")).not.toBe(workbookKey("t:v1:r0:3x3:abc", "live"));
   });
 });

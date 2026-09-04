@@ -143,6 +143,18 @@ function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: F
 }
 
 /** Columns from the union of row keys — a fallback when `columns` is omitted. */
+/**
+ * The key the mounted workbook lives under. It changes only when the data
+ * itself changes from outside (`dataKey`: agent writes, reloads) or a
+ * sort/filter view takes over. It deliberately does NOT depend on whether the
+ * artifact carries a `sheet` yet: the person's first edit of an agent-written
+ * table is what creates `sheet`, and re-keying on that remounted the grid
+ * under their hands — a sheet they had just added snapped back to Sheet1.
+ */
+export function workbookKey(dataKey: string, view: string): string {
+  return `${dataKey}:${view}`;
+}
+
 function deriveColumns(rows: TableData["rows"]): TableColumn[] {
   const keys = new Set<string>();
   for (let i = 0; i < Math.min(rows.length, 50); i++) Object.keys(rows[i] ?? {}).forEach((k) => keys.add(k));
@@ -280,7 +292,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   // rows (Fortune auto-serializes a `sheet` on mount, so we can't gate on that).
   // With no sort/filter, normal behavior — a rich sheet as-is, else the rows.
   const viewActive = !!appliedFilter.trim() || !!sortCol;
-  const wbKey = `${dataKey}:${viewActive ? `view-s${sortCol}${sortDir}-f${appliedFilter}` : hasSheet ? "sheet" : "rows"}`;
+  const wbKey = workbookKey(dataKey, viewActive ? `view-s${sortCol}${sortDir}-f${appliedFilter}` : "live");
 
   // The workbook's data is frozen at mount (keyed by wbKey). In-sheet edits are
   // owned by Fortune and mirrored back via onChange — they must NOT feed back into

@@ -12,7 +12,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
   rest keep their defaults) and `<Canvas chrome>` leaves out pieces a host
   draws itself: the header, the status badge, undo/redo, the version rail,
   the Export menu, the Word-preview note and status line, a file card's
-  facts. Counted: 54 always-visible strings and 116 editor-toolbar strings
+  facts or its download link. Counted: 54 always-visible strings and 116 editor-toolbar strings
   now route through `labels`; catalog names (themes, templates, fonts) and
   default content stay in the renderers on purpose. Both props default to
   the package's own look, so nothing moves for a host that passes nothing.
@@ -28,6 +28,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
   for the semantic colours the badge and delete affordances used to hardcode.
 
 ### Fixed
+- **The person's first edit of an agent-written table no longer remounts the
+  grid.** The workbook re-keyed when the artifact gained a `sheet` — which is
+  exactly what the first hand edit creates — so a sheet someone had just
+  added snapped back to Sheet1 with a flicker. The key now changes only for
+  outside data changes and sort/filter views.
 - **A `.md` file exports as `<stem>.docx`, not `<stem>.md.docx`.** The
   export stem now strips `.md`/`.markdown` like it strips the other canvas
   extensions.

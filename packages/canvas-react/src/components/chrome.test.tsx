@@ -9,11 +9,12 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Artifact } from "../protocol/artifacts";
+import type { Artifact, FileData } from "../protocol/artifacts";
 import { createCanvasStore } from "../store/store";
 import { CanvasProvider } from "../store/context";
 import { Canvas } from "./Canvas";
-import { DEFAULT_LABELS } from "./chrome";
+import { ChromeProvider, DEFAULT_LABELS } from "./chrome";
+import { FileRenderer } from "./renderers/FileRenderer";
 
 const doc: Artifact = {
   id: "report.md",
@@ -80,6 +81,29 @@ describe("Canvas labels + chrome", () => {
     expect(host!.querySelector(".cv-badge")).toBeNull();
     expect(host!.querySelector(".cv-export")).toBeNull();
     expect(host!.querySelector(".cv-undo")).toBeNull();
+  });
+
+  it("leaves out a file card's download link when the host has its own door", () => {
+    const upload: Artifact<FileData> = {
+      id: "sources/scan.pdf",
+      type: "file",
+      title: "scan.pdf",
+      version: 1,
+      status: "complete",
+      data: { path: "sources/scan.pdf", name: "scan.pdf", mediaType: "application/pdf", size: 12 },
+    };
+    const store = storeWith(upload);
+    store.getState().setAssetBaseUrl("http://host/file?path=");
+    // The built-in renderer is lazy inside <Canvas>; render it directly.
+    mount(
+      <CanvasProvider store={store}>
+        <ChromeProvider chrome={{ fileDownload: false }}>
+          <FileRenderer artifact={upload} />
+        </ChromeProvider>
+      </CanvasProvider>,
+    );
+    expect(host!.querySelector(".cv-file__card b")?.textContent).toBe("scan.pdf");
+    expect(host!.querySelector(".cv-file__download")).toBeNull();
   });
 
   it("drops the whole header when asked", () => {
