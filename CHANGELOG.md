@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.30] — 2026-09-04
+
+### Fixed
+
+- Markdown and HTML to Word: bold, italic and strikethrough inside table cells; `***bold italic***`, `~~strike~~` and inline code as runs; fenced code as a monospace block that keeps its indentation; block quotes; bullet and numbered lists nested to three levels; a line that ends in two spaces breaks the line. A thematic break (`---`, `<hr>`) is now a rule, not a page break. Measured on a user's sample where every one of these left the door as raw markdown.
+
 ## [0.7.29] — 2026-09-04
 
 ### Added
