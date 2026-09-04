@@ -970,7 +970,8 @@ def test_markdown_docx_keeps_inline_marks_in_cells_code_quotes_and_nesting():
     assert cell.text == "Bold" and cell.paragraphs[0].runs[0].bold  # no raw asterisks
     assert doc.tables[0].cell(1, 1).paragraphs[0].runs[0].font.strike
     code = next(p for p in doc.paragraphs if "def f():" in p.text)
-    assert "    return 1" in code.text and all(r.font.name == "Consolas" for r in code.runs if r.text.strip())
+    assert "    return 1" in code.text
+    assert all(r.font.name == "Consolas" for r in code.runs if r.text.strip())
     assert "**" not in xml and "~~" not in xml and "`" not in xml
 
 
