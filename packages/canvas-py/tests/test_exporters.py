@@ -198,7 +198,7 @@ def test_html_docx_export_structure():
     assert table.cell(1, 1).text == "read"
 
     assert len(document.inline_shapes) == 1  # the data: URI image
-    assert 'type="page"' in document.element.xml  # hr became a page break
+    assert "<w:pBdr>" in document.element.xml  # hr became a rule, not a new page
 
 
 def test_html_docx_title_names_the_file():
@@ -732,7 +732,7 @@ def test_export_tool_merges_a_directory_in_name_order():
     document = Document(io.BytesIO(store.read_bytes("t1", "exports/report.docx").data))
     texts = [p.text for p in document.paragraphs if p.text.strip()]
     assert texts.index("First") < texts.index("Second")
-    assert 'type="page"' in document.element.xml  # sections split by page break
+    assert "<w:pBdr>" in document.element.xml  # sections split by a rule
 
 
 def test_export_tool_is_honest_about_misses():
@@ -920,8 +920,59 @@ def test_markdown_docx_keeps_headings_lists_tables_and_breaks():
     assert any(r.bold for r in body.runs) and any(r.italic for r in body.runs)
     assert len(doc.tables) == 1 and doc.tables[0].rows[0].cells[0].text == "단계"
     assert any("uv run python -m app" == p.text for p in doc.paragraphs)
-    breaks = doc.element.body.findall(".//" + qn_docx("w:br"))
-    assert any(b.get(qn_docx("w:type")) == "page" for b in breaks)
+    assert "<w:pBdr>" in doc.element.xml  # --- is a line, not a new page
+
+
+def test_markdown_docx_keeps_inline_marks_in_cells_code_quotes_and_nesting():
+    """What a model writes most — bold in table cells, ~~strike~~, ***both***,
+    fenced code, block quotes, nested bullets, hard line breaks — left the
+    door as raw markdown text before. Measured on a user's sample, 2026-09-04."""
+    from docx import Document
+
+    from langchain_canvas.exporters import MarkdownDocxExporter
+
+    md = "\n".join([
+        "첫 줄  ",
+        "둘째 줄은 줄바꿈 뒤에 온다.",
+        "",
+        "***굵게 기울임*** 그리고 ~~취소선~~ 그리고 `코드`.",
+        "",
+        "> **인용문**",
+        "> 둘째 줄",
+        "",
+        "- 항목",
+        "  - 하위 항목",
+        "    - 더 깊은 항목",
+        "",
+        "| 구분 | 예시 |",
+        "|---|---|",
+        "| **Bold** | ~~옛 값~~ |",
+        "",
+        "```python",
+        "def f():",
+        "    return 1",
+        "```",
+    ])
+    doc = Document(io.BytesIO(MarkdownDocxExporter().export(md, path="s.md").data))
+    xml = doc.element.xml
+    first = doc.paragraphs[0]
+    assert "<w:br/>" in first._p.xml and "둘째 줄은" in first.text  # hard break kept
+    marks = doc.paragraphs[1]
+    both = next(r for r in marks.runs if r.text == "굵게 기울임")
+    assert both.bold and both.italic
+    assert next(r for r in marks.runs if r.text == "취소선").font.strike
+    assert next(r for r in marks.runs if r.text == "코드").font.name == "Consolas"
+    quote = next(p for p in doc.paragraphs if "인용문" in p.text)
+    assert quote.style.name == "Intense Quote" and "둘째 줄" in quote.text
+    styles = [p.style.name for p in doc.paragraphs]
+    assert "List Bullet" in styles and "List Bullet 2" in styles and "List Bullet 3" in styles
+    cell = doc.tables[0].cell(1, 0)
+    assert cell.text == "Bold" and cell.paragraphs[0].runs[0].bold  # no raw asterisks
+    assert doc.tables[0].cell(1, 1).paragraphs[0].runs[0].font.strike
+    code = next(p for p in doc.paragraphs if "def f():" in p.text)
+    assert "    return 1" in code.text
+    assert all(r.font.name == "Consolas" for r in code.runs if r.text.strip())
+    assert "**" not in xml and "~~" not in xml and "`" not in xml
 
 
 def test_markdown_docx_registered_for_md_canvas_files():

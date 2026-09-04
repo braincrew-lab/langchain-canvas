@@ -188,13 +188,15 @@ class _Run:
     text: str
     bold: bool
     italic: bool
+    strike: bool = False
+    code: bool = False
 
 
 class _HtmlOutline(HTMLParser):
     """Linearize an HTML document into export blocks.
 
     Blocks are tuples: ``("heading", level, runs)``, ``("para", runs)``,
-    ``("bullet", runs)``, ``("table", rows, has_header)``, ``("page_break",)``
+    ``("bullet", runs)``, ``("table", rows, has_header)``, ``("rule",)``
     and ``("image", bytes)``. Inline bold/italic survive as run flags;
     style/script content is dropped.
     """
@@ -250,7 +252,7 @@ class _HtmlOutline(HTMLParser):
             self._runs.append(_Run("\n", False, False))
         elif tag == "hr":
             self._flush()
-            self.blocks.append(("page_break",))
+            self.blocks.append(("rule",))
         elif tag == "img":
             data = _data_uri_bytes(dict(attrs).get("src") or "")
             if data:
@@ -476,7 +478,7 @@ class HtmlDocxExporter:
     """``.html`` pages as Word documents.
 
     A deliberate subset survives the trip: headings (h1-h4), paragraph text
-    with inline bold/italic, bullet items, flat tables, page breaks (``hr``)
+    with inline bold/italic, bullet items, flat tables, rules (``hr``)
     and ``data:``-URI images. CSS layout does not — the canvas file stays the
     source of truth; the ``.docx`` is a snapshot at the door. Requires
     ``python-docx`` — installed by the ``office`` extra.
@@ -513,13 +515,19 @@ def _blocks_to_docx(
             paragraph = document.add_heading("", level=min(int(block[1]), 4))
             _add_runs(paragraph, block[2])
         elif kind == "bullet":
-            _add_runs(document.add_paragraph(style="List Bullet"), block[1])
+            _add_runs(document.add_paragraph(style=_list_style("List Bullet", block)), block[1])
         elif kind == "numbered":
-            _add_runs(document.add_paragraph(style="List Number"), block[1])
+            _add_runs(document.add_paragraph(style=_list_style("List Number", block)), block[1])
         elif kind == "para":
             _add_runs(document.add_paragraph(), block[1])
+        elif kind == "quote":
+            _add_runs(document.add_paragraph(style="Intense Quote"), block[1])
+        elif kind == "code":
+            _add_code(document, block[1])
         elif kind == "table":
             _add_table(document, block[1], block[2])
+        elif kind == "rule":
+            _add_rule(document)
         elif kind == "page_break":
             document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         elif kind == "image":
@@ -533,19 +541,28 @@ def _blocks_to_docx(
     return ExportedFile(out.getvalue(), f"{_safe_name(title) or _stem(path)}.docx", DOCX_MIME)
 
 
-_MD_INLINE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_|`[^`]+`)")
+_MD_INLINE = re.compile(
+    r"(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*|___[^_]+___|__[^_]+__|_[^_]+_|~~[^~]+~~|`[^`]+`)"
+)
 _MD_IMAGE = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$")
 _MD_NUMBERED = re.compile(r"^\s*\d+[.)]\s+")
 _MD_BULLET = re.compile(r"^\s*[-*+]\s+")
 
 
 def _md_runs(text: str) -> list[_Run]:
-    """Inline markdown as runs: bold and italic; backticks drop their ticks."""
+    """Inline markdown as runs: bold, italic, bold-italic, strikethrough and
+    code (a monospace run without its ticks)."""
     runs: list[_Run] = []
     for part in _MD_INLINE.split(text):
         if not part:
             continue
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+        if part.startswith("***") and part.endswith("***") and len(part) > 6:
+            runs.append(_Run(part[3:-3], True, True))
+        elif part.startswith("___") and part.endswith("___") and len(part) > 6:
+            runs.append(_Run(part[3:-3], True, True))
+        elif part.startswith("~~") and part.endswith("~~") and len(part) > 4:
+            runs.append(_Run(part[2:-2], False, False, strike=True))
+        elif part.startswith("**") and part.endswith("**") and len(part) > 4:
             runs.append(_Run(part[2:-2], True, False))
         elif part.startswith("__") and part.endswith("__") and len(part) > 4:
             runs.append(_Run(part[2:-2], True, False))
@@ -554,10 +571,27 @@ def _md_runs(text: str) -> list[_Run]:
         elif part.startswith("_") and part.endswith("_") and len(part) > 2:
             runs.append(_Run(part[1:-1], False, True))
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
-            runs.append(_Run(part[1:-1], False, False))
+            runs.append(_Run(part[1:-1], False, False, code=True))
         else:
             runs.append(_Run(part, False, False))
     return runs
+
+
+def _md_depth(line: str) -> int:
+    """List nesting from leading spaces: 0, 1 or 2 (two spaces per level)."""
+    return min(2, (len(line) - len(line.lstrip(" "))) // 2)
+
+
+def _join_soft_lines(lines: list[str]) -> str:
+    """One paragraph from its source lines: a line that ends in two spaces
+    keeps a line break; the rest wrap into one line."""
+    out = ""
+    for i, raw in enumerate(lines):
+        piece = raw.strip()
+        if i:
+            out += "\n" if lines[i - 1].endswith("  ") else " "
+        out += piece
+    return out
 
 
 def _md_cells(line: str) -> list[str]:
@@ -581,11 +615,13 @@ def _decode_data_uri(url: str) -> bytes | None:
 def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
     """A deliberate markdown subset as export blocks.
 
-    Headings, paragraphs with inline bold/italic, bullet and numbered items
-    (nesting flattens), pipe tables, fenced code kept verbatim, thematic
-    breaks as page breaks, and ``data:`` images. Everything else lands as
-    plain text — the canvas file stays the source of truth; the ``.docx``
-    is a snapshot at the door, exactly like the HTML one.
+    Headings, paragraphs with inline bold/italic/strike/code (a line ending
+    in two spaces breaks the line), bullet and numbered items up to three
+    levels deep, block quotes, pipe tables with the same inline marks in
+    their cells, fenced code as monospace, thematic breaks as rules, and
+    ``data:`` images. Everything else lands as plain text — the canvas file
+    stays the source of truth; the ``.docx`` is a snapshot at the door,
+    exactly like the HTML one.
     """
     blocks: list[tuple[Any, ...]] = []
     paragraph: list[str] = []
@@ -593,7 +629,7 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
 
     def flush() -> None:
         if paragraph:
-            blocks.append(("para", _md_runs(" ".join(paragraph))))
+            blocks.append(("para", _md_runs(_join_soft_lines(paragraph))))
             paragraph.clear()
 
     index = 0
@@ -607,10 +643,12 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
         if stripped.startswith("```"):
             flush()
             index += 1
+            code: list[str] = []
             while index < len(lines) and not lines[index].strip().startswith("```"):
-                blocks.append(("para", [_Run(lines[index], False, False)]))
+                code.append(lines[index])
                 index += 1
             index += 1
+            blocks.append(("code", "\n".join(code)))
             continue
         if stripped.startswith("#"):
             flush()
@@ -620,7 +658,7 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
             continue
         if stripped in ("---", "***", "___"):
             flush()
-            blocks.append(("page_break",))
+            blocks.append(("rule",))
             index += 1
             continue
         image = _MD_IMAGE.match(stripped)
@@ -644,24 +682,27 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
             while index < len(lines) and lines[index].strip().startswith("|"):
                 rows.append(_md_cells(lines[index]))
                 index += 1
-            blocks.append(("table", rows, True))
+            blocks.append(("table", [[_md_runs(cell) for cell in row] for row in rows], True))
             continue
         if _MD_BULLET.match(line):
             flush()
-            blocks.append(("bullet", _md_runs(_MD_BULLET.sub("", line, count=1))))
+            blocks.append(("bullet", _md_runs(_MD_BULLET.sub("", line, count=1)), _md_depth(line)))
             index += 1
             continue
         if _MD_NUMBERED.match(line):
             flush()
-            blocks.append(("numbered", _md_runs(_MD_NUMBERED.sub("", line, count=1))))
+            blocks.append(("numbered", _md_runs(_MD_NUMBERED.sub("", line, count=1)), _md_depth(line)))
             index += 1
             continue
         if stripped.startswith(">"):
             flush()
-            blocks.append(("para", _md_runs(stripped.lstrip("> "))))
-            index += 1
+            quote: list[str] = []
+            while index < len(lines) and lines[index].strip().startswith(">"):
+                quote.append(lines[index].strip().lstrip(">").strip())
+                index += 1
+            blocks.append(("quote", _md_runs(_join_soft_lines(quote))))
             continue
-        paragraph.append(stripped)
+        paragraph.append(line.rstrip("\n"))
         index += 1
     flush()
     return blocks
@@ -683,6 +724,9 @@ class MarkdownDocxExporter:
         return _blocks_to_docx(_markdown_blocks(content), path=path, title=title, source=".md")
 
 
+_CODE_FACE = "Consolas"
+
+
 def _add_runs(paragraph: Any, runs: list[_Run]) -> None:
     for run in runs:
         added = paragraph.add_run(run.text)
@@ -690,9 +734,49 @@ def _add_runs(paragraph: Any, runs: list[_Run]) -> None:
             added.bold = True
         if run.italic:
             added.italic = True
+        if run.strike:
+            added.font.strike = True
+        if run.code:
+            added.font.name = _CODE_FACE
 
 
-def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
+def _list_style(base: str, block: tuple[Any, ...]) -> str:
+    """``List Bullet`` / ``List Bullet 2`` / ``List Bullet 3`` by nesting depth."""
+    depth = int(block[2]) if len(block) > 2 else 0
+    return base if depth == 0 else f"{base} {depth + 1}"
+
+
+def _add_code(document: Any, text: str) -> None:
+    """A fenced block as one monospace paragraph, indentation and line breaks kept."""
+    from docx.shared import Pt  # type: ignore[import-untyped]
+
+    paragraph = document.add_paragraph()
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            paragraph.add_run().add_break()
+        run = paragraph.add_run(line)
+        run.font.name = _CODE_FACE
+        run.font.size = Pt(9)
+
+
+def _add_rule(document: Any) -> None:
+    """A thematic break as an empty paragraph with a bottom border — a line,
+    which is what ``---`` means in a document, not a new page."""
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    paragraph = document.add_paragraph()
+    props = paragraph._p.get_or_add_pPr()
+    border = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    for key, value in (("w:val", "single"), ("w:sz", "6"), ("w:space", "1"), ("w:color", "999999")):
+        bottom.set(qn(key), value)
+    border.append(bottom)
+    props.append(border)
+
+
+def _add_table(document: Any, rows: list[list[Any]], has_header: bool) -> None:
+    """Rows of cells; a cell is a string or a list of runs (inline marks kept)."""
     width = max(len(row) for row in rows)
     if not width:
         return
@@ -701,7 +785,10 @@ def _add_table(document: Any, rows: list[list[str]], has_header: bool) -> None:
     for i, row in enumerate(rows):
         for j, value in enumerate(row):
             cell = table.cell(i, j)
-            cell.text = value
+            if isinstance(value, str):
+                cell.text = value
+            else:
+                _add_runs(cell.paragraphs[0], value)
             if has_header and i == 0:
                 for run in cell.paragraphs[0].runs:
                     run.bold = True
