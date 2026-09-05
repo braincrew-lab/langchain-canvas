@@ -1035,7 +1035,7 @@ def test_the_baseline_records_the_decks_own_overflowing_boxes() -> None:
     from pptx.enum.text import MSO_AUTO_SIZE
     from pptx.util import Pt
 
-    from langchain_canvas.pptx_import import deck_baseline, overflow_key
+    from langchain_canvas.pptx_import import deck_baseline
 
     def build(slide: Any) -> None:
         # A fixed one-line box holding three lines' worth of text.

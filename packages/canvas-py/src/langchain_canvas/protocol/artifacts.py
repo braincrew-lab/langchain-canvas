@@ -70,7 +70,7 @@ class ChartData(_CamelModel):
     """
 
     chart: Literal["line", "bar", "area", "pie"]
-    rows: list[dict[str, Union[str, int, float]]] = Field(default_factory=list)
+    rows: list[dict[str, str | int | float]] = Field(default_factory=list)
     x_key: str  # serialized as `xKey`
     series: list[ChartSeries] = Field(default_factory=list)
     options: ChartOptions | None = None
@@ -95,7 +95,7 @@ class TableData(_CamelModel):
     """
 
     columns: list[TableColumn] = Field(default_factory=list)
-    rows: list[dict[str, Union[str, int, float]]] = Field(default_factory=list)
+    rows: list[dict[str, str | int | float]] = Field(default_factory=list)
     sheet: list[dict[str, object]] | None = None
 
 

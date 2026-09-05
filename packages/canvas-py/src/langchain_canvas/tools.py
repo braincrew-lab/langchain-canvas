@@ -89,7 +89,6 @@ from .layout_lint import (
     format_layout_warnings,
     lint_slides_data,
 )
-from .slide_diff import diff_slides, format_slide_diff
 from .protocol.artifacts import TableData
 from .replay import (
     ARTIFACT_SUFFIXES,
@@ -102,6 +101,7 @@ from .replay import (
     source_preview_events,
     working_copy_path,
 )
+from .slide_diff import diff_slides, format_slide_diff
 from .state import last_change_line
 from .store import (
     BinaryContentError,
@@ -1666,7 +1666,7 @@ def create_canvas_tools(
 
             diffs: list[PageDiff] = []
             attribution: dict[int, list[str]] = {}
-            for number, now, before in zip(numbers, pages_now, pages_before):
+            for number, now, before in zip(numbers, pages_now, pages_before, strict=True):
                 ratio, bbox = compare_images(before, now)
                 diff = PageDiff(page=number, ratio=round(ratio, 4), bbox=bbox, size=now.size)
                 diffs.append(diff)

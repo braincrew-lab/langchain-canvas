@@ -307,7 +307,11 @@ class _HtmlOutline(HTMLParser):
 
 
 def _squash(text: str) -> str:
-    return re.sub(r"[ \t\r\f\v]*\n[ \t\r\f\v]*|[ \t\r\f\v]+", lambda m: "\n" if "\n" in m.group(0) else " ", text)
+    return re.sub(
+        r"[ \t\r\f\v]*\n[ \t\r\f\v]*|[ \t\r\f\v]+",
+        lambda m: "\n" if "\n" in m.group(0) else " ",
+        text,
+    )
 
 
 def _trim_runs(runs: list[_Run]) -> list[_Run]:
@@ -691,7 +695,8 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
             continue
         if _MD_NUMBERED.match(line):
             flush()
-            blocks.append(("numbered", _md_runs(_MD_NUMBERED.sub("", line, count=1)), _md_depth(line)))
+            body = _md_runs(_MD_NUMBERED.sub("", line, count=1))
+            blocks.append(("numbered", body, _md_depth(line)))
             index += 1
             continue
         if stripped.startswith(">"):
@@ -1077,7 +1082,9 @@ class SlidesPptxExporter:
             pad = (slide_model.padding or 0.0) / 100.0
             span = 1.0 - 2.0 * pad
 
-            def inch_box(element: SlideElement) -> tuple[Any, Any, Any, Any]:
+            def inch_box(
+                element: SlideElement, *, pad: float = pad, span: float = span
+            ) -> tuple[Any, Any, Any, Any]:
                 left = offset_x + (pad + (element.x / 100.0) * span) * canvas_w * scale
                 top = offset_y + (pad + (element.y / 100.0) * span) * canvas_h * scale
                 width = (element.w / 100.0) * span * canvas_w * scale
@@ -1222,14 +1229,20 @@ class SlidesPptxExporter:
                     )
                     if element.shape == "line":
                         connector = slide.shapes.add_connector(
-                            MSO_CONNECTOR.STRAIGHT, left, top, Emu(int(left) + int(width)), Emu(int(top) + int(height))
+                            MSO_CONNECTOR.STRAIGHT,
+                            left,
+                            top,
+                            Emu(int(left) + int(width)),
+                            Emu(int(top) + int(height)),
                         )
                         connector.line.color.rgb = RGBColor.from_string(
                             outline or fill_color or _DEFAULT_SHAPE_FILL
                         )
                         connector.line.width = Pt((element.stroke_width or 2) * _PX_TO_PT)
                     else:
-                        shape_type = MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
+                        shape_type = (
+                            MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
+                        )
                         shape = slide.shapes.add_shape(shape_type, left, top, width, height)
                         if element.rotation:
                             shape.rotation = element.rotation

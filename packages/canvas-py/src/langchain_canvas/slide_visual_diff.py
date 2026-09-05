@@ -28,7 +28,6 @@ guessing.
 
 from __future__ import annotations
 
-import io
 import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
@@ -75,7 +74,9 @@ class PageDiff:
         return self.ratio > MIN_CHANGED_RATIO
 
 
-def compare_images(a: Any, b: Any, tolerance: int = DEFAULT_TOLERANCE) -> tuple[float, tuple[int, int, int, int] | None]:
+def compare_images(
+    a: Any, b: Any, tolerance: int = DEFAULT_TOLERANCE
+) -> tuple[float, tuple[int, int, int, int] | None]:
     """``(ratio, bbox)`` between two PIL images.
 
     ``b`` is resized to ``a``'s size first — two renders of the same page at
@@ -239,7 +240,9 @@ def attribute_to_elements(
             )
         except (KeyError, TypeError, ValueError):
             continue
-        if bounds[0] < changed[2] and bounds[2] > changed[0] and bounds[1] < changed[3] and bounds[3] > changed[1]:
+        overlaps_x = bounds[0] < changed[2] and bounds[2] > changed[0]
+        overlaps_y = bounds[1] < changed[3] and bounds[3] > changed[1]
+        if overlaps_x and overlaps_y:
             hits.append(str(element["id"]))
     return hits
 

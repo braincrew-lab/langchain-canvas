@@ -37,6 +37,7 @@ from .replay import (
     encode_table,
     hydrate_events,
     source_preview_events,
+    workbook_working_copy,
 )
 from .state import canvas_now, last_change_line
 from .store import CanvasStore, FileCanvasStore, InMemoryCanvasStore
@@ -88,6 +89,7 @@ __all__ = [
     "inline_canvas_assets",
     "source_preview_events",
     "sse_from_agent",
+    "workbook_working_copy",
 ]
 
 __version__ = "0.1.0"

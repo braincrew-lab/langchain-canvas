@@ -173,7 +173,14 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             ]
               .filter(Boolean)
               .join(";");
-            return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
+            // Snug one-liners are marked for the print pipeline to fit: the
+            // host (trusted) measures and shrinks them a hair before print()
+            // — the sandboxed frame itself runs no scripts.
+            const snug =
+              el.text && !el.text.includes("\n") && el.wrap !== false && el.autofit !== "text"
+                ? ' data-snug="1"'
+                : "";
+            return `<div class="el"${snug} style="${style}">${escapeXml(el.text ?? "")}</div>`;
           }
           if (el.type === "shape") {
             // A box drawn by its outline alone carries no fill — painting one

@@ -609,7 +609,8 @@ def _page_dims(page: dict[str, Any] | None) -> tuple[float, float] | None:
     if not isinstance(page, dict):
         return None
     width, height = page.get("widthIn"), page.get("heightIn")
-    if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+    numeric = isinstance(width, (int, float)) and isinstance(height, (int, float))
+    if numeric and width > 0 and height > 0:
         return float(width), float(height)
     return None
 

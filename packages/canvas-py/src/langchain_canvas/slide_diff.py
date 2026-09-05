@@ -82,7 +82,8 @@ def _element_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
         phrases.append(f"resized ({', '.join(resized)})")
 
     if not _same_number(old.get("rotation", 0) or 0, new.get("rotation", 0) or 0):
-        phrases.append(f"rotated ({_pair('deg', old.get('rotation', 0) or 0, new.get('rotation', 0) or 0).removeprefix('deg ')})")
+        turned = _pair('deg', old.get('rotation', 0) or 0, new.get('rotation', 0) or 0)
+        phrases.append(f"rotated ({turned.removeprefix('deg ')})")
 
     if old.get("text") != new.get("text"):
         before, after = old.get("text"), new.get("text")
@@ -99,8 +100,11 @@ def _element_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     if restyled:
         # cells/rows/colWidths are lists; naming the field is enough, the
         # before→after of a whole grid would bury the line.
-        readable = [phrase if "→" in phrase and len(phrase) <= 40 else phrase.split(" ", 1)[0] + " changed"
-                    for phrase in restyled]
+        readable = [
+            phrase if "→" in phrase and len(phrase) <= 40
+            else phrase.split(" ", 1)[0] + " changed"
+            for phrase in restyled
+        ]
         phrases.append(f"restyled ({', '.join(dict.fromkeys(readable))})")
 
     return phrases
@@ -108,7 +112,7 @@ def _element_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
 
 def _style_changed(field: str, a: Any, b: Any) -> bool:
     if field in ("fontSize", "strokeWidth", "lineHeight", "spaceBefore", "spaceAfter"):
-        return not _same_number(a if a is not None else None, b if b is not None else None) and a != b
+        return a != b and not _same_number(a, b)
     return a != b
 
 
@@ -136,8 +140,12 @@ def _slide_changes(index: int, old: dict[str, Any], new: dict[str, Any]) -> list
 
 def _element_diff(prefix: str, old_els: list[Any], new_els: list[Any]) -> list[str]:
     """Added / removed / changed / reordered elements, matched by ``id``."""
-    old_by_id = {el["id"]: (i, el) for i, el in enumerate(old_els) if isinstance(el, dict) and "id" in el}
-    new_by_id = {el["id"]: (i, el) for i, el in enumerate(new_els) if isinstance(el, dict) and "id" in el}
+    old_by_id = {
+        el["id"]: (i, el) for i, el in enumerate(old_els) if isinstance(el, dict) and "id" in el
+    }
+    new_by_id = {
+        el["id"]: (i, el) for i, el in enumerate(new_els) if isinstance(el, dict) and "id" in el
+    }
     lines: list[str] = []
 
     for el_id, (_, el) in new_by_id.items():
@@ -192,7 +200,8 @@ def _page_change(old: dict[str, Any], new: dict[str, Any]) -> str | None:
         if not isinstance(page, dict):
             return "16:9 (default)"
         width, height = page.get("widthIn"), page.get("heightIn")
-        shape = "portrait" if isinstance(width, (int, float)) and isinstance(height, (int, float)) and height > width else "landscape"
+        numeric = isinstance(width, (int, float)) and isinstance(height, (int, float))
+        shape = "portrait" if numeric and height > width else "landscape"
         return f"{_num(width)}x{_num(height)} in ({shape})"
 
     return f"page: {describe(old_page)} → {describe(new_page)}"
