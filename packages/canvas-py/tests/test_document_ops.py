@@ -594,3 +594,162 @@ def test_an_address_in_front_of_new_is_never_written_into_the_page() -> None:
     the title. The address points; it is not text."""
     after = ops.replace_text(_twice(), "[p0] 리서치 인텔리전스", "[p0] 뉴스 인텔리전스")
     assert _texts(after)[0] == "뉴스 인텔리전스"
+
+
+# --- the table's shape in the outline --------------------------------------------
+
+
+def _rich_table_document() -> bytes:
+    """One table carrying everything the outline has to keep: a heading
+    merged across the row, a vertical merge, a comma and a pipe inside
+    cells, a shaded cell, a repeat-on-every-page header row, and a nested
+    table."""
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    document = Document()
+    table = document.add_table(rows=3, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 2)).text = "분기 실적, 요약"
+    table.cell(1, 0).merge(table.cell(2, 0)).text = "합계"
+    table.cell(1, 1).text = "A|B"
+    table.cell(1, 2).text = "120"
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), "DDEBF7")
+    table.cell(1, 2)._tc.get_or_add_tcPr().append(shading)
+    header = OxmlElement("w:tblHeader")
+    table.rows[0]._tr.get_or_add_trPr().append(header)
+    table.cell(2, 2).add_table(rows=1, cols=2)
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def test_a_merged_cell_appears_once_with_its_span() -> None:
+    """python-docx reports a merged cell per grid position; joined naively the
+    heading read as the same words three times, and a model editing 'the
+    second one' was editing a merge, not a duplicate."""
+    rendered = ops.outline(_rich_table_document()).render()
+    assert rendered.count("분기 실적, 요약") == 1
+    assert "분기 실적, 요약 (3x1)" in rendered
+    assert "합계 (1x2)" in rendered
+    assert "| ^ |" in rendered  # the vertical continuation keeps columns in place
+
+
+def test_cell_shading_and_the_header_row_are_named() -> None:
+    rendered = ops.outline(_rich_table_document()).render()
+    assert "120 [#DDEBF7]" in rendered
+    assert "(header row)" in rendered
+    assert "[+1 nested]" in rendered
+
+
+def test_a_comma_or_pipe_inside_a_cell_does_not_break_the_row() -> None:
+    """The old comma-joined row made '분기 실적, 요약' read as two cells."""
+    rendered = ops.outline(_rich_table_document()).render()
+    assert "A\\|B" in rendered
+    # pipe rows: every data row of t0 renders with pipe delimiters
+    table_lines = [line for line in rendered.splitlines() if line.startswith("      |")]
+    assert len(table_lines) == 3
+
+
+def test_a_plain_table_stays_plain() -> None:
+    """No merges, no shading, no header mark — the annotations only appear
+    when the file put something there to see."""
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    for r in range(2):
+        for c in range(2):
+            table.cell(r, c).text = f"r{r}c{c}"
+    out = io.BytesIO()
+    document.save(out)
+    rendered = ops.outline(out.getvalue()).render()
+    assert "      | r0c0 | r0c1 |" in rendered
+    assert "(header row)" not in rendered
+    assert "[#" not in rendered
+    assert "(1x1)" not in rendered and "x1)" not in rendered
+
+
+# --- table structure & look edits ------------------------------------------------
+
+
+def _grid_document() -> bytes:
+    """A plain 3x3 body table with addressable text in every cell."""
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=3, cols=3)
+    for r in range(3):
+        for c in range(3):
+            table.cell(r, c).text = f"r{r}c{c}"
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def test_merge_makes_a_real_merge_the_outline_can_see() -> None:
+    after = ops.merge_table_cells(_grid_document(), "[t0]", "r0c0:r0c2")
+    rendered = ops.outline(after).render()
+    assert "(3x1)" in rendered  # the read side reports the span the edit made
+    from docx import Document as Docx
+
+    table = Docx(io.BytesIO(after)).tables[0]
+    assert table.cell(0, 0)._tc is table.cell(0, 2)._tc
+
+
+def test_style_shades_and_aligns_and_the_outline_reports_it() -> None:
+    after = ops.style_table_cells(
+        _grid_document(), "t0", "r1c0:r1c2", fill="#DDEBF7", align="center"
+    )
+    rendered = ops.outline(after).render()
+    assert rendered.count("[#DDEBF7]") == 3
+    from docx import Document as Docx
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    table = Docx(io.BytesIO(after)).tables[0]
+    assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    # fill="none" takes the shading back off
+    cleared = ops.style_table_cells(after, "t0", "r1c0:r1c2", fill="none")
+    assert "[#DDEBF7]" not in ops.outline(cleared).render()
+
+
+def test_table_edits_keep_untouched_parts_byte_for_byte() -> None:
+    """The module's load-bearing invariant holds for the new operations too."""
+    document = _grid_document()
+    before = _entries(document)
+    for after in (
+        ops.merge_table_cells(document, "t0", "r0c0:r1c0"),
+        ops.style_table_cells(document, "t0", "r2c2", fill="#FFF2CC"),
+    ):
+        now = _entries(after)
+        for name in {"word/styles.xml", "word/settings.xml", "word/theme/theme1.xml"} & set(before):
+            assert now[name] == before[name], name
+
+
+def test_table_edit_addresses_are_refused_loudly() -> None:
+    document = _grid_document()
+    with pytest.raises(ops.DocumentOpError, match=r"\[t3\] does not exist"):
+        ops.merge_table_cells(document, "t3", "r0c0:r0c1")
+    with pytest.raises(ops.DocumentOpError, match="reaches past the table"):
+        ops.merge_table_cells(document, "t0", "r0c0:r5c5")
+    with pytest.raises(ops.DocumentOpError, match="single cell"):
+        ops.merge_table_cells(document, "t0", "r0c0")
+    with pytest.raises(ops.DocumentOpError, match="not a cell address"):
+        ops.style_table_cells(document, "t0", "A1:B2", fill="#000000")
+    with pytest.raises(ops.DocumentOpError, match="is not a fill"):
+        ops.style_table_cells(document, "t0", "r0c0", fill="red")
+    with pytest.raises(ops.DocumentOpError, match="give fill"):
+        ops.style_table_cells(document, "t0", "r0c0")
+
+
+def test_styling_a_merged_range_touches_the_merge_once() -> None:
+    """A merged cell repeats per grid position; shading it three times would
+    stack three w:shd elements on one tcPr."""
+    merged = ops.merge_table_cells(_grid_document(), "t0", "r0c0:r0c2")
+    after = ops.style_table_cells(merged, "t0", "r0c0:r0c2", fill="#DDEBF7")
+    from docx import Document as Docx
+    from docx.oxml.ns import qn
+
+    table = Docx(io.BytesIO(after)).tables[0]
+    assert len(table.cell(0, 0)._tc.get_or_add_tcPr().findall(qn("w:shd"))) == 1

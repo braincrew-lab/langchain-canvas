@@ -192,6 +192,86 @@ class _Run:
     code: bool = False
 
 
+@dataclass
+class _CellSpec:
+    """One table cell on its way to Word — content plus what the source said
+    about its box. The old path carried a bare string per cell, which is how
+    a merged heading exported as three copies and every background vanished."""
+
+    content: list[_Run] | str
+    colspan: int = 1
+    rowspan: int = 1
+    fill: str | None = None  # "#RRGGBB"
+    align: str | None = None  # "left" | "center" | "right"
+    width_pct: float | None = None  # percent of the table's width
+
+
+def _style_map(style: str | None) -> dict[str, str]:
+    """Inline CSS as a dict — ``"a: 1; b: 2"`` -> ``{"a": "1", "b": "2"}``."""
+    if not style:
+        return {}
+    pairs = (part.partition(":") for part in style.split(";"))
+    return {key.strip().lower(): value.strip() for key, _, value in pairs if value.strip()}
+
+
+_RGB_FUNCTION = re.compile(r"rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", re.IGNORECASE)
+
+
+def _css_color(value: str | None) -> str | None:
+    """A CSS colour as ``#RRGGBB`` — hex (3 or 6) and ``rgb()`` forms; anything
+    else (names, gradients, ``transparent``) is honestly dropped."""
+    if not value:
+        return None
+    value = value.strip()
+    match = _HEX_COLOR_PATTERN.match(value)
+    if match:
+        digits = match.group(1)
+        if len(digits) == 3:
+            digits = "".join(ch * 2 for ch in digits)
+        return f"#{digits.upper()}"
+    rgb = _RGB_FUNCTION.match(value)
+    if rgb:
+        parts = (min(255, int(part)) for part in rgb.groups())
+        return "#" + "".join(f"{part:02X}" for part in parts)
+    return None
+
+
+def _int_at_least_one(value: str | None) -> int:
+    try:
+        return max(1, int(value or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _width_pct(value: str | None) -> float | None:
+    if not value or not value.strip().endswith("%"):
+        return None
+    try:
+        pct = float(value.strip()[:-1])
+    except ValueError:
+        return None
+    return pct if 0 < pct <= 100 else None
+
+
+def _cell_spec_from_attrs(attrs: dict[str, str | None]) -> _CellSpec:
+    """What a ``td``/``th``'s attributes say about its box."""
+    style = _style_map(attrs.get("style"))
+    fill = (
+        _css_color(style.get("background-color"))
+        or _css_color(style.get("background"))
+        or _css_color(attrs.get("bgcolor"))
+    )
+    align = (style.get("text-align") or attrs.get("align") or "").lower()
+    return _CellSpec(
+        content="",
+        colspan=_int_at_least_one(attrs.get("colspan")),
+        rowspan=_int_at_least_one(attrs.get("rowspan")),
+        fill=fill,
+        align=align if align in ("left", "center", "right") else None,
+        width_pct=_width_pct(style.get("width") or attrs.get("width")),
+    )
+
+
 class _HtmlOutline(HTMLParser):
     """Linearize an HTML document into export blocks.
 
@@ -209,10 +289,17 @@ class _HtmlOutline(HTMLParser):
         self._bold = 0
         self._italic = 0
         self._skip = 0
-        self._table: list[list[str]] | None = None
-        self._row: list[str] | None = None
+        self._table: list[list[_CellSpec]] | None = None
+        self._row: list[_CellSpec] | None = None
         self._cell: list[str] | None = None
+        self._cell_spec: _CellSpec | None = None
+        # Depth of <table> tags inside the open table: a nested table's close
+        # must not end the outer one (its text still lands in the cell).
+        self._table_depth = 0
         self._has_header = False
+        # The background the open paragraph/heading asked for (a highlight
+        # box); rides the block to the writer, cleared on every flush.
+        self._block_fill: str | None = None
 
     def finish(self) -> None:
         self.close()
@@ -225,10 +312,13 @@ class _HtmlOutline(HTMLParser):
         if self._skip:
             return
         if self._table is not None:
-            if tag == "tr":
+            if tag == "table":
+                self._table_depth += 1
+            elif tag == "tr" and not self._table_depth:
                 self._row = []
-            elif tag in ("td", "th"):
+            elif tag in ("td", "th") and not self._table_depth:
                 self._cell = []
+                self._cell_spec = _cell_spec_from_attrs(dict(attrs))
                 if tag == "th":
                     self._has_header = True
             return
@@ -239,11 +329,13 @@ class _HtmlOutline(HTMLParser):
         elif tag in _HEADING_TAGS:
             self._flush()
             self._kind = ("heading", int(tag[1]))
+            self._block_fill = _block_fill_from_attrs(dict(attrs))
         elif tag == "li":
             self._flush()
             self._kind = ("bullet",)
         elif tag in _PARA_TAGS:
             self._flush()
+            self._block_fill = _block_fill_from_attrs(dict(attrs))
         elif tag in ("b", "strong"):
             self._bold += 1
         elif tag in ("i", "em"):
@@ -266,12 +358,17 @@ class _HtmlOutline(HTMLParser):
         if self._skip:
             return
         if self._table is not None:
-            if tag in ("td", "th") and self._cell is not None:
+            if tag == "table" and self._table_depth:
+                self._table_depth -= 1
+            elif tag in ("td", "th") and self._cell is not None and not self._table_depth:
                 if self._row is None:
                     self._row = []
-                self._row.append(_squash("".join(self._cell)).strip())
+                spec = self._cell_spec or _CellSpec(content="")
+                spec.content = _squash("".join(self._cell)).strip()
+                self._row.append(spec)
                 self._cell = None
-            elif tag == "tr" and self._row is not None:
+                self._cell_spec = None
+            elif tag == "tr" and self._row is not None and not self._table_depth:
                 self._table.append(self._row)
                 self._row = None
             elif tag == "table":
@@ -301,9 +398,21 @@ class _HtmlOutline(HTMLParser):
     def _flush(self) -> None:
         runs, self._runs = self._runs, []
         kind, self._kind = self._kind, ("para",)
+        fill, self._block_fill = self._block_fill, None
         trimmed = _trim_runs(runs)
         if trimmed:
-            self.blocks.append((*kind, trimmed))
+            # The fill rides only the blocks that can wear it — a paragraph
+            # or heading is a box in Word; a bullet is not extended here.
+            if fill and kind[0] in ("para", "heading"):
+                self.blocks.append((*kind, trimmed, fill))
+            else:
+                self.blocks.append((*kind, trimmed))
+
+
+def _block_fill_from_attrs(attrs: dict[str, str | None]) -> str | None:
+    """The background a paragraph-level tag states inline, or ``None``."""
+    style = _style_map(attrs.get("style"))
+    return _css_color(style.get("background-color")) or _css_color(style.get("background"))
 
 
 def _squash(text: str) -> str:
@@ -518,12 +627,17 @@ def _blocks_to_docx(
         if kind == "heading":
             paragraph = document.add_heading("", level=min(int(block[1]), 4))
             _add_runs(paragraph, block[2])
+            if len(block) > 3 and block[3]:
+                _shade_paragraph(paragraph, block[3])
         elif kind == "bullet":
             _add_runs(document.add_paragraph(style=_list_style("List Bullet", block)), block[1])
         elif kind == "numbered":
             _add_runs(document.add_paragraph(style=_list_style("List Number", block)), block[1])
         elif kind == "para":
-            _add_runs(document.add_paragraph(), block[1])
+            paragraph = document.add_paragraph()
+            _add_runs(paragraph, block[1])
+            if len(block) > 2 and block[2]:
+                _shade_paragraph(paragraph, block[2])
         elif kind == "quote":
             _add_runs(document.add_paragraph(style="Intense Quote"), block[1])
         elif kind == "code":
@@ -607,6 +721,16 @@ def _md_is_separator(line: str) -> bool:
     return bool(body) and set(body) <= {"-", ":"} and "-" in body
 
 
+def _md_aligns(separator: str) -> list[str | None]:
+    """Per-column alignment from the separator row — ``:---:`` centres,
+    ``---:`` right-aligns, the rest keep Word's default."""
+    aligns: list[str | None] = []
+    for cell in _md_cells(separator):
+        left, right = cell.startswith(":"), cell.endswith(":")
+        aligns.append("center" if left and right else "right" if right else None)
+    return aligns
+
+
 def _decode_data_uri(url: str) -> bytes | None:
     if not url.startswith("data:") or ";base64," not in url:
         return None
@@ -681,12 +805,26 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
             and _md_is_separator(lines[index + 1])
         ):
             flush()
+            aligns = _md_aligns(lines[index + 1])
             rows = [_md_cells(stripped)]
             index += 2  # past the separator line
             while index < len(lines) and lines[index].strip().startswith("|"):
                 rows.append(_md_cells(lines[index]))
                 index += 1
-            blocks.append(("table", [[_md_runs(cell) for cell in row] for row in rows], True))
+            blocks.append((
+                "table",
+                [
+                    [
+                        _CellSpec(
+                            content=_md_runs(cell),
+                            align=aligns[i] if i < len(aligns) else None,
+                        )
+                        for i, cell in enumerate(row)
+                    ]
+                    for row in rows
+                ],
+                True,
+            ))
             continue
         if _MD_BULLET.match(line):
             flush()
@@ -780,23 +918,115 @@ def _add_rule(document: Any) -> None:
     props.append(border)
 
 
+def _shade_paragraph(paragraph: Any, fill: str) -> None:
+    """A paragraph's background — the full-width box Word draws for ``w:shd``
+    in the paragraph properties, the way a highlighted notice reads."""
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), fill.lstrip("#"))
+    paragraph._p.get_or_add_pPr().append(shading)
+
+
+def _as_cell_spec(value: Any) -> _CellSpec:
+    """Any cell the parsers produce — a bare string, a run list, or a spec."""
+    if isinstance(value, _CellSpec):
+        return value
+    return _CellSpec(content=value)
+
+
+def _lay_out_cells(
+    rows: list[list[_CellSpec]],
+) -> tuple[list[tuple[_CellSpec, int, int]], int, int]:
+    """Each cell's grid position, plus the grid size, spans honoured.
+
+    The simplified HTML table algorithm: a cell takes the next free column in
+    its row, and its span reserves the columns and rows it covers, so the
+    cell after a tall merge lands beside it, not under it.
+    """
+    placed: list[tuple[_CellSpec, int, int]] = []
+    covered: set[tuple[int, int]] = set()
+    n_rows, n_cols = 0, 0
+    for row_index, row in enumerate(rows):
+        column = 0
+        for spec in row:
+            while (row_index, column) in covered:
+                column += 1
+            placed.append((spec, row_index, column))
+            for dr in range(spec.rowspan):
+                for dc in range(spec.colspan):
+                    covered.add((row_index + dr, column + dc))
+            n_rows = max(n_rows, row_index + spec.rowspan)
+            n_cols = max(n_cols, column + spec.colspan)
+            column += spec.colspan
+    return placed, max(n_rows, len(rows)), n_cols
+
+
+#: The width Word gives a table on its default page (letter, 1in margins),
+#: in twips — what a cell's percent width is a percent *of*.
+_PAGE_GRID_TWIPS = 9360
+
+
 def _add_table(document: Any, rows: list[list[Any]], has_header: bool) -> None:
-    """Rows of cells; a cell is a string or a list of runs (inline marks kept)."""
-    width = max(len(row) for row in rows)
-    if not width:
+    """Rows of cells as a real Word table — merges merged, backgrounds shaded.
+
+    A cell is a string, a list of runs (inline marks kept), or a
+    :class:`_CellSpec` carrying what the source said about its box: span,
+    fill, alignment, width. The old writer took strings only, which is how a
+    heading merged across three columns exported as three copies and every
+    cell background vanished at the door.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore[import-untyped]
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    specs = [[_as_cell_spec(value) for value in row] for row in rows]
+    placed, n_rows, n_cols = _lay_out_cells(specs)
+    if not n_cols:
         return
-    table = document.add_table(rows=len(rows), cols=width)
+    table = document.add_table(rows=n_rows, cols=n_cols)
     table.style = "Table Grid"
-    for i, row in enumerate(rows):
-        for j, value in enumerate(row):
-            cell = table.cell(i, j)
-            if isinstance(value, str):
-                cell.text = value
-            else:
-                _add_runs(cell.paragraphs[0], value)
-            if has_header and i == 0:
-                for run in cell.paragraphs[0].runs:
-                    run.bold = True
+
+    alignments = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+    column_pct: dict[int, float] = {}
+    for spec, row_index, column in placed:
+        cell = table.cell(row_index, column)
+        if spec.colspan > 1 or spec.rowspan > 1:
+            cell = cell.merge(
+                table.cell(row_index + spec.rowspan - 1, column + spec.colspan - 1)
+            )
+        if isinstance(spec.content, str):
+            cell.text = spec.content
+        else:
+            _add_runs(cell.paragraphs[0], spec.content)
+        if has_header and row_index == 0:
+            for run in cell.paragraphs[0].runs:
+                run.bold = True
+        if spec.align:
+            cell.paragraphs[0].alignment = alignments[spec.align]
+        if spec.fill:
+            shading = OxmlElement("w:shd")
+            shading.set(qn("w:fill"), spec.fill.lstrip("#"))
+            cell._tc.get_or_add_tcPr().append(shading)
+        if spec.width_pct and spec.colspan == 1 and column not in column_pct:
+            column_pct[column] = spec.width_pct
+
+    # Column widths land on the table grid itself (not per cell), so they
+    # survive merges. Only when the source stated any — an unstated table
+    # keeps Word's own autofit.
+    if column_pct:
+        grid_columns = table._tbl.tblGrid.findall(qn("w:gridCol"))
+        stated = sum(column_pct.values())
+        remainder = max(0.0, 100.0 - stated) / max(1, n_cols - len(column_pct))
+        for index, grid_column in enumerate(grid_columns[:n_cols]):
+            pct = column_pct.get(index, remainder)
+            grid_column.set(qn("w:w"), str(int(_PAGE_GRID_TWIPS * pct / 100.0)))
+        table.autofit = False
 
 
 # --- slides -> pptx --------------------------------------------------------

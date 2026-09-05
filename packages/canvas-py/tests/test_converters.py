@@ -183,8 +183,8 @@ def test_docx_converter_keeps_paragraphs_and_tables_in_order() -> None:
 
     got = DocxSourceConverter().convert(out.getvalue(), path="sources/doc.docx")
     text = got.blocks[0]["text"]
-    assert text.index("서문 문단") < text.index("항목,값") < text.index("맺음 문단")
-    assert "표본,64" in text
+    assert text.index("서문 문단") < text.index("항목 | 값") < text.index("맺음 문단")
+    assert "표본 | 64" in text
     assert got.metadata == {"paragraphs": 2, "tables": 1}
 
 
