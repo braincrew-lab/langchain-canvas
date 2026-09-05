@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.33] — 2026-09-06
+
+### Fixed
+
+- Slide thumbnails: every aligned text and every shape stretched to the full slide because the text and shape style spreads (`height: 100%`) overrode the box height; the rail showed solid blocks and giant highlight bands while the editor was right. Measured on a 38-slide deck: 22 of 26 boxes at 99% height before, 0 after.
+
 ## [0.7.32] — 2026-09-06
 
 ### Added
