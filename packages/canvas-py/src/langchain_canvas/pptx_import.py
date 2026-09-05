@@ -131,7 +131,7 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
                     size = getattr(run.font, "size", None)
                     if size is None or not (run.text or "").strip():
                         continue
-                    px = round(size.pt * _PT_TO_PX, 1)
+                    px = round(size.pt * _PT_TO_PX, 2)
                     if px > 0 and (smallest is None or px < smallest):
                         smallest = px
             # The box's own overflow, keyed by geometry rather than id so the
@@ -161,7 +161,7 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
                         w, h = w - ins_l - ins_r, h - ins_t - ins_b
                     x_pct, y_pct = round(100 * left / width, 3), round(100 * top / height, 3)
                     w_pct, h_pct = round(100 * w / width, 3), round(100 * h / height, 3)
-                    size_px = round(size.pt * _PT_TO_PX, 1)
+                    size_px = round(size.pt * _PT_TO_PX, 2)
                     box_w = w_pct / 100.0 * page_w_px
                     box_h = h_pct / 100.0 * page_h_px
                     if shape.text_frame.word_wrap is False:
@@ -919,7 +919,7 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
         if outline is not None:
             out["stroke"], out["strokeWidth"] = outline
         if font.size is not None:
-            out["fontSize"] = round(font.size.pt * _PT_TO_PX, 1)
+            out["fontSize"] = round(font.size.pt * _PT_TO_PX, 2)
         elif _is_word_art(shape):
             # WordArt warps its text to fill the shape, whatever the run says
             # (usually nothing). The box height is the size the person sees;
