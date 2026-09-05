@@ -200,8 +200,9 @@ def _page_change(old: dict[str, Any], new: dict[str, Any]) -> str | None:
         if not isinstance(page, dict):
             return "16:9 (default)"
         width, height = page.get("widthIn"), page.get("heightIn")
-        numeric = isinstance(width, (int, float)) and isinstance(height, (int, float))
-        shape = "portrait" if numeric and height > width else "landscape"
+        shape = "landscape"
+        if isinstance(width, (int, float)) and isinstance(height, (int, float)):
+            shape = "portrait" if height > width else "landscape"
         return f"{_num(width)}x{_num(height)} in ({shape})"
 
     return f"page: {describe(old_page)} → {describe(new_page)}"
