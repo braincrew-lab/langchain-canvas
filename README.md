@@ -5,8 +5,9 @@
 **A live canvas for LangChain agents.**
 
 Your agent writes ordinary tools; your users get a canvas — a panel beside the
-chat where documents, charts, tables, and full HTML pages render live, stream as
-they're written, version themselves, and can be edited by clicking any element.
+chat where documents, charts, tables, slides, and full HTML pages render live,
+stream as they're written, version themselves, and can be edited by clicking any
+element.
 
 Quality bar: Genspark · ChatGPT Canvas · Claude Artifacts.
 
@@ -35,9 +36,11 @@ Quality bar: Genspark · ChatGPT Canvas · Claude Artifacts.
 ## Table of contents
 
 - [See it with zero backend (schema replay)](#see-it-with-zero-backend-schema-replay)
+- [Run the full reference app](#run-the-full-reference-app)
 - [Add a canvas to your own app](#add-a-canvas-to-your-own-app)
 - [The three ideas](#the-three-ideas)
 - [Features](#features)
+- [What to emit per artifact type](#what-to-emit-per-artifact-type)
 - [Add your own artifact type](#add-your-own-artifact-type)
 - [Docs](#docs) · [Roadmap](#roadmap) · [License](#license)
 
@@ -51,11 +54,15 @@ This is the fastest way to see it and to build renderers:
 
 ```bash
 pnpm install
-pnpm dev:web                  # → open http://localhost:3000/replay
+pnpm dev:web                  # → open http://localhost:3000
 ```
 
-Pick a scenario (HTML page, streaming doc, chart, table) and watch it render
-exactly as a real agent would drive it. In code:
+The home page (`/`) is a **Schema Explorer**: a Swagger-style tour of the wire
+protocol where, per artifact type, you see the Python call, the artifact
+envelope, the `data` schema, and a live-rendering "try it out" panel. For the raw
+fixture player, open [`/replay`](http://localhost:3000/replay) and pick a scenario
+(HTML page, streaming doc, chart, table, slides) to watch it render exactly as a
+real agent would drive it. In code:
 
 ```tsx
 import { Canvas, useCanvasReplay, scenarios } from "@braincrew-lab/langchain-canvas";
@@ -68,12 +75,51 @@ play(scenarios[0].events);    // schema → screen, no network
 > stream channel; the frontend doesn't care whether they come from a fixture or a
 > live agent. Develop against fixtures now, plug the real agent in when it's ready.
 
+## Run the full reference app
+
+A complete front-to-back demo lives in `apps/` — a Next.js frontend and a FastAPI
+reference server driving a real agent.
+
+```bash
+make install                  # pnpm install + uv sync (server deps)
+
+# 1. backend — FastAPI on :8000
+cp apps/server/.env.example apps/server/.env     # then set ANTHROPIC_API_KEY
+make dev-server
+
+# 2. frontend — Next.js on :3000
+cp apps/web/.env.example apps/web/.env.local     # BACKEND_URL=http://localhost:8000
+make dev-web                  # → open http://localhost:3000/chat
+```
+
+**Environment variables**
+
+| File | Var | Purpose |
+| --- | --- | --- |
+| `apps/server/.env` | `ANTHROPIC_API_KEY` | Model credentials for the agent (required for `/chat`). |
+| `apps/server/.env` | `CORS_ORIGINS` | Comma-separated origins allowed to call the server directly (default `http://localhost:3000`). Must match the frontend's origin. |
+| `apps/web/.env.local` | `BACKEND_URL` | Backend the `/api/chat` SSE proxy forwards to (default `http://localhost:8000`). |
+| `apps/web/.env.local` | `NEXT_PUBLIC_CANVAS_SERVER` | Backend the browser calls directly for canvas hydration / save / upload (default `http://localhost:8000`). |
+| `apps/web/.env.local` | `NEXT_PUBLIC_LANGGRAPH_URL` | *(optional)* Point `/chat` at a LangGraph server instead of the FastAPI reference server (see `examples/deepagents-canvas`). |
+
+> The frontend must run on an origin listed in `CORS_ORIGINS` (default
+> `http://localhost:3000`). The chat page calls the backend directly for canvas
+> files, so an origin mismatch surfaces as a CORS error.
+
 ## Add a canvas to your own app
 
 Two installs, two small pieces of code.
 
-> Not yet published to PyPI/npm — for now install from this repo (see
-> `apps/server/pyproject.toml` and `pnpm-workspace.yaml` for the workspace wiring).
+The React SDK is on npm; the Python package isn't on PyPI yet, so install it from
+this repo (see `apps/server/pyproject.toml` for the workspace wiring).
+
+```bash
+# frontend
+npm i @braincrew-lab/langchain-canvas          # or pnpm / yarn
+
+# backend (from a checkout of this repo)
+pip install "langchain-canvas[ingestion] @ git+https://github.com/braincrew-lab/langchain-canvas.git#subdirectory=packages/canvas-py"
+```
 
 ### Backend (Python) — emit artifacts from a tool
 
@@ -113,6 +159,11 @@ async def chat(body: Body):
     return StreamingResponse(sse_from_agent(agent, inputs, config=config),
                              media_type="text/event-stream")
 ```
+
+Prefer a ready-made toolset? `create_canvas_tools(...)` (and the focused
+`create_document_tools` / `create_deck_tools` / `create_table_tools` /
+`create_export_tool` / `create_asset_tool`) give the agent canvas tools without
+writing your own.
 
 ### Frontend (React) — render it
 
@@ -161,18 +212,27 @@ Under the hood it rides LangChain 1.x's native custom-stream channel
 ## Features
 
 - 🌐 **HTML is the base** — the agent emits a self-contained page, rendered in a
-  CSP-sandboxed iframe. Documents, charts, and tables are structured conveniences
-  on top.
+  CSP-sandboxed iframe. Documents, charts, tables, and slides are structured
+  conveniences on top.
 - 🖱️ **Click-to-edit** — hover highlights, click selects, then either type an
   instruction (the agent surgically patches just that element) or use the **style
   panel** (color / size / weight / align) and **double-click to edit text inline**.
-- ⚡ **O(1) element patches** — `canvas.node_patch` swaps one element by its
-  `data-cid` instead of resending the page.
+- ⚡ **O(1) element patches** — `page.patch_node(cid, html)` swaps one element by
+  its `data-cid` instead of resending the page.
 - 📝 **Streaming documents** — markdown rendered live, token-by-token.
-- 📊 **Charts** & 📋 **tables** — line/bar/area/pie and sticky-header grids over tidy rows.
-- 📦 **Export to files** — any artifact → self-contained **`.html`**, plus `.md` / `.csv` / `.json`.
-- 🗂️ **Tabs + versioning** — switch between artifacts; page through every version.
-- 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`, or use the reconciler/SSE client with your own UI.
+- 📊 **Charts** & 📋 **tables** — line/bar/area/pie (ECharts) and sticky-header
+  grids over tidy rows, with spreadsheet-style formula support.
+- 🗂️ **Files in, files out** — drop a source file onto the canvas (`file`
+  artifacts, with cover thumbnails and excerpts); export any artifact to a
+  self-contained **`.html`**, **`.docx`**, **`.pdf`**, plus `.md` / `.csv` / `.json`.
+- 🧷 **Persistent & reload-safe** — per-thread canvases are stored, hydrated on
+  reload, and hand edits are saved back as commits (`CanvasStore` /
+  `FileCanvasStore` + `hydrate_events`).
+- 🔖 **Tabs + versioning** — switch between artifacts; page through every version.
+- 🧩 **Pluggable renderers** & 🔌 **headless core** — register `type → component`,
+  or drive the reconciler/SSE client (and a `./langgraph` transport) from your own UI.
+- 🎛️ **Host-customizable chrome** — override labels, header chrome, and export
+  actions via `<Canvas labels chrome exportExtras />`.
 - 🧵 **Typed on both ends** — Pydantic and TypeScript mirror one wire protocol.
 
 ## What to emit per artifact type
@@ -181,13 +241,14 @@ The `type` string selects the renderer, so **send the shape that matches the typ
 you want** — a table wrapped in `html` renders as a web page, not a grid. One
 `canvas.create` line per artifact:
 
-| type       | renders as        | `data` you must ship                                  |
-| ---------- | ----------------- | ----------------------------------------------------- |
-| `html`     | web page (iframe) | `{ html }`                                             |
-| `document` | Word-style doc    | `{ format: "markdown", content }`                     |
-| `slides`   | PowerPoint deck   | `{ slides: [{ layout, title, bullets, … }] }`         |
-| `table`    | Excel-style grid  | `{ columns: [{ key, label }], rows: [{ … }] }`        |
-| `chart`    | line/bar/area/pie | `{ chart, xKey, rows, series: [{ key, label }] }`     |
+| type       | renders as         | `data` you must ship                                  |
+| ---------- | ------------------ | ----------------------------------------------------- |
+| `html`     | web page (iframe)  | `{ html }`                                            |
+| `document` | Word-style doc     | `{ format: "markdown", content }`                     |
+| `slides`   | PowerPoint deck    | `{ slides: [{ layout, title, bullets, … }] }`         |
+| `table`    | Excel-style grid   | `{ columns: [{ key, label }], rows: [{ … }] }`        |
+| `chart`    | line/bar/area/pie  | `{ chart, xKey, rows, series: [{ key, label }] }`     |
+| `file`     | download / preview | `{ path, name, mediaType?, size?, cover?, excerpt? }` |
 
 ```json
 { "type": "canvas.create", "artifact": {
@@ -219,6 +280,7 @@ Three steps, zero transport changes:
 - [Architecture](docs/01-architecture.md) — the boundaries and why they exist.
 - [Wire protocol](docs/02-protocol.md) — every event and its reconciliation effect.
 - [Getting started](docs/03-getting-started.md) — copy-paste, front to back.
+- [Code execution](docs/04-code-execution.md) — running code next to the canvas.
 - [Contributing](CONTRIBUTING.md).
 
 ## Roadmap
@@ -227,9 +289,7 @@ Three steps, zero transport changes:
 - Multi-agent **parallel section fill** (subagents patch different regions live)
 - Self-critique visual loop (agent screenshots and refines its own page)
 - `code` artifacts (Monaco + diff) · HTML → React component export
-- Durable, reload-surviving version history via a LangGraph checkpointer
 
 ## License
 
 [MIT](LICENSE)
-# langchain-canvas
