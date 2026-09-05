@@ -28,6 +28,7 @@ from langchain_canvas import InMemoryCanvasStore, create_export_tool
 from langchain_canvas.exporters import (
     PPTX_MIME,
     HtmlDocxExporter,
+    MarkdownDocxExporter,
     SlidesPptxExporter,
     TableXlsxExporter,
     default_exporters,
@@ -1014,3 +1015,94 @@ def test_slides_pptx_an_explicitly_unfilled_shape_stays_unfilled():
     unfilled, defaulted = shapes[0], shapes[1]
     assert unfilled.fill.type == MSO_FILL.BACKGROUND
     assert defaulted.fill.type == MSO_FILL.SOLID  # an authored box still shows
+
+
+# --- rich tables at the docx door ------------------------------------------------
+
+
+def _rich_table_html() -> str:
+    return """
+    <table>
+      <tr>
+        <th colspan="3" style="background-color:#DDEBF7">분기 실적, 요약</th>
+      </tr>
+      <tr>
+        <td rowspan="2" style="width:30%">합계</td>
+        <td style="text-align:right">120</td>
+        <td bgcolor="#FFF2CC" align="center">양호</td>
+      </tr>
+      <tr><td>34</td><td>56</td></tr>
+    </table>
+    """
+
+
+def _docx_table(result):
+    import docx
+
+    return docx.Document(io.BytesIO(result.data)).tables[0]
+
+
+def test_html_docx_merged_cells_stay_merged():
+    """colspan/rowspan used to be dropped at parse time, so a heading merged
+    across three columns exported as three separate cells."""
+    table = _docx_table(HtmlDocxExporter().export(_rich_table_html(), path="report.html"))
+    # the heading spans the row: all three grid positions are the same cell
+    assert table.cell(0, 0)._tc is table.cell(0, 2)._tc
+    assert table.cell(0, 0).text == "분기 실적, 요약"
+    # the vertical merge holds the first column of rows 1-2
+    assert table.cell(1, 0)._tc is table.cell(2, 0)._tc
+    assert table.cell(1, 0).text == "합계"
+
+
+def test_html_docx_cell_backgrounds_and_alignment_land():
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+
+    table = _docx_table(HtmlDocxExporter().export(_rich_table_html(), path="report.html"))
+
+    def fill(cell):
+        values = cell._tc.xpath("./w:tcPr/w:shd/@w:fill")
+        return values[0] if values else None
+
+    assert fill(table.cell(0, 0)) == "DDEBF7"  # style="background-color"
+    assert fill(table.cell(1, 2)) == "FFF2CC"  # legacy bgcolor attribute
+    assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    # the stated width:30% reached the table grid (twips of the 9360 page grid)
+    grid = table._tbl.tblGrid.findall(qn("w:gridCol"))
+    assert int(grid[0].get(qn("w:w"))) == int(9360 * 0.30)
+
+
+def test_markdown_docx_column_alignment_from_the_separator():
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    content = "| 항목 | 값 | 비고 |\n|:---|---:|:---:|\n| 표본 | 64 | 양호 |\n"
+    table = _docx_table(MarkdownDocxExporter().export(content, path="notes.md"))
+    assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert table.cell(1, 0).paragraphs[0].alignment is None  # ':---' keeps the default
+
+
+def test_a_nested_table_no_longer_ends_the_outer_one():
+    """A nested <table> close used to close the outer table mid-row."""
+    content = """
+    <table>
+      <tr><td>before</td><td><table><tr><td>inner</td></tr></table></td></tr>
+      <tr><td>after</td><td>tail</td></tr>
+    </table>
+    """
+    table = _docx_table(HtmlDocxExporter().export(content, path="n.html"))
+    assert len(table.rows) == 2  # the second row survived
+    assert table.cell(1, 0).text == "after"
+    assert "inner" in table.cell(0, 1).text  # the nested words still land
+
+
+def test_a_plain_table_exports_exactly_as_before():
+    """No spans, no styles — the writer adds nothing the source did not say."""
+    from docx.oxml.ns import qn
+
+    content = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
+    table = _docx_table(HtmlDocxExporter().export(content, path="p.html"))
+    assert [c.text for c in table.rows[1].cells] == ["1", "2"]
+    assert table.rows[0].cells[0].paragraphs[0].runs[0].bold is True  # header bold kept
+    assert not table.cell(0, 0)._tc.xpath("./w:tcPr/w:shd")  # no shading invented
