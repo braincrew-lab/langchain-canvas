@@ -226,10 +226,10 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                       key={el.id}
                       el={el}
                       scale={thumbBox.scale}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale, page), ...rotationStyle(el), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale, page), ...rotationStyle(el), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }), height: `${boxHeightPct(el, page)}%` }}
                     />
                   ) : el.type === "shape" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale), ...rotationStyle(el) }} />
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale), ...rotationStyle(el), height: `${el.h}%` }} />
                   ) : el.type === "table" ? (
                     <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", color: s.textColor ?? defaultTextColor(s.background), ...rotationStyle(el) }}>
                       <SlideTable el={el} scale={thumbBox.scale} />
