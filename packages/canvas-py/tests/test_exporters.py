@@ -1041,7 +1041,8 @@ def test_slides_pptx_honors_a_portrait_page():
                            "h": 10, "text": "Portrait"}]}
         ]},
     })
-    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="tall.slides.json").data))
+    printed = SlidesPptxExporter().export(content, path="tall.slides.json").data
+    deck = Presentation(io.BytesIO(printed))
     assert deck.slide_height > deck.slide_width
     assert deck.slide_width == Inches(7.5)
     assert deck.slide_height == Inches(10)
