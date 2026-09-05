@@ -18,7 +18,7 @@ emitter builds them; the SSE bridge serializes them with `to_sse()`.
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -149,22 +149,22 @@ class DoneEvent(_Event):
     type: Literal["done"] = "done"
 
 
-CanvasEvent = Union[
-    CanvasCreate,
-    CanvasAppend,
-    CanvasPatch,
-    CanvasNodePatch,
-    CanvasReplace,
-    CanvasStatus,
-    CanvasCommit,
-]
+CanvasEvent = (
+    CanvasCreate
+    | CanvasAppend
+    | CanvasPatch
+    | CanvasNodePatch
+    | CanvasReplace
+    | CanvasStatus
+    | CanvasCommit
+)
 
-StreamEvent = Union[
-    MessageDelta,
-    MessageEnd,
-    ToolStart,
-    ToolEnd,
-    CanvasEvent,
-    ErrorEvent,
-    DoneEvent,
-]
+StreamEvent = (
+    MessageDelta
+    | MessageEnd
+    | ToolStart
+    | ToolEnd
+    | CanvasEvent
+    | ErrorEvent
+    | DoneEvent
+)
