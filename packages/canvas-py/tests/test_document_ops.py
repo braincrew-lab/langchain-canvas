@@ -594,3 +594,78 @@ def test_an_address_in_front_of_new_is_never_written_into_the_page() -> None:
     the title. The address points; it is not text."""
     after = ops.replace_text(_twice(), "[p0] 리서치 인텔리전스", "[p0] 뉴스 인텔리전스")
     assert _texts(after)[0] == "뉴스 인텔리전스"
+
+
+# --- the table's shape in the outline --------------------------------------------
+
+
+def _rich_table_document() -> bytes:
+    """One table carrying everything the outline has to keep: a heading
+    merged across the row, a vertical merge, a comma and a pipe inside
+    cells, a shaded cell, a repeat-on-every-page header row, and a nested
+    table."""
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    document = Document()
+    table = document.add_table(rows=3, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 2)).text = "분기 실적, 요약"
+    table.cell(1, 0).merge(table.cell(2, 0)).text = "합계"
+    table.cell(1, 1).text = "A|B"
+    table.cell(1, 2).text = "120"
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), "DDEBF7")
+    table.cell(1, 2)._tc.get_or_add_tcPr().append(shading)
+    header = OxmlElement("w:tblHeader")
+    table.rows[0]._tr.get_or_add_trPr().append(header)
+    table.cell(2, 2).add_table(rows=1, cols=2)
+    out = io.BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def test_a_merged_cell_appears_once_with_its_span() -> None:
+    """python-docx reports a merged cell per grid position; joined naively the
+    heading read as the same words three times, and a model editing 'the
+    second one' was editing a merge, not a duplicate."""
+    rendered = ops.outline(_rich_table_document()).render()
+    assert rendered.count("분기 실적, 요약") == 1
+    assert "분기 실적, 요약 (3x1)" in rendered
+    assert "합계 (1x2)" in rendered
+    assert "| ^ |" in rendered  # the vertical continuation keeps columns in place
+
+
+def test_cell_shading_and_the_header_row_are_named() -> None:
+    rendered = ops.outline(_rich_table_document()).render()
+    assert "120 [#DDEBF7]" in rendered
+    assert "(header row)" in rendered
+    assert "[+1 nested]" in rendered
+
+
+def test_a_comma_or_pipe_inside_a_cell_does_not_break_the_row() -> None:
+    """The old comma-joined row made '분기 실적, 요약' read as two cells."""
+    rendered = ops.outline(_rich_table_document()).render()
+    assert "A\\|B" in rendered
+    # pipe rows: every data row of t0 renders with pipe delimiters
+    table_lines = [line for line in rendered.splitlines() if line.startswith("      |")]
+    assert len(table_lines) == 3
+
+
+def test_a_plain_table_stays_plain() -> None:
+    """No merges, no shading, no header mark — the annotations only appear
+    when the file put something there to see."""
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    for r in range(2):
+        for c in range(2):
+            table.cell(r, c).text = f"r{r}c{c}"
+    out = io.BytesIO()
+    document.save(out)
+    rendered = ops.outline(out.getvalue()).render()
+    assert "      | r0c0 | r0c1 |" in rendered
+    assert "(header row)" not in rendered
+    assert "[#" not in rendered
+    assert "(1x1)" not in rendered and "x1)" not in rendered

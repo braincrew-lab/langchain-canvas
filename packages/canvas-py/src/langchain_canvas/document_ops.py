@@ -200,8 +200,88 @@ def _shape_size_in(shape: Any) -> tuple[float, float]:
     return round(shape.width.inches, 2), round(shape.height.inches, 2)
 
 
-def _table_rows(table: Any) -> list[list[str]]:
-    return [[cell.text.strip() for cell in row.cells] for row in table.rows]
+def _cell_fill(cell: Any) -> str | None:
+    """The cell's shading as ``#RRGGBB``, or ``None`` when there is nothing to see.
+
+    ``auto`` and explicit white are both the page showing through — a mark for
+    them would say "this cell is special" about most of a generated document.
+    """
+    values = cell._tc.xpath("./w:tcPr/w:shd/@w:fill")
+    fill = values[0] if values else None
+    if not fill or str(fill).lower() in ("auto", "ffffff"):
+        return None
+    return f"#{str(fill).upper()}"
+
+
+def _cell_text(cell: Any) -> str:
+    """One line of cell text, safe inside a pipe row (bars escaped, paragraph
+    breaks folded to ``;``)."""
+    return "; ".join(
+        part for part in (p.strip() for p in cell.text.split("\n")) if part
+    ).replace("|", "\\|")
+
+
+def _table_lines(table: Any) -> list[str]:
+    """A table as pipe rows that keep what the page shows.
+
+    ``cell.text`` alone loses the table's *shape*: python-docx reports a
+    merged cell once per grid position, so a heading spanning four columns
+    read as the same words four times — and a model editing "the second
+    Region cell" was editing a merge, not a duplicate. Shading vanished
+    entirely, and a comma inside a cell broke the old comma-joined row.
+
+    Here each merged cell appears once, at its top-left, sized in the reading
+    order a person uses: ``(2x3)`` is two columns wide, three rows tall. A
+    vertical continuation shows as ``^`` so columns keep their place. A cell's
+    shading rides it as ``[#RRGGBB]``, a nested table as ``[+N nested]``, and
+    a row marked to repeat on every page as ``(header row)``.
+    """
+    # One walk of the grid, holding on to the cell objects: lxml re-creates
+    # element proxies on re-access, so an ``id()`` taken in a first pass does
+    # not survive a second ``row.cells`` — the kept references are what make
+    # the merge detection stable.
+    all_rows = list(table.rows)
+    grid = [list(row.cells) for row in all_rows]
+    origin: dict[int, tuple[int, int]] = {}
+    span: dict[int, list[int]] = {}  # id(tc) -> [colspan, rowspan]
+    for row_index, row_cells in enumerate(grid):
+        for col_index, cell in enumerate(row_cells):
+            tc = id(cell._tc)
+            if tc not in origin:
+                origin[tc] = (row_index, col_index)
+                span[tc] = [1, 1]
+            else:
+                first_row, first_col = origin[tc]
+                span[tc][0] = max(span[tc][0], col_index - first_col + 1)
+                span[tc][1] = max(span[tc][1], row_index - first_row + 1)
+
+    lines: list[str] = []
+    for row_index, row in enumerate(all_rows):
+        cells: list[str] = []
+        emitted_here: set[int] = set()
+        for col_index, cell in enumerate(grid[row_index]):
+            tc = id(cell._tc)
+            if tc in emitted_here:
+                continue  # horizontal continuation — the (CxR) already says how wide
+            emitted_here.add(tc)
+            if origin[tc][0] != row_index:
+                cells.append("^")  # vertical continuation — keeps columns in place
+                continue
+            parts = [_cell_text(cell)]
+            colspan, rowspan = span[tc]
+            if colspan > 1 or rowspan > 1:
+                parts.append(f"({colspan}x{rowspan})")
+            fill = _cell_fill(cell)
+            if fill:
+                parts.append(f"[{fill}]")
+            if cell.tables:
+                parts.append(f"[+{len(cell.tables)} nested]")
+            cells.append(" ".join(part for part in parts if part))
+        line = "      | " + " | ".join(cells) + " |"
+        if row._tr.xpath("./w:trPr/w:tblHeader"):
+            line += " (header row)"
+        lines.append(line)
+    return lines
 
 
 def outline(data: bytes, *, path: str = "document.docx") -> Outline:
@@ -225,9 +305,8 @@ def outline(data: bytes, *, path: str = "document.docx") -> Outline:
     image_index = 0
     for item in document.iter_inner_content():
         if isinstance(item, Table):
-            rows = _table_rows(item)
             lines.append(f"[t{table_index}] {len(item.rows)}x{len(item.columns)} table")
-            lines.extend("      " + ",".join(cell for cell in row) for row in rows)
+            lines.extend(_table_lines(item))
             table_index += 1
             continue
         text = item.text.strip()
