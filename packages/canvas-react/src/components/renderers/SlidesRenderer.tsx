@@ -15,7 +15,7 @@ import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
 import { boxHeightPct } from "../../client/slideText";
-import { FreeSlide, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
+import { FreeSlide, rotationStyle, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 import { useLabels } from "../chrome";
 
@@ -224,18 +224,18 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                   el.type === "text" ? (
                     <div
                       key={el.id}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale, page), ...rotationStyle(el), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
                     >
                       {el.text}
                     </div>
                   ) : el.type === "shape" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale) }} />
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale), ...rotationStyle(el) }} />
                   ) : el.type === "table" ? (
-                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", color: s.textColor ?? defaultTextColor(s.background) }}>
+                    <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", color: s.textColor ?? defaultTextColor(s.background), ...rotationStyle(el) }}>
                       <SlideTable el={el} scale={thumbBox.scale} />
                     </div>
                   ) : (
-                    <img key={el.id} src={assetUrl(el.src)} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain" }} />
+                    <img key={el.id} src={assetUrl(el.src)} alt="" style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, objectFit: "contain", ...rotationStyle(el) }} />
                   ),
                 )}
                 </div>
@@ -298,7 +298,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
           {slide.masterImage && (
             <img src={assetUrl(slide.masterImage)} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
           )}
-          <FreeSlide elements={resolveElements(slide, page)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} />
+          <FreeSlide elements={resolveElements(slide, page)} onChange={(elements) => update({ elements })} padding={slide.padding} fontScale={editBox.scale} page={page} />
         </div>
 
         <div className="cv-deck__nav cv-chrome">
@@ -325,21 +325,21 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%` }}>
-                    <div className="cv-free__text" style={textStyle(el, presentBox.scale)}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, ...rotationStyle(el) }}>
+                    <div className="cv-free__text" style={textStyle(el, presentBox.scale, page)}>
                       {el.text}
                     </div>
                   </div>
                 ) : el.type === "shape" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor ?? defaultTextColor(slide.background) }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, color: slide.textColor ?? defaultTextColor(slide.background), ...rotationStyle(el) }}>
                     <div style={shapeStyle(el, presentBox.scale)} />
                   </div>
                 ) : el.type === "table" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden" }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, overflow: "hidden", ...rotationStyle(el) }}>
                     <SlideTable el={el} scale={presentBox.scale} />
                   </div>
                 ) : (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%` }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${el.h}%`, ...rotationStyle(el) }}>
                     <img className="cv-free__img" src={assetUrl(el.src)} alt="" />
                   </div>
                 ),

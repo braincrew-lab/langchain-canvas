@@ -125,6 +125,10 @@ class SlideElement(_CamelModel):
     y: float
     w: float
     h: float
+    # Clockwise rotation in degrees about the box centre, the way PowerPoint
+    # stores it. Absent means 0 (unrotated); the renderer and exporter both
+    # treat a missing value as no rotation.
+    rotation: float | None = None
     text: str | None = None
     src: str | None = None
     font_size: float | None = None

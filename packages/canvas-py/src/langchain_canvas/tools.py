@@ -89,6 +89,7 @@ from .layout_lint import (
     format_layout_warnings,
     lint_slides_data,
 )
+from .slide_diff import diff_slides, format_slide_diff
 from .protocol.artifacts import TableData
 from .replay import (
     ARTIFACT_SUFFIXES,
@@ -914,6 +915,27 @@ def create_canvas_tools(
         )
         return format_layout_warnings(warnings)
 
+    def _deck_diff_note(
+        canvas_id: str, path: str, content: str, previous_revision: str | None
+    ) -> str:
+        """What this save changed, element by element, or '' when there is no
+        prior revision to compare against (a new deck, or anything unreadable).
+
+        The diff is a bonus on top of the deck check, never a gate: any read or
+        parse failure returns '' rather than disturbing the save.
+        """
+        if previous_revision is None or not path.lower().endswith(".slides.json"):
+            return ""
+        try:
+            before = store.read(canvas_id, path, revision=previous_revision).content
+            old_data = json.loads(before).get("data")
+            new_data = json.loads(content).get("data")
+        except (CanvasStoreError, json.JSONDecodeError, AttributeError):
+            return ""
+        changes = diff_slides(old_data, new_data)
+        formatted = format_slide_diff(changes)
+        return f"\n\n{formatted}" if formatted else ""
+
     def _deck_eye(
         canvas_id: str,
         path: str,
@@ -1245,6 +1267,9 @@ def create_canvas_tools(
           it: `shape` grows the box to hold them, `text` shrinks the type
           to fit, `none` (the default) leaves the overflow for the deck
           check to name.
+          An element's `rotation` turns it clockwise about its own centre,
+          in degrees (omit or 0 for upright); it carries through to the
+          .pptx and the printed page.
           A `table` is `{"id": "t1", "type": "table", "x": 10, "y": 25,
           "w": 80, "h": 40, "rows": [["Item", "Q1"], ["Sales", "120"]],
           "header": true, "stroke": "#9E9E9E", "fontSize": 18}` — the
@@ -1262,6 +1287,13 @@ def create_canvas_tools(
         with no `template` takes the only `.pptx` under `sources/` when
         there is exactly one; write `"template": null` to build on a blank
         page instead.
+        Optional `page`, inside `data` next to `slides`: `{"widthIn": 10,
+        "heightIn": 5.625}` sets the page size the percent geometry and
+        `fontSize` refer to. Absent means the classic 16:9 landscape (10 x
+        5.625); make `heightIn` larger than `widthIn` for a portrait deck
+        (e.g. `{"widthIn": 7.5, "heightIn": 10}`), and the editor, the
+        preview and the exported .pptx all follow that shape. A `template`
+        brings its own page, so do not set both.
 
         A deck is refused, not saved, when a deck key sits outside `data`,
         when it does not match the schema, or when a slide carries both
@@ -1314,9 +1346,10 @@ def create_canvas_tools(
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
         save_note = _save_note(canvas_id, path, content)
+        diff_note = _deck_diff_note(canvas_id, path, content, None if is_new else revision)
         return _with_eye(
             f"Wrote {path} (revision {commit.revision})."
-            f"{template_note}{page_note or ''}{save_note}",
+            f"{template_note}{page_note or ''}{save_note}{diff_note}",
             _deck_eye(canvas_id, path, content, save_note, previous_revision=revision),
         )
 
@@ -1380,8 +1413,9 @@ def create_canvas_tools(
             # not there. Check the file as the edit left it.
             edited = store.read(canvas_id, path, revision=commit.revision).content
             save_note = _save_note(canvas_id, path, edited)
+            diff_note = _deck_diff_note(canvas_id, path, edited, revision)
             return _with_eye(
-                f"Edited {path} (revision {commit.revision}).{save_note}",
+                f"Edited {path} (revision {commit.revision}).{save_note}{diff_note}",
                 _deck_eye(canvas_id, path, edited, save_note, previous_revision=revision),
             )
         return f"Edited {path} (revision {commit.revision}).{save_note}"

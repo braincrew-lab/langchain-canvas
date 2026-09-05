@@ -9,11 +9,18 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import type { SlideElement } from "../../protocol/artifacts";
+import type { SlideElement, SlidePage } from "../../protocol/artifacts";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../../client/slideTable";
 import { boxHeightPct, textFitScale } from "../../client/slideText";
 import { useLabels } from "../chrome";
+
+/** CSS for an element's rotation — a clockwise turn about the box centre, the
+ *  same axis PowerPoint rotates on. Empty for an unrotated element so nothing
+ *  changes for the common case. */
+export function rotationStyle(el: SlideElement): CSSProperties {
+  return el.rotation ? { transform: `rotate(${el.rotation}deg)` } : {};
+}
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
@@ -48,9 +55,9 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
  *  above and below) is drawn at the same `scale` as the box it sits in, so a
  *  thumbnail is the slide made smaller rather than the slide with its
  *  paragraph spacing left at full size. */
-export function textStyle(el: SlideElement, scale = 1): CSSProperties {
+export function textStyle(el: SlideElement, scale = 1, page?: SlidePage): CSSProperties {
   return {
-    fontSize: (el.fontSize ?? 24) * scale * textFitScale(el),
+    fontSize: (el.fontSize ?? 24) * scale * textFitScale(el, page),
     fontWeight: el.bold ? 700 : 400,
     color: el.color,
     // A text outline (WordArt) rides the element's stroke fields.
@@ -273,6 +280,9 @@ interface FreeSlideProps {
    *  width at 96dpi) so on-screen text matches the exported file. Stored
    *  fontSize values and the size input stay in page px. */
   fontScale?: number;
+  /** The deck page, so autofit box-growth and text-shrink measure on the
+   *  deck's real shape (portrait as well as landscape). Absent = classic 16:9. */
+  page?: SlidePage;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -320,7 +330,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
   return best ? { pos: pos + best.delta, guide: best.guide } : { pos, guide: null };
 }
 
-export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSlideProps) {
+export function FreeSlide({ elements, onChange, padding, fontScale = 1, page }: FreeSlideProps) {
   const labels = useLabels();
   const slideRef = useRef<HTMLDivElement>(null);
   // Display-only: a canvas-asset src resolves to a URL; stored elements keep
@@ -473,7 +483,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
           key={el.id}
           data-el-id={el.id}
           className={`cv-free__el ${selected === el.id ? "is-selected" : ""}`}
-          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%` }}
+          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, ...rotationStyle(el) }}
           onPointerDown={(e) => onDown(e, el, "move")}
           onDoubleClick={(e) => {
             if (el.type === "text") {
@@ -503,7 +513,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
               className="cv-free__text"
               contentEditable={editingId === el.id}
               suppressContentEditableWarning
-              style={textStyle(el, fontScale)}
+              style={textStyle(el, fontScale, page)}
               onBlur={(e) => {
                 setEditingId(null);
                 updateEl(el.id, { text: e.currentTarget.textContent ?? "" });

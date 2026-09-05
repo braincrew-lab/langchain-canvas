@@ -71,6 +71,7 @@ from langchain_canvas.slide_text import (
     PAGE_W_PX,
     fit_scale,
     grown_height_pct,
+    metrics_page_px,
     wrapped_lines,
 )
 
@@ -159,6 +160,11 @@ def lint_slides_data(
     if not isinstance(slides, list):
         return _capped(warnings)
     page = data.get("page") if isinstance(data.get("page"), dict) else None
+    # The page's inches (or None for the classic 16:9) shape the px canvas the
+    # fit checks measure on, so a portrait deck is not judged against a
+    # landscape box — a false "text runs past the box" is exactly the kind of
+    # wrong warning this module refuses to emit.
+    page_dims = _page_dims(page)
     for number, slide in enumerate(slides, start=1):
         if not isinstance(slide, dict):
             continue
@@ -199,9 +205,9 @@ def lint_slides_data(
             _check_invisible_shape(element, number, label, warnings)
             _check_empty_text(element, number, label, warnings)
             _check_text_fit(
-                element, number, label, x, y, w, h, warnings, known_overflow, inherited
+                element, number, label, x, y, w, h, warnings, known_overflow, inherited, page_dims
             )
-            _check_autofit(element, number, label, y, w, h, warnings, edge, floor)
+            _check_autofit(element, number, label, y, w, h, warnings, edge, floor, page_dims)
             _check_broken_reference(element, number, label, ref_exists, warnings)
             _check_full_cover(number, index, label, box, boxed, warnings)
     capped = _capped(warnings)
@@ -597,6 +603,17 @@ _PAGE_W_PX, _PAGE_H_PX = PAGE_W_PX, PAGE_H_PX
 _FIT_SLACK = 1.25  # the box may be up to a quarter too small before we say so
 
 
+def _page_dims(page: dict[str, Any] | None) -> tuple[float, float] | None:
+    """The deck page's inches as ``(width, height)``, or ``None`` for the
+    classic 16:9 — the shape :func:`metrics_page_px` measures type on."""
+    if not isinstance(page, dict):
+        return None
+    width, height = page.get("widthIn"), page.get("heightIn")
+    if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+        return float(width), float(height)
+    return None
+
+
 def _check_text_fit(
     element: dict[str, Any],
     number: int,
@@ -608,6 +625,7 @@ def _check_text_fit(
     warnings: list[str],
     known_overflow: Mapping[tuple[float, float, float, float], float] | None = None,
     inherited: list[str] | None = None,
+    page: tuple[float, float] | None = None,
 ) -> None:
     """Text that needs clearly more height than its box has.
 
@@ -619,7 +637,7 @@ def _check_text_fit(
     slack, so a box that is merely snug stays quiet.
     """
     if element.get("type") == "table":
-        _check_table_fit(element, number, label, w, h, warnings)
+        _check_table_fit(element, number, label, w, h, warnings, page)
         return
     if element.get("type") != "text":
         return
@@ -634,8 +652,9 @@ def _check_text_fit(
     # _check_autofit.
     if element.get("autofit") in ("shape", "text"):
         return
-    box_w = w / 100.0 * _PAGE_W_PX
-    box_h = h / 100.0 * _PAGE_H_PX
+    page_w_px, page_h_px = metrics_page_px(page)
+    box_w = w / 100.0 * page_w_px
+    box_h = h / 100.0 * page_h_px
     if box_w <= 0 or box_h <= 0:
         return
     line_height = element.get("lineHeight")
@@ -677,6 +696,7 @@ def _check_autofit(
     warnings: list[str],
     edge: float,
     floor: float,
+    page: tuple[float, float] | None = None,
 ) -> None:
     """What an autofit box can still do wrong.
 
@@ -702,17 +722,18 @@ def _check_autofit(
         else None
     )
     if fit == "shape":
-        grown = grown_height_pct(text, float(size), w, h, leading)
+        grown = grown_height_pct(text, float(size), w, h, leading, page)
         # A box that has not grown is the off-page check's to name, once.
         if grown > h and y + grown > 100.0 + edge:
-            lines = wrapped_lines(text, float(size), w / 100.0 * _PAGE_W_PX)
+            page_w_px, _ = metrics_page_px(page)
+            lines = wrapped_lines(text, float(size), w / 100.0 * page_w_px)
             warnings.append(
                 f"slide {number}, element {label}: the box grows with its text to about "
                 f"{lines} line(s), and grown it reaches y + h = {_fmt(y + grown)} (off the "
                 "page — the page runs 0 to 100). Shorten the text or move the box up."
             )
         return
-    scale = fit_scale(text, float(size), w, h, leading)
+    scale = fit_scale(text, float(size), w, h, leading, page)
     shown = float(size) * scale
     if scale < 1.0 and shown < floor:
         warnings.append(
@@ -743,6 +764,7 @@ def _check_table_fit(
     w: float,
     h: float,
     warnings: list[str],
+    page: tuple[float, float] | None = None,
 ) -> None:
     """A table whose rows need clearly more height than its box has.
 
@@ -754,8 +776,9 @@ def _check_table_fit(
     grid = table_grid(element)
     if grid is None:
         return
-    box_w = w / 100.0 * _PAGE_W_PX
-    box_h = h / 100.0 * _PAGE_H_PX
+    page_w_px, page_h_px = metrics_page_px(page)
+    box_w = w / 100.0 * page_w_px
+    box_h = h / 100.0 * page_h_px
     if box_w <= 0 or box_h <= 0:
         return
     table_size = _font_px(element.get("fontSize"), _TABLE_FONT_PX)

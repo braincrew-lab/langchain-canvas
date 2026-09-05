@@ -1138,3 +1138,24 @@ def test_master_content_probe_and_blanking() -> None:
     blank = blank_slides_pptx(with_logo)
     assert blank is not None
     assert all(len(s.shapes) == 0 for s in Presentation(io.BytesIO(blank)).slides)
+
+
+# --- rotation ------------------------------------------------------------------
+
+
+def test_a_rotated_shape_keeps_its_angle() -> None:
+    """A shape turned on the slide comes back with its `rotation` in degrees,
+    so an edit can move it without losing the angle its author set."""
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "Tilted")
+        box.rotation = 30.0
+
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    assert element["rotation"] == pytest.approx(30.0, abs=0.1)
+
+
+def test_an_upright_shape_carries_no_rotation() -> None:
+    """An unrotated box leaves `rotation` off, so a deck that never turned a
+    shape stays byte-for-byte what it was."""
+    element = _elements(pptx_to_slides(_deck(lambda s: _textbox(s, "Straight"))))[0]
+    assert "rotation" not in element

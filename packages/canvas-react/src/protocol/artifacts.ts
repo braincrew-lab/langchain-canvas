@@ -112,6 +112,9 @@ export interface SlideElement {
   y: number;
   w: number;
   h: number;
+  /** Clockwise rotation in degrees about the box centre (PowerPoint's own
+   *  units). Absent means 0 — unrotated. */
+  rotation?: number;
   text?: string;
   src?: string;
   fontSize?: number;

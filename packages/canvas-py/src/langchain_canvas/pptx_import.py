@@ -25,7 +25,7 @@ one stays visible in the original and in the exported file through the skin:
 * pictures that are not png / jpeg / gif (the exporter reads no others)
 * gradient and theme-referenced backgrounds (the field holds one colour;
   a picture background is laid in as the bottom element instead)
-* rotation, animations, transitions, SmartArt
+* animations, transitions, SmartArt
 """
 
 from __future__ import annotations
@@ -95,13 +95,20 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
     """The original's own floor, from a light pass over its shapes (no pictures)."""
     from pptx import Presentation  # type: ignore[import-untyped]
 
-    from .slide_text import PAGE_H_PX, PAGE_W_PX, needed_height
+    from .slide_text import metrics_page_px, needed_height
 
     try:
         deck = Presentation(BytesIO(data))
     except Exception:  # noqa: BLE001 - an unreadable skin has no floor to offer
         return None
     width, height = int(deck.slide_width or 0), int(deck.slide_height or 0)
+    # The box metric runs on the deck's own page shape (its inches), so an
+    # imported portrait deck's overflow baseline lines up with the deck check,
+    # which now measures on the same page. Falls back to 16:9 for a page-less
+    # or malformed deck, exactly as before.
+    _EMU_PER_INCH = 914400.0
+    page_dims = (width / _EMU_PER_INCH, height / _EMU_PER_INCH) if width and height else None
+    page_w_px, page_h_px = metrics_page_px(page_dims)
     smallest: float | None = None
     overhang = 0.0
     overflow: dict[tuple[float, float, float, float], float] = {}
@@ -150,10 +157,10 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
                     needed = needed_height(
                         shape.text_frame.text,
                         round(size.pt * _PT_TO_PX, 1),
-                        w_pct / 100.0 * PAGE_W_PX,
+                        w_pct / 100.0 * page_w_px,
                         _line_height(list(shape.text_frame.paragraphs)),
                     )
-                    box_h = h_pct / 100.0 * PAGE_H_PX
+                    box_h = h_pct / 100.0 * page_h_px
                     if box_h > 0 and needed > box_h:
                         key = overflow_key(x_pct, y_pct, w_pct, h_pct)
                         overflow[key] = max(overflow.get(key, 0.0), round(needed / box_h, 3))
@@ -764,13 +771,20 @@ def _frame(shape: Any, index: int, width: int, height: int) -> dict[str, Any] | 
     box_w, box_h = getattr(shape, "width", None), getattr(shape, "height", None)
     if left is None or top is None or box_w is None or box_h is None:
         return None
-    return {
+    frame: dict[str, Any] = {
         "id": f"e{index}",
         "x": round(100 * left / width, 3),
         "y": round(100 * top / height, 3),
         "w": round(100 * box_w / width, 3),
         "h": round(100 * box_h / height, 3),
     }
+    # Rotation is stored on the shape's transform in degrees clockwise; a box
+    # left upright reports 0, which we leave off so an unrotated deck stays
+    # byte-for-byte what it was.
+    rotation = getattr(shape, "rotation", None)
+    if rotation:
+        frame["rotation"] = round(float(rotation), 3)
+    return frame
 
 
 def _is_group(shape: Any) -> bool:

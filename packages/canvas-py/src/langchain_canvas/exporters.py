@@ -1096,11 +1096,14 @@ class SlidesPptxExporter:
                         # so a viewer that does not re-fit on open still
                         # shows every line.
                         grown = grown_height_pct(
-                            words, font_px, element.w, element.h, element.line_height
+                            words, font_px, element.w, element.h, element.line_height,
+                            (canvas_w, canvas_h),
                         )
                         if grown > element.h:
                             _, _, _, height = inch_box(element.model_copy(update={"h": grown}))
                     box = slide.shapes.add_textbox(left, top, width, height)
+                    if element.rotation:
+                        box.rotation = element.rotation
                     frame = box.text_frame
                     frame.word_wrap = True
                     if fit == "shape":
@@ -1111,7 +1114,8 @@ class SlidesPptxExporter:
                         # here is what shows until then.
                         frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
                         shrink = fit_scale(
-                            words, font_px, element.w, element.h, element.line_height
+                            words, font_px, element.w, element.h, element.line_height,
+                            (canvas_w, canvas_h),
                         )
                         if shrink < 1.0:
                             frame._bodyPr.find(qn("a:normAutofit")).set(
@@ -1225,6 +1229,8 @@ class SlidesPptxExporter:
                     else:
                         shape_type = MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
                         shape = slide.shapes.add_shape(shape_type, left, top, width, height)
+                        if element.rotation:
+                            shape.rotation = element.rotation
                         if fill_color:
                             shape.fill.solid()
                             shape.fill.fore_color.rgb = RGBColor.from_string(fill_color)
@@ -1256,6 +1262,8 @@ class SlidesPptxExporter:
                         picture.height = Emu(int(native_h * fit))
                         picture.left = Emu(int(left) + (int(width) - int(picture.width)) // 2)
                         picture.top = Emu(int(top) + (int(height) - int(picture.height)) // 2)
+                    if element.rotation:
+                        picture.rotation = element.rotation
 
             if slide_model.notes:
                 notes_frame = slide.notes_slide.notes_text_frame

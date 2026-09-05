@@ -151,11 +151,11 @@ def test_the_same_mistake_across_many_elements_is_summarized() -> None:
 
 
 def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
-    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", rotation=45))
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", wobble=45))
     warnings = lint_slides_data(deck)
     assert len(warnings) == 1
     assert "the canvas and the export both ignore them" in warnings[0]
-    assert 'slide 1, element "box": "rotation"' in warnings[0]
+    assert 'slide 1, element "box": "wobble"' in warnings[0]
 
 
 def test_unknown_fields_are_caught_at_every_level() -> None:
@@ -422,10 +422,10 @@ def test_an_unknown_field_alone_still_lands_with_a_warning() -> None:
     store = InMemoryCanvasStore()
     result = _write(store, {"slides": [{"elements": [
         {"id": "t", "type": "text", "x": 10, "y": 10, "w": 50, "h": 10,
-         "text": "Hi", "rotation": 45}
+         "text": "Hi", "wobble": 45}
     ]}]})
     assert result.startswith("Wrote deck.slides.json")
-    assert '"rotation"' in result
+    assert '"wobble"' in result
 
 
 def test_a_deck_key_outside_data_is_refused_with_its_place() -> None:

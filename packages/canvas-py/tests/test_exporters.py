@@ -1014,3 +1014,34 @@ def test_slides_pptx_an_explicitly_unfilled_shape_stays_unfilled():
     unfilled, defaulted = shapes[0], shapes[1]
     assert unfilled.fill.type == MSO_FILL.BACKGROUND
     assert defaulted.fill.type == MSO_FILL.SOLID  # an authored box still shows
+
+
+def test_slides_pptx_writes_element_rotation():
+    """A rotated element turns in the .pptx too, so the exported deck matches
+    what the editor drew."""
+    content = _deck(
+        [{"elements": [
+            {"id": "t", "type": "text", "x": 10, "y": 10, "w": 40, "h": 12,
+             "text": "Tilted", "rotation": 30},
+        ]}]
+    )
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="d.slides.json").data))
+    (slide,) = deck.slides
+    box = next(s for s in slide.shapes if s.has_text_frame and s.text_frame.text == "Tilted")
+    assert round(box.rotation) == 30
+
+
+def test_slides_pptx_honors_a_portrait_page():
+    """A deck whose page is taller than wide exports a portrait .pptx — the
+    page size follows `data.page`, not a fixed 16:9."""
+    content = json.dumps({
+        "type": "slides", "title": "Tall",
+        "data": {"page": {"widthIn": 7.5, "heightIn": 10}, "slides": [
+            {"elements": [{"id": "t", "type": "text", "x": 10, "y": 10, "w": 60,
+                           "h": 10, "text": "Portrait"}]}
+        ]},
+    })
+    deck = Presentation(io.BytesIO(SlidesPptxExporter().export(content, path="tall.slides.json").data))
+    assert deck.slide_height > deck.slide_width
+    assert deck.slide_width == Inches(7.5)
+    assert deck.slide_height == Inches(10)
