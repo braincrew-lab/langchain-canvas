@@ -4,6 +4,23 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.31] — 2026-09-05
+
+### Added
+
+- Slides: an element's `rotation` (degrees, clockwise, about the box centre) travels the whole path — pptx import, the editor, thumbnails, the present view, print/PDF export and the pptx export.
+- Slides: portrait pages. Text metrics follow `data.page`, so a portrait deck measures, checks and exports on its own shape; `write_canvas` documents `{"widthIn": 7.5, "heightIn": 10}` for a portrait deck.
+- Slides: a deck save reports what it changed since the last save (`Changed since last save:` — moved, resized, rotated, text, restyled, added, removed, reordered, page), with elements matched by id.
+- Slides: `review_deck` adds a pixel note of what the last save visibly changed (`visual: slide 2 changed 6.6% (elements "title")`) when a page renderer is mounted.
+- Slides: `wrap: false` for a box PowerPoint never folds; the import carries the file's stored autofit shrink and its text insets; a snug one-line label shrinks a hair instead of wrapping.
+- Word: the outline keeps a table's shape — merged cells once with their span, `[#RRGGBB]` shading, pipe-safe rows. HTML and Markdown to Word carry colspan, rowspan, fills, alignment and column widths. `merge_document_table_cells` and `style_document_table_cells` edit an uploaded document's tables in place.
+- `workbook_working_copy` is exported from the package root.
+
+### Fixed
+
+- Point sizes are carried at two decimals, so a pptx round trip returns them exact.
+- Deck check: no false "text runs past the box" warning on a portrait deck.
+
 ## [0.7.30] — 2026-09-04
 
 ### Fixed
