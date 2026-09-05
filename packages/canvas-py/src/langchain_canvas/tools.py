@@ -68,10 +68,12 @@ from .document_ops import (
     MissingDocumentDependencyError,
     insert_image,
     insert_paragraph,
+    merge_table_cells,
     remove_paragraph,
     reopens,
     replace_image,
     replace_text,
+    style_table_cells,
 )
 from .exporters import (
     DEFAULT_SLIDE_PAGE_IN,
@@ -1695,7 +1697,8 @@ def create_document_tools(
 
         After this, read the copy with `read_canvas` and change it with
         `edit_canvas`, `insert_document_paragraph`, `insert_document_image`,
-        `remove_document_paragraph` and `replace_document_image`.
+        `remove_document_paragraph`, `replace_document_image`,
+        `merge_document_table_cells` and `style_document_table_cells`.
         """
         canvas_id = _canvas_id(runtime)
         if not _is_document_file(source):
@@ -1951,12 +1954,91 @@ def create_document_tools(
             note=f" {note}",
         )
 
+    @tool
+    def merge_document_table_cells(
+        path: str, table: str, cells: str, description: str, revision: str, runtime: ToolRuntime
+    ) -> str:
+        """Merge a rectangle of table cells in a Word file into one cell.
+
+        `table` is the table's address from `read_canvas` (`[t0]`, `[t1]`,
+        ...); `cells` is the rectangle in that grid, 0-based: `r0c0:r0c2`
+        merges the first three cells of the first row. The merged cell keeps
+        every member's text (Word appends the paragraphs) — edit the copies
+        away afterwards if they should go. A rectangle that cuts across an
+        existing merge is refused rather than guessed at.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        try:
+            edited = merge_table_cells(data, table, cells, path=path)
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Merged table cells in",
+        )
+
+    @tool
+    def style_document_table_cells(
+        path: str,
+        table: str,
+        cells: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        fill: str | None = None,
+        align: str | None = None,
+    ) -> str:
+        """Change table cell backgrounds or alignment in a Word file.
+
+        `table` is the table's address from `read_canvas` (`[t0]`, ...);
+        `cells` is one cell (`r1c2`) or a rectangle (`r0c0:r2c0`), 0-based.
+        `fill` shades the cells `#RRGGBB`, or `none` takes existing shading
+        off; `align` sets every paragraph in them `left` / `center` /
+        `right`. Give at least one. `read_canvas` shows what landed — a
+        shaded cell prints its colour next to its text.
+
+        `revision` must come from your most recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        data, problem = _document(canvas_id, path)
+        if data is None:
+            return problem
+        try:
+            edited = style_table_cells(data, table, cells, fill=fill, align=align, path=path)
+        except (DocumentOpError, MissingDocumentDependencyError) as exc:
+            return f"Error: {exc}"
+        return _save_document(
+            store,
+            runtime,
+            canvas_id,
+            path,
+            edited,
+            description,
+            revision,
+            converters=active_converters,
+            verb="Restyled table cells in",
+        )
+
     return [
         open_document_for_editing,
         insert_document_paragraph,
         insert_document_image,
         remove_document_paragraph,
         replace_document_image,
+        merge_document_table_cells,
+        style_document_table_cells,
     ]
 
 

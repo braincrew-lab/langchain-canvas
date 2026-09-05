@@ -816,3 +816,145 @@ def reopens(data: bytes) -> str | None:
     except (DocumentPartError, MissingDocumentDependencyError) as exc:
         return str(exc)
     return None
+
+
+# --- table structure & look -------------------------------------------------------
+
+_TABLE_LABEL = re.compile(r"^\[?t(\d+)\]?$")
+_CELL_RANGE = re.compile(r"^r(\d+)c(\d+)(?:\s*:\s*r(\d+)c(\d+))?$")
+_FILL_HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+def _body_table(document: Any, table: str) -> Any:
+    """The body table ``"t0"`` / ``"[t0]"`` names, refused loudly otherwise.
+
+    These are the tables :func:`outline` numbers; a table living in a header
+    or footer has no ``[tN]`` address and is out of reach here on purpose.
+    """
+    match = _TABLE_LABEL.match(table.strip())
+    if match is None:
+        raise DocumentOpError(
+            f'{table!r} is not a table address — outline names tables "[t0]", "[t1]", ...'
+        )
+    index = int(match.group(1))
+    tables = document.tables
+    if index >= len(tables):
+        have = f"{len(tables)} table(s)" if tables else "no tables"
+        raise DocumentOpError(f"this document has {have} — [t{index}] does not exist")
+    return tables[index]
+
+
+def _cell_rectangle(table_obj: Any, cells: str) -> tuple[int, int, int, int]:
+    """``"r0c0"`` or ``"r0c0:r1c2"`` as a normalized in-bounds rectangle."""
+    match = _CELL_RANGE.match(cells.strip())
+    if match is None:
+        raise DocumentOpError(
+            f'{cells!r} is not a cell address — write "r0c0" for one cell or '
+            '"r0c0:r1c2" for a rectangle (0-based, from outline\'s grid)'
+        )
+    r1, c1 = int(match.group(1)), int(match.group(2))
+    r2 = int(match.group(3)) if match.group(3) is not None else r1
+    c2 = int(match.group(4)) if match.group(4) is not None else c1
+    top, bottom = min(r1, r2), max(r1, r2)
+    left, right = min(c1, c2), max(c1, c2)
+    n_rows, n_cols = len(table_obj.rows), len(table_obj.columns)
+    if bottom >= n_rows or right >= n_cols:
+        raise DocumentOpError(
+            f"{cells} reaches past the table — it is {n_rows}x{n_cols} "
+            f"(rows r0-r{n_rows - 1}, columns c0-c{n_cols - 1})"
+        )
+    return top, left, bottom, right
+
+
+def merge_table_cells(
+    data: bytes, table: str, cells: str, *, path: str = "document.docx"
+) -> bytes:
+    """Merge the rectangle ``cells`` of body table ``table`` into one cell.
+
+    ``cells`` is ``"r0c0:r0c2"`` — the 0-based grid the outline prints. The
+    merged cell keeps every member's text (Word appends the paragraphs, the
+    same thing merging in Word itself does); prune the extra words with a
+    text edit afterwards if the copies should go. A rectangle that cuts
+    across an existing merge is refused rather than guessed at.
+    """
+    document = _open(data, path=path)
+    table_obj = _body_table(document, table)
+    top, left, bottom, right = _cell_rectangle(table_obj, cells)
+    if (top, left) == (bottom, right):
+        raise DocumentOpError(
+            f'{cells} is a single cell — a merge needs a rectangle, like "r0c0:r0c2"'
+        )
+    try:
+        table_obj.cell(top, left).merge(table_obj.cell(bottom, right))
+    except Exception as exc:  # python-docx raises its own span errors
+        raise DocumentOpError(
+            f"cannot merge {cells}: {exc} — a merge must be a clean rectangle "
+            "and may not cut across an existing merge"
+        ) from exc
+    return repack(data, _saved(document), {_part_name(document.part)})
+
+
+def style_table_cells(
+    data: bytes,
+    table: str,
+    cells: str,
+    *,
+    fill: str | None = None,
+    align: str | None = None,
+    path: str = "document.docx",
+) -> bytes:
+    """Restyle the cells of body table ``table`` in the rectangle ``cells``.
+
+    ``fill`` is ``"#RRGGBB"`` shading, or ``"none"`` to take existing shading
+    off; ``align`` is ``left`` / ``center`` / ``right`` for every paragraph in
+    the cell. At least one must be given — a call that changes nothing is a
+    mistake worth naming. A merged cell inside the rectangle is touched once.
+    """
+    if fill is None and align is None:
+        raise DocumentOpError("give fill (#RRGGBB or none), align (left/center/right), or both")
+    clear_fill = isinstance(fill, str) and fill.strip().lower() == "none"
+    fill_hex: str | None = None
+    if fill is not None and not clear_fill:
+        match = _FILL_HEX.match(fill.strip())
+        if match is None:
+            raise DocumentOpError(f'{fill!r} is not a fill — write "#RRGGBB", or "none" to clear')
+        fill_hex = match.group(1).upper()
+    if align is not None and align not in ("left", "center", "right"):
+        raise DocumentOpError(f"{align!r} is not an alignment — left, center or right")
+
+    document = _open(data, path=path)
+    table_obj = _body_table(document, table)
+    top, left, bottom, right = _cell_rectangle(table_obj, cells)
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore[import-untyped]
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    alignments = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+    touched: set[int] = set()  # a merged cell repeats per grid position; once is enough
+    cells_in_range = [
+        table_obj.cell(row, column)
+        for row in range(top, bottom + 1)
+        for column in range(left, right + 1)
+    ]
+    for cell in cells_in_range:
+        marker = id(cell._tc)
+        if marker in touched:
+            continue
+        touched.add(marker)
+        if fill is not None:
+            properties = cell._tc.get_or_add_tcPr()
+            for shading in properties.findall(qn("w:shd")):
+                properties.remove(shading)
+            if fill_hex is not None:
+                shading = OxmlElement("w:shd")
+                shading.set(qn("w:fill"), fill_hex)
+                properties.append(shading)
+        if align is not None:
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = alignments[align]
+    return repack(data, _saved(document), {_part_name(document.part)})
