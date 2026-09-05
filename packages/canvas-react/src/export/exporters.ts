@@ -157,7 +157,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
               `color:${escapeAttr(el.color ?? fg)}`,
               el.stroke ? `-webkit-text-stroke:${Math.max(0.5, el.strokeWidth ?? 1)}px ${escapeAttr(el.stroke)}` : "",
               `text-align:${escapeAttr(el.align ?? "left")}`,
-              "white-space:pre-wrap",
+              el.wrap === false ? "white-space:pre" : "white-space:pre-wrap",
               el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
               el.lineHeight ? `line-height:${el.lineHeight}` : "",
               el.highlight ? `background:${escapeAttr(el.highlight)}` : "",

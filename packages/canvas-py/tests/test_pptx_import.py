@@ -75,7 +75,11 @@ def test_the_page_is_the_deck_s_own_size() -> None:
 
 
 def test_geometry_lands_inside_the_page_as_percent() -> None:
-    """A box an inch in on a 10-inch page is at 10 percent, not at 914400."""
+    """A box an inch in on a 10-inch page lands in percent, not at 914400.
+
+    A text box's frame is its *text* area: the inch offset plus PowerPoint's
+    default 0.1in / 0.05in text insets — the width the original wrapped in.
+    """
     parsed = pptx_to_slides(
         _deck(
             lambda s: _textbox(s, "Hi", left=Inches(1), top=Inches(1), width=Inches(2)),
@@ -84,9 +88,9 @@ def test_geometry_lands_inside_the_page_as_percent() -> None:
         )
     )
     element = _elements(parsed)[0]
-    assert element["x"] == pytest.approx(10, abs=0.01)
-    assert element["y"] == pytest.approx(20, abs=0.01)
-    assert element["w"] == pytest.approx(20, abs=0.01)
+    assert element["x"] == pytest.approx(11, abs=0.01)  # (1 + 0.1) / 10
+    assert element["y"] == pytest.approx(21, abs=0.01)  # (1 + 0.05) / 5
+    assert element["w"] == pytest.approx(18, abs=0.01)  # (2 - 0.2) / 10
     assert 0 <= element["x"] <= 100 and 0 <= element["y"] <= 100
 
 
@@ -1053,8 +1057,10 @@ def test_the_baseline_records_the_decks_own_overflowing_boxes() -> None:
     assert baseline is not None
     assert len(baseline.overflow) == 1
     ((key, ratio),) = baseline.overflow.items()
-    # 1in left, 1in top, 4in wide, 0.4in tall on a 13.333x7.5in page.
-    assert key == overflow_key(100 / 13.333, 100 / 7.5, 400 / 13.333, 40 / 7.5)
+    # 1in left, 1in top, 4in wide, 0.4in tall on a 13.333x7.5in page —
+    # inset-shrunk to the text area, the same geometry the reader imports
+    # ((1+0.1)in left, (1+0.05)in top, (4-0.2)in wide, (0.4-0.1)in tall).
+    assert key == (8.2, 14.0, 28.5, 4.0)
     assert ratio > 1.5
 
 
@@ -1159,3 +1165,58 @@ def test_an_upright_shape_carries_no_rotation() -> None:
     shape stays byte-for-byte what it was."""
     element = _elements(pptx_to_slides(_deck(lambda s: _textbox(s, "Straight"))))[0]
     assert "rotation" not in element
+
+
+# --- text fidelity: what the original's reader saw ------------------------------
+
+
+def test_a_no_wrap_box_comes_across_as_wrap_false() -> None:
+    """PowerPoint never folds a wrap="none" box; the canvas folding it is the
+    fastest way an import stops looking like its original."""
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "One long single line label")
+        box.text_frame.word_wrap = False
+
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    assert element["wrap"] is False
+
+
+def test_a_wrapping_box_carries_no_wrap_field() -> None:
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "wrapping text")
+        box.text_frame.word_wrap = True
+
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    assert "wrap" not in element
+
+
+def test_the_stored_autofit_shrink_is_applied_to_the_size() -> None:
+    """normAutofit fontScale is the shrink PowerPoint already computed; the
+    person sees the scaled type, so the import carries the scaled size."""
+    from pptx.oxml.ns import qn
+
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "shrunk")
+        box.text_frame.paragraphs[0].runs[0].font.size = Pt(30)  # 40px
+        body = box.text_frame._bodyPr
+        body.append(body.makeelement(
+            qn("a:normAutofit"), {"fontScale": "62500", "lnSpcReduction": "10000"}
+        ))
+
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    assert element["fontSize"] == pytest.approx(40 * 0.625, abs=0.1)
+    assert element["lineHeight"] == pytest.approx(1.2 * 0.9, abs=0.01)
+
+
+def test_text_geometry_is_the_inset_text_area() -> None:
+    """The frame shrinks by the box's text insets (PowerPoint's default
+    0.1in sides), so line breaks measure against the width the original
+    wrapped in — not the box edge the canvas draws at."""
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "measured", left=Inches(1), width=Inches(4))
+        box.text_frame.word_wrap = True
+
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    # default 13.333in page: (1 + 0.1)in -> 8.25%, (4 - 0.2)in -> 28.5%
+    assert element["x"] == pytest.approx(8.25, abs=0.05)
+    assert element["w"] == pytest.approx(28.5, abs=0.1)

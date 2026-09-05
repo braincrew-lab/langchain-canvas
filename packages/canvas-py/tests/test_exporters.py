@@ -1045,3 +1045,27 @@ def test_slides_pptx_honors_a_portrait_page():
     assert deck.slide_height > deck.slide_width
     assert deck.slide_width == Inches(7.5)
     assert deck.slide_height == Inches(10)
+
+
+def test_slides_pptx_wrap_false_survives_the_round_trip():
+    """A no-wrap label exports as a no-wrap box and reads back as one."""
+    from langchain_canvas.pptx_import import pptx_to_slides
+
+    content = _deck(
+        [{"elements": [
+            {"id": "label", "type": "text", "x": 10, "y": 10, "w": 60, "h": 8,
+             "text": "One long single line", "wrap": False},
+            {"id": "body", "type": "text", "x": 10, "y": 30, "w": 60, "h": 20,
+             "text": "wrapping body text"},
+        ]}]
+    )
+    printed = SlidesPptxExporter().export(content, path="d.slides.json").data
+    deck = Presentation(io.BytesIO(printed))
+    (slide,) = deck.slides
+    frames = {s.text_frame.text: s.text_frame for s in slide.shapes if s.has_text_frame}
+    assert frames["One long single line"].word_wrap is False
+    assert frames["wrapping body text"].word_wrap is True
+    back = pptx_to_slides(printed)["slides"][0]["elements"]
+    by_text = {e["text"]: e for e in back}
+    assert by_text["One long single line"]["wrap"] is False
+    assert "wrap" not in by_text["wrapping body text"]

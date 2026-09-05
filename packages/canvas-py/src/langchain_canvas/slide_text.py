@@ -51,6 +51,16 @@ def glyph_width(char: str) -> float:
     return WIDE_GLYPH if ord(char) > 0x2E7F else NARROW_GLYPH
 
 
+def widest_line_px(text: str, size: float) -> float:
+    """The px width of the text's widest typed line — what a no-wrap box has
+    to hold. A wrap="none" box never folds, so its overflow runs sideways and
+    the wrapped-height estimate says nothing about it."""
+    return max(
+        (sum(glyph_width(ch) for ch in line) * size for line in text.split("\n")),
+        default=0.0,
+    )
+
+
 def wrapped_lines(text: str, size: float, box_w: float) -> int:
     """How many lines ``text`` takes at ``size`` px in a box ``box_w`` px wide."""
     lines = 0

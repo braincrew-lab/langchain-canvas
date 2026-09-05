@@ -63,7 +63,9 @@ export function textStyle(el: SlideElement, scale = 1, page?: SlidePage): CSSPro
     // A text outline (WordArt) rides the element's stroke fields.
     ...(el.stroke ? { WebkitTextStroke: `${Math.max(0.5, (el.strokeWidth ?? 1) * scale)}px ${el.stroke}` } : {}),
     textAlign: el.align ?? "left",
-    whiteSpace: "pre-wrap",
+    // A wrap:false box keeps its original single line ("pre" folds only at
+    // typed \n); everything else wraps like PowerPoint's default square wrap.
+    whiteSpace: el.wrap === false ? "pre" : "pre-wrap",
     ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
     ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
     ...(el.highlight

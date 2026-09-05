@@ -1105,7 +1105,9 @@ class SlidesPptxExporter:
                     if element.rotation:
                         box.rotation = element.rotation
                     frame = box.text_frame
-                    frame.word_wrap = True
+                    # An element marked wrap: false stays the one line its
+                    # original was; everything else wraps like the canvas.
+                    frame.word_wrap = element.wrap is not False
                     if fit == "shape":
                         frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
                     elif fit == "text":

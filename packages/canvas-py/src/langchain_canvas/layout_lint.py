@@ -652,6 +652,15 @@ def _check_text_fit(
     # _check_autofit.
     if element.get("autofit") in ("shape", "text"):
         return
+    # A wrap:false box never folds, so its overflow runs *sideways*: measure
+    # the widest typed line against the box width instead of wrapped height —
+    # judging it by the wrapped estimate would be a false positive, and
+    # skipping it entirely would wave through text running off the page.
+    if element.get("wrap") is False:
+        _check_no_wrap_width(
+            element, number, label, x, y, w, h, warnings, known_overflow, inherited, page
+        )
+        return
     page_w_px, page_h_px = metrics_page_px(page)
     box_w = w / 100.0 * page_w_px
     box_h = h / 100.0 * page_h_px
@@ -681,6 +690,51 @@ def _check_text_fit(
             f"(~{_fmt(needed)}px) but the box is {_fmt(box_h)}px tall — it will run "
             "past the box. Shorten the text, lower fontSize, or make the box taller."
         )
+
+
+def _check_no_wrap_width(
+    element: dict[str, Any],
+    number: int,
+    label: str,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    warnings: list[str],
+    known_overflow: Mapping[tuple[float, float, float, float], float] | None,
+    inherited: list[str] | None,
+    page: tuple[float, float] | None,
+) -> None:
+    """A no-wrap box whose widest line is clearly wider than the box.
+
+    Same slack and the same inherited-overflow folding as the wrapped check —
+    the geometry key does not care which way the text ran out.
+    """
+    from langchain_canvas.slide_text import widest_line_px
+
+    text = element.get("text")
+    size = element.get("fontSize")
+    if not isinstance(text, str) or not text.strip():
+        return
+    if not isinstance(size, (int, float)) or isinstance(size, bool) or size <= 0:
+        return
+    page_w_px, _ = metrics_page_px(page)
+    box_w = w / 100.0 * page_w_px
+    if box_w <= 0:
+        return
+    needed = widest_line_px(text, float(size))
+    if needed <= box_w * _FIT_SLACK:
+        return
+    if known_overflow is not None and inherited is not None:
+        base = known_overflow.get(overflow_key(x, y, w, h))
+        if base is not None and needed / box_w <= base + 0.05:
+            inherited.append(label)
+            return
+    warnings.append(
+        f"slide {number}, element {label}: the text runs about {_fmt(needed)}px wide "
+        f"but the no-wrap box is {_fmt(box_w)}px wide — it will run past the box. "
+        "Shorten the text, lower fontSize, or make the box wider."
+    )
 
 
 _wrapped_lines = wrapped_lines

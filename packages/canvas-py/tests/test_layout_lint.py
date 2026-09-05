@@ -900,3 +900,15 @@ def test_a_shape_with_no_fill_and_no_stroke_is_called_invisible() -> None:
     with_stroke = _deck(_el("g", "shape", 5, 5, 20, 10, shape="rect",
                             fill="none", stroke="#112233"))
     assert lint_slides_data(with_stroke) == []
+
+
+def test_a_no_wrap_box_is_measured_sideways_not_by_wrapped_height() -> None:
+    """A box that never folds overflows *wide*: a fitting one-liner stays
+    silent whatever the wrapped estimate would have said, and a too-wide one
+    is named by width."""
+    fits = _deck(_el("label", "text", 5, 5, 60, 6, text="한 줄 라벨", fontSize=24, wrap=False))
+    assert lint_slides_data(fits) == []
+    wide = _deck(_el("label", "text", 5, 5, 20, 6,
+                     text="아주 긴 한 줄 라벨 " * 10, fontSize=24, wrap=False))
+    (warning,) = lint_slides_data(wide)
+    assert "run past the box" in warning and "no-wrap" in warning

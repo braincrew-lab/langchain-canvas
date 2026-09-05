@@ -95,7 +95,7 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
     """The original's own floor, from a light pass over its shapes (no pictures)."""
     from pptx import Presentation  # type: ignore[import-untyped]
 
-    from .slide_text import metrics_page_px, needed_height
+    from .slide_text import metrics_page_px, needed_height, widest_line_px
 
     try:
         deck = Presentation(BytesIO(data))
@@ -152,18 +152,34 @@ def deck_baseline(data: bytes) -> DeckBaseline | None:
                 size = runs[0].font.size if runs else None
                 if size is not None:
                     left, top, w, h = (int(v) for v in geometry)
-                    x_pct, y_pct = 100 * left / width, 100 * top / height
-                    w_pct, h_pct = 100 * w / width, 100 * h / height
-                    needed = needed_height(
-                        shape.text_frame.text,
-                        round(size.pt * _PT_TO_PX, 1),
-                        w_pct / 100.0 * page_w_px,
-                        _line_height(list(shape.text_frame.paragraphs)),
-                    )
+                    # The same inset shrink the reader applies: the key and the
+                    # measured width must be the geometry the imported element
+                    # carries, or an inherited overflow stops matching its box.
+                    ins_l, ins_t, ins_r, ins_b = _text_insets_emu(shape.text_frame)
+                    if w - ins_l - ins_r > 0 and h - ins_t - ins_b > 0:
+                        left, top = left + ins_l, top + ins_t
+                        w, h = w - ins_l - ins_r, h - ins_t - ins_b
+                    x_pct, y_pct = round(100 * left / width, 3), round(100 * top / height, 3)
+                    w_pct, h_pct = round(100 * w / width, 3), round(100 * h / height, 3)
+                    size_px = round(size.pt * _PT_TO_PX, 1)
+                    box_w = w_pct / 100.0 * page_w_px
                     box_h = h_pct / 100.0 * page_h_px
-                    if box_h > 0 and needed > box_h:
+                    if shape.text_frame.word_wrap is False:
+                        # A no-wrap box overflows sideways; record the width
+                        # ratio under the same geometry key the check folds on.
+                        needed = widest_line_px(shape.text_frame.text, size_px)
+                        box = box_w
+                    else:
+                        needed = needed_height(
+                            shape.text_frame.text,
+                            size_px,
+                            box_w,
+                            _line_height(list(shape.text_frame.paragraphs)),
+                        )
+                        box = box_h
+                    if box > 0 and needed > box:
                         key = overflow_key(x_pct, y_pct, w_pct, h_pct)
-                        overflow[key] = max(overflow.get(key, 0.0), round(needed / box_h, 3))
+                        overflow[key] = max(overflow.get(key, 0.0), round(needed / box, 3))
     return DeckBaseline(smallest, round(overhang, 3), overflow)
 
 
@@ -577,7 +593,7 @@ def _element(
 
     text = _text(shape, scheme)
     if text is not None:
-        return {**frame, "type": "text", **text}
+        return {**_inset_frame(frame, shape, width, height), "type": "text", **text}
 
     drawing = _drawing(shape, scheme)
     if drawing is not None:
@@ -585,6 +601,36 @@ def _element(
             frame = _with_stroke(frame, shape, width, height)
         return {**frame, "type": "shape", **drawing}
     return None
+
+
+def _inset_frame(
+    frame: dict[str, Any], shape: Any, width: int, height: int
+) -> dict[str, Any]:
+    """The frame shrunk to the box's *text* area — where the words really are.
+
+    PowerPoint keeps 0.1in side and 0.05in top/bottom insets between a box
+    and its text unless the file says otherwise. The canvas draws text at
+    the box edge and the exporter writes zero-margin boxes, so carrying the
+    raw frame made every line measure against ~0.2in more width than the
+    original wrapped in — and break a word or two later. Shrinking the frame
+    to the inset area is what puts the line breaks back where the file's
+    reader saw them. A degenerate shrink (insets meeting) keeps the frame.
+    """
+    text_frame = getattr(shape, "text_frame", None)
+    if text_frame is None or not width or not height:
+        return frame
+    left, top, right, bottom = _text_insets_emu(text_frame)
+    new_w = frame["w"] - 100.0 * (left + right) / width
+    new_h = frame["h"] - 100.0 * (top + bottom) / height
+    if new_w <= 0 or new_h <= 0:
+        return frame
+    return {
+        **frame,
+        "x": round(frame["x"] + 100.0 * left / width, 3),
+        "y": round(frame["y"] + 100.0 * top / height, 3),
+        "w": round(new_w, 3),
+        "h": round(new_h, 3),
+    }
 
 
 class _CellText:
@@ -859,6 +905,12 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
     fit = _autofit(shape.text_frame)
     if fit:
         out["autofit"] = fit
+    # A box PowerPoint never wraps must not wrap on the canvas either — a
+    # one-line label that suddenly folds is the most visible way an import
+    # stops looking like its original.
+    if getattr(shape.text_frame, "word_wrap", None) is False:
+        out["wrap"] = False
+    font_scale, spacing_reduction = _stored_autofit_scale(shape.text_frame)
     paragraphs = list(shape.text_frame.paragraphs)
     runs = [run for paragraph in paragraphs for run in paragraph.runs]
     if runs:
@@ -888,6 +940,13 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
     spacing = _line_height(paragraphs)
     if spacing:
         out["lineHeight"] = spacing
+    # Apply the shrink PowerPoint already computed (normAutofit): the size
+    # and leading in the file are pre-shrink, but what the person *sees* is
+    # the scaled type — and matching what they see is the import's job.
+    if font_scale < 1.0 and out.get("fontSize"):
+        out["fontSize"] = round(out["fontSize"] * font_scale, 1)
+    if spacing_reduction > 0.0:
+        out["lineHeight"] = round((out.get("lineHeight") or 1.2) * (1.0 - spacing_reduction), 3)
     anchor = _vertical_align(shape.text_frame)
     if anchor:
         out["verticalAlign"] = anchor
@@ -1016,6 +1075,62 @@ def _autofit(frame: Any) -> str | None:
     mode = getattr(frame, "auto_size", None)
     name = str(getattr(mode, "name", "")).upper()
     return {"SHAPE_TO_FIT_TEXT": "shape", "TEXT_TO_FIT_SHAPE": "text"}.get(name)
+
+
+def _stored_autofit_scale(frame: Any) -> tuple[float, float]:
+    """The shrink PowerPoint already computed for this box, from its file.
+
+    ``normAutofit`` carries ``fontScale`` (thousandths of a percent) and
+    ``lnSpcReduction``. Ignoring them is how a box PowerPoint shows at 62%
+    arrived at 100% and ran past its frame — the single biggest source of
+    "the canvas clips what the original shows". ``(1.0, 0.0)`` when unset.
+    """
+    from pptx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    body = getattr(frame, "_bodyPr", None)
+    fitted = body.find(qn("a:normAutofit")) if body is not None else None
+    if fitted is None:
+        return 1.0, 0.0
+
+    def _thousandths(name: str) -> float | None:
+        raw = fitted.get(name)
+        if raw is None:
+            return None
+        try:
+            return float(raw) / 100000.0
+        except ValueError:
+            return None
+
+    scale = _thousandths("fontScale")
+    reduction = _thousandths("lnSpcReduction")
+    return (
+        scale if scale is not None and 0 < scale <= 1 else 1.0,
+        reduction if reduction is not None and 0 <= reduction < 1 else 0.0,
+    )
+
+
+#: PowerPoint's default text insets (EMU): 0.1in sides, 0.05in top/bottom.
+_DEFAULT_INSETS_EMU = (91440, 45720, 91440, 45720)
+
+
+def _text_insets_emu(frame: Any) -> tuple[int, int, int, int]:
+    """``(left, top, right, bottom)`` text insets, defaults where unsaid.
+
+    The box's text lives inside these margins; measuring wraps against the
+    full box width is how every line broke a word or two earlier than the
+    original. python-pptx reports the effective value (default applied).
+    """
+    left = getattr(frame, "margin_left", None)
+    top = getattr(frame, "margin_top", None)
+    right = getattr(frame, "margin_right", None)
+    bottom = getattr(frame, "margin_bottom", None)
+    defaults = _DEFAULT_INSETS_EMU
+    return (
+        int(left) if left is not None else defaults[0],
+        int(top) if top is not None else defaults[1],
+        int(right) if right is not None else defaults[2],
+        int(bottom) if bottom is not None else defaults[3],
+    )
 
 
 def _vertical_align(frame: Any) -> str | None:

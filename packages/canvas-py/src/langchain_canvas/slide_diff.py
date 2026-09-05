@@ -26,7 +26,7 @@ __all__ = ["diff_slides", "format_slide_diff"]
 _STYLE_FIELDS: tuple[str, ...] = (
     "fontSize", "bold", "color", "align", "shape", "fill", "stroke", "strokeWidth",
     "fontFamily", "lineHeight", "verticalAlign", "highlight", "spaceBefore",
-    "spaceAfter", "autofit", "header", "colWidths", "rowHeights", "cells", "rows",
+    "spaceAfter", "autofit", "wrap", "header", "colWidths", "rowHeights", "cells", "rows",
 )
 
 #: Slide-level fields whose change is worth a line, with the label to show.
