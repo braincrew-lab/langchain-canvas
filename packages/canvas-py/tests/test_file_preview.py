@@ -147,7 +147,9 @@ def test_reupload_patches_every_file_data_key() -> None:
     ]
     patch = next(e for e in events if e["type"] == "canvas.patch")["patch"]
     assert patch["size"] == len(PNG_BYTES) + 1
-    assert set(patch) == {"path", "name", "mediaType", "size", "cover", "excerpt", "detail"}
+    assert set(patch) == {
+        "path", "name", "mediaType", "size", "cover", "grids", "excerpt", "detail"
+    }
 
 
 def test_upload_endpoint_and_replay_share_one_builder() -> None:
@@ -225,3 +227,60 @@ def test_a_folder_is_not_a_tab() -> None:
     store.write_bytes("c1", "exports/report.docx", bytes_, "Export")
     store.write_bytes("c1", "assets/logo.png", PNG_BYTES, "Asset")
     assert hydrate_events(store, "c1") == []
+
+
+# --- root office files and host page renderers ------------------------------------
+
+
+class _PptxPages:
+    """A host's office page renderer: any pptx renders as the test PDF."""
+
+    suffixes: tuple[str, ...] = (".pptx",)
+
+    def __init__(self) -> None:
+        self._pdf = PdfSourceConverter()
+
+    def convert(self, data: bytes, *, path: str):
+        return self._pdf.convert(_pdf(2), path="x.pdf")
+
+    def render_pages(self, data: bytes, *, path: str, pages: list[int]):
+        return self._pdf.render_pages(_pdf(2), path="x.pdf", pages=pages)
+
+    def render_grid(self, data: bytes, *, path: str):
+        return self._pdf.render_grid(_pdf(2), path="x.pdf")
+
+
+def test_a_pdf_upload_carries_its_page_grid() -> None:
+    store = InMemoryCanvasStore()
+    commit = store.write_bytes("t", "sources/deck.pdf", _pdf(3), "upload", actor="human")
+    events = source_preview_events(
+        store,
+        "t",
+        "sources/deck.pdf",
+        is_new=True,
+        revision=commit.revision,
+        description="upload",
+    )
+    data = _create_event(events)["data"]
+    assert data["cover"].startswith("data:image/jpeg;base64,")
+    assert data["grids"] and data["grids"][0].startswith("data:image/png;base64,")
+    assert data["detail"] == "3 pages"
+
+
+def test_a_root_deck_replays_as_a_file_with_a_hosts_renderer() -> None:
+    """A deck a host's tools published at the root is a tab on reload, and the
+    host's page renderer gives it a cover and a grid; without one, the defaults
+    can only offer the card."""
+    store = InMemoryCanvasStore()
+    store.write_bytes("t", "deck.pptx", b"PK\x03\x04not-really", "publish", actor="agent")
+    store.write_bytes("t", "exports/deck.pptx", b"PK\x03\x04shelf", "export", actor="agent")
+
+    plain = hydrate_events(store, "t")
+    assert [e["artifact"]["id"] for e in plain if e["type"] == "canvas.create"] == ["deck.pptx"]
+    assert _create_event(plain)["data"]["cover"] is None
+
+    _PREVIEW_CACHE.clear()
+    rich = hydrate_events(store, "t", converters=[_PptxPages()])
+    data = _create_event(rich)["data"]
+    assert data["cover"] is not None
+    assert len(data["grids"]) == 1

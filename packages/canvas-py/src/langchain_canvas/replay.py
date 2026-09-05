@@ -37,10 +37,10 @@ from typing import Any
 from .converters import (
     MissingConverterDependencyError,
     PageRenderable,
+    SourceConverter,
     converter_for,
     default_converters,
 )
-from .document_ops import DOCUMENT_OP_SUFFIXES
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import BinaryContentError, CanvasStore, CanvasStoreError, fold_history
 from .table_merge import project_sheet_into_rows
@@ -84,6 +84,9 @@ SOURCES_PREFIX = "sources/"
 """Store prefix for uploaded source files (the user's original material)."""
 
 _SOURCE_PREVIEW_SUFFIXES: tuple[str, ...] = (".md", ".markdown", ".txt", ".json", ".html", ".htm")
+#: Office files at the canvas root that open as tabs: the Word working copy
+#: the document tools write, and any deck or workbook a host publishes there.
+ROOT_FILE_SUFFIXES: tuple[str, ...] = (".docx", ".pptx", ".xlsx")
 
 
 def _replayable(path: str) -> bool:
@@ -99,12 +102,16 @@ def _replayable(path: str) -> bool:
     make a reload lose exactly the file being worked on. Folders keep their
     own meaning: ``exports/`` is a download shelf and ``assets/`` is material
     other files reference, so neither opens as a tab.
+
+    An office file a host's own tools publish at the root (a ``.pptx`` or
+    ``.xlsx`` written by code, not only the Word working copy) is a
+    deliverable too, so it replays the same way.
     """
     if path.startswith(SOURCES_PREFIX):
         return True
     if path.endswith(ARTIFACT_SUFFIXES):
         return True
-    return "/" not in path and path.lower().endswith(DOCUMENT_OP_SUFFIXES)
+    return "/" not in path and path.lower().endswith(ROOT_FILE_SUFFIXES)
 
 
 def _encode_envelope(artifact_type: str, title: str, data: dict[str, Any]) -> str:
@@ -340,6 +347,7 @@ def source_preview_events(
     is_new: bool,
     revision: str,
     description: str,
+    converters: list[SourceConverter] | None = None,
 ) -> list[dict]:
     """Wire events showing one stored file at a revision.
 
@@ -353,7 +361,9 @@ def source_preview_events(
 
     Named for its first caller, uploads under ``sources/``; it takes any
     stored path, and the document tools use it for the working copies they
-    write at the canvas root.
+    write at the canvas root. ``converters`` lets a host put its own page
+    renderer (an office-to-PDF service, say) ahead of the defaults so a deck
+    or document gets a cover and a page grid; absent, the defaults apply.
     """
     # An uploaded workbook opens as an editable spreadsheet, not a file card:
     # `xlsx_to_sheets` is the twin of the browser's reader, so the grid a person
@@ -381,7 +391,13 @@ def source_preview_events(
                 path, content, is_new=is_new, revision=revision, description=description
             )
     return _file_preview_events(
-        store, canvas_id, path, is_new=is_new, revision=revision, description=description
+        store,
+        canvas_id,
+        path,
+        is_new=is_new,
+        revision=revision,
+        description=description,
+        converters=converters,
     )
 
 
@@ -500,12 +516,14 @@ def _table_preview_events(
     return events
 
 
-_FILE_DATA_KEYS = ("path", "name", "mediaType", "size", "cover", "excerpt", "detail")
+_FILE_DATA_KEYS = ("path", "name", "mediaType", "size", "cover", "grids", "excerpt", "detail")
 
 # Derived previews only — the stored file stays the truth. Bounded so a canvas
 # with many uploads cannot grow the process without limit.
-_PREVIEW_CACHE: OrderedDict[tuple[str, str, str], dict[str, Any]] = OrderedDict()
+_PREVIEW_CACHE: OrderedDict[tuple[str, str, str, bool], dict[str, Any]] = OrderedDict()
 _PREVIEW_CACHE_MAX = 128
+#: Grid sheets kept per file preview (20 pages each).
+_GRID_MAX_SHEETS = 4
 
 _EXCERPT_MAX_CHARS = 400
 _COVER_MAX_SIZE = (480, 640)
@@ -519,9 +537,10 @@ def _file_preview_events(
     is_new: bool,
     revision: str,
     description: str,
+    converters: list[SourceConverter] | None = None,
 ) -> list[dict]:
     """Wire events for one binary (or non-previewed) source file."""
-    data = _file_preview_data(store, canvas_id, path, revision)
+    data = _file_preview_data(store, canvas_id, path, revision, converters)
     if data is None:
         return []
     events: list[dict] = []
@@ -551,7 +570,11 @@ def _file_preview_events(
 
 
 def _file_preview_data(
-    store: CanvasStore, canvas_id: str, path: str, revision: str
+    store: CanvasStore,
+    canvas_id: str,
+    path: str,
+    revision: str,
+    converters: list[SourceConverter] | None = None,
 ) -> dict[str, Any] | None:
     """The ``FileData`` payload for one stored file at a revision (cached).
 
@@ -560,7 +583,9 @@ def _file_preview_data(
     file's bare facts. A derivation failure never blocks the card — showing
     the file's existence is the point; previews are a bonus.
     """
-    key = (canvas_id, path, revision)
+    active = converters if converters is not None else default_converters()
+    # A host renderer derives more than the defaults do; keep the two apart.
+    key = (canvas_id, path, revision, converters is not None)
     cached = _PREVIEW_CACHE.get(key)
     if cached is not None:
         _PREVIEW_CACHE.move_to_end(key)
@@ -577,15 +602,18 @@ def _file_preview_data(
         "mediaType": media_type,
         "size": len(got.data),
         "cover": None,
+        "grids": None,
         "excerpt": None,
         "detail": None,
     }
     # Images need no derived preview — the renderer shows the original bytes
     # straight from the store (one truth, nothing duplicated on the wire).
     if not (media_type or "").startswith("image/"):
-        cover, detail = _derive_cover(path, got.data)
+        cover, detail = _derive_cover(path, got.data, active)
         data["cover"] = cover
         data["detail"] = detail
+        if cover is not None:
+            data["grids"] = _derive_grids(path, got.data, active)
         if cover is None:
             excerpt, fallback_detail = _derive_excerpt(path, got.data)
             data["excerpt"] = excerpt
@@ -596,7 +624,9 @@ def _file_preview_data(
     return data
 
 
-def _derive_cover(path: str, data: bytes) -> tuple[str | None, str | None]:
+def _derive_cover(
+    path: str, data: bytes, converters: list[SourceConverter]
+) -> tuple[str | None, str | None]:
     """(cover data-URI, detail line) via the page-render pipeline, or Nones.
 
     Reuses the same ``PageRenderable`` slot the agent's eye uses — one
@@ -604,7 +634,7 @@ def _derive_cover(path: str, data: bytes) -> tuple[str | None, str | None]:
     card thumbnail here; sizing is this derivation layer's policy, so the
     converter contract stays untouched.
     """
-    converter = converter_for(path, default_converters())
+    converter = converter_for(path, converters)
     if converter is None or not isinstance(converter, PageRenderable):
         return None, None
     try:
@@ -622,6 +652,31 @@ def _derive_cover(path: str, data: bytes) -> tuple[str | None, str | None]:
         return None, None
     pages = converted.metadata.get("pages")
     return cover, f"{pages} pages" if isinstance(pages, int) else None
+
+
+def _derive_grids(
+    path: str, data: bytes, converters: list[SourceConverter]
+) -> list[str] | None:
+    """Every page as labeled thumbnails tiled into grid sheets (data URIs), or None.
+
+    The same ``render_grid`` the agent's eye uses for a deck overview, so what
+    the file tab shows is exactly what the agent sees. Capped at
+    ``_GRID_MAX_SHEETS`` sheets so a long document never floods the wire; a
+    failure degrades to the cover alone.
+    """
+    converter = converter_for(path, converters)
+    if converter is None or not isinstance(converter, PageRenderable):
+        return None
+    try:
+        converted = converter.render_grid(data, path=path)
+    except Exception:  # noqa: BLE001 — the grid is a bonus on the cover
+        return None
+    sheets = [
+        "data:" + block.get("mime_type", "image/png") + ";base64," + block["data"]
+        for block in converted.blocks
+        if block.get("type") == "image" and block.get("data")
+    ][:_GRID_MAX_SHEETS]
+    return sheets or None
 
 
 def _derive_excerpt(path: str, data: bytes) -> tuple[str | None, str | None]:
@@ -657,6 +712,7 @@ def hydrate_events(
     *,
     title_for: Callable[[str], str] | None = None,
     meta_for: Callable[[str], dict[str, Any] | None] | None = None,
+    converters: list[SourceConverter] | None = None,
 ) -> list[dict]:
     """Wire events reconstructing a canvas from its history, oldest commit first.
 
@@ -691,6 +747,7 @@ def hydrate_events(
                     is_new=path not in seen,
                     revision=commit.revision,
                     description=commit.description,
+                    converters=converters,
                 )
             else:
                 try:

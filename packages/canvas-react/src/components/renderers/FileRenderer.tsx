@@ -45,7 +45,7 @@ function iconFor(mediaType: string | undefined, name: string): string {
 }
 
 export function FileRenderer({ artifact }: RendererProps<FileData>) {
-  const { path, name, mediaType, size, cover, excerpt, detail } = artifact.data;
+  const { path, name, mediaType, size, cover, grids, excerpt, detail } = artifact.data;
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
   const labels = useLabels();
   const chrome = useChrome();
@@ -62,6 +62,13 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const preview =
     isImage && href ? (
       <img className="cv-file__image" src={href} alt={name} />
+    ) : grids && grids.length > 0 ? (
+      // Every page at a glance — the same grid sheets the agent reads.
+      <div className="cv-file__grids">
+        {grids.map((sheet, index) => (
+          <img key={index} className="cv-file__grid" src={sheet} alt={`${name} ${index + 1}`} />
+        ))}
+      </div>
     ) : cover ? (
       <img
         className="cv-file__cover"
