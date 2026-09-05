@@ -4,6 +4,14 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.32] — 2026-09-06
+
+### Added
+
+- A `.pptx` or `.xlsx` a host's tools publish at the canvas root opens as a file tab and survives a reload, like the Word working copy already did. `exports/` and `assets/` stay hidden.
+- `source_preview_events` / `hydrate_events` take an optional `converters` list, so a host can put its own page renderer (an office-to-PDF service) ahead of the defaults.
+- `FileData.grids`: every page as labeled thumbnails tiled into grid sheets; the file tab draws them when present and keeps the page-one cover otherwise.
+
 ## [0.7.31] — 2026-09-05
 
 ### Added
