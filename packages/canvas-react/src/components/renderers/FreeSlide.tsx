@@ -9,11 +9,101 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import type { SlideElement } from "../../protocol/artifacts";
+import type { SlideElement, SlidePage } from "../../protocol/artifacts";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../../client/slideTable";
 import { boxHeightPct, textFitScale } from "../../client/slideText";
 import { useLabels } from "../chrome";
+
+/** How much wider than its box a one-line text may run before fitting gives
+ *  up and lets it wrap. Past this the wrap is real content, not font drift. */
+const SNUG_MAX_OVERFLOW = 1.22;
+/** A shared measuring surface — one canvas for every fit check. */
+let measureContext: CanvasRenderingContext2D | null = null;
+
+/**
+ * Keep a snug one-liner on one line, the way its file shows it.
+ *
+ * A deck box that hugs its text (PowerPoint's shape-autofit labels, pills,
+ * "(단위: 천원)") fits its own font exactly — and the canvas font is a few
+ * percent wider, so the last word folded onto a second line the original
+ * never had. Wrapping is the wrong failure for that gap: the text is
+ * measured (Canvas 2D, the element's own face and weight), and when it runs
+ * over by a hair the type shrinks that hair instead. Text with typed line
+ * breaks, no-wrap boxes, and anything past `SNUG_MAX_OVERFLOW` keep their
+ * natural behaviour — a real overflow should look like one.
+ *
+ * Returns a ref for the text node and the style patch to spread after
+ * `textStyle` (empty when nothing needs fitting).
+ */
+export function useSnugFit(
+  el: SlideElement, scale: number, active = true
+): { ref: (node: HTMLDivElement | null) => void; style: CSSProperties } {
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState(1);
+  const eligible =
+    active && el.type === "text" && !!el.text && !el.text.includes("\n") &&
+    el.wrap !== false && el.autofit !== "text"; // autofit:text has its own shrink
+  const text = el.text ?? "";
+  const fontPx = (el.fontSize ?? 24) * scale;
+  useEffect(() => {
+    if (!eligible || !node) {
+      setFit(1);
+      return;
+    }
+    const measure = () => {
+      if (!measureContext) measureContext = document.createElement("canvas").getContext("2d");
+      if (!measureContext) return;
+      const family = el.fontFamily || getComputedStyle(node).fontFamily || "sans-serif";
+      measureContext.font = `${el.bold ? 700 : 400} ${fontPx}px ${family}`;
+      const needed = measureContext.measureText(text).width;
+      const box = node.clientWidth;
+      if (box > 0 && needed > box && needed <= box * SNUG_MAX_OVERFLOW) {
+        setFit(box / needed);
+      } else {
+        setFit(1);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [eligible, node, text, fontPx, el.fontFamily, el.bold]);
+  if (!eligible || fit >= 1) return { ref: setNode, style: {} };
+  return { ref: setNode, style: { whiteSpace: "nowrap", fontSize: fontPx * fit } };
+}
+
+/** A text element's body with the snug one-line fit applied — the shared
+ *  reader-side twin of the editor's text div, used by the thumbnails and the
+ *  present view (and the editor itself outside of editing). */
+export function FittedText({
+  el,
+  scale,
+  style,
+  className,
+  active = true,
+}: {
+  el: SlideElement;
+  scale: number;
+  /** The composed style (box + `textStyle`) the caller already built. */
+  style: CSSProperties;
+  className?: string;
+  active?: boolean;
+}) {
+  const snug = useSnugFit(el, scale, active);
+  return (
+    <div ref={snug.ref} className={className} style={{ ...style, ...snug.style }}>
+      {el.text}
+    </div>
+  );
+}
+
+/** CSS for an element's rotation — a clockwise turn about the box centre, the
+ *  same axis PowerPoint rotates on. Empty for an unrotated element so nothing
+ *  changes for the common case. */
+export function rotationStyle(el: SlideElement): CSSProperties {
+  return el.rotation ? { transform: `rotate(${el.rotation}deg)` } : {};
+}
 
 /** CSS for a shape element's body — shared by the editor, thumbnails, present, and
  *  export so a rectangle/ellipse/line looks the same everywhere. */
@@ -48,15 +138,17 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
  *  above and below) is drawn at the same `scale` as the box it sits in, so a
  *  thumbnail is the slide made smaller rather than the slide with its
  *  paragraph spacing left at full size. */
-export function textStyle(el: SlideElement, scale = 1): CSSProperties {
+export function textStyle(el: SlideElement, scale = 1, page?: SlidePage): CSSProperties {
   return {
-    fontSize: (el.fontSize ?? 24) * scale * textFitScale(el),
+    fontSize: (el.fontSize ?? 24) * scale * textFitScale(el, page),
     fontWeight: el.bold ? 700 : 400,
     color: el.color,
     // A text outline (WordArt) rides the element's stroke fields.
     ...(el.stroke ? { WebkitTextStroke: `${Math.max(0.5, (el.strokeWidth ?? 1) * scale)}px ${el.stroke}` } : {}),
     textAlign: el.align ?? "left",
-    whiteSpace: "pre-wrap",
+    // A wrap:false box keeps its original single line ("pre" folds only at
+    // typed \n); everything else wraps like PowerPoint's default square wrap.
+    whiteSpace: el.wrap === false ? "pre" : "pre-wrap",
     ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
     ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
     ...(el.highlight
@@ -273,6 +365,9 @@ interface FreeSlideProps {
    *  width at 96dpi) so on-screen text matches the exported file. Stored
    *  fontSize values and the size input stay in page px. */
   fontScale?: number;
+  /** The deck page, so autofit box-growth and text-shrink measure on the
+   *  deck's real shape (portrait as well as landscape). Absent = classic 16:9. */
+  page?: SlidePage;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -320,7 +415,7 @@ function snapAxis(pos: number, size: number, targets: number[]): { pos: number; 
   return best ? { pos: pos + best.delta, guide: best.guide } : { pos, guide: null };
 }
 
-export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSlideProps) {
+export function FreeSlide({ elements, onChange, padding, fontScale = 1, page }: FreeSlideProps) {
   const labels = useLabels();
   const slideRef = useRef<HTMLDivElement>(null);
   // Display-only: a canvas-asset src resolves to a URL; stored elements keep
@@ -473,7 +568,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
           key={el.id}
           data-el-id={el.id}
           className={`cv-free__el ${selected === el.id ? "is-selected" : ""}`}
-          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el)}%` }}
+          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, ...rotationStyle(el) }}
           onPointerDown={(e) => onDown(e, el, "move")}
           onDoubleClick={(e) => {
             if (el.type === "text") {
@@ -499,18 +594,22 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1 }: FreeSl
           }}
         >
           {el.type === "text" ? (
-            <div
-              className="cv-free__text"
-              contentEditable={editingId === el.id}
-              suppressContentEditableWarning
-              style={textStyle(el, fontScale)}
-              onBlur={(e) => {
-                setEditingId(null);
-                updateEl(el.id, { text: e.currentTarget.textContent ?? "" });
-              }}
-            >
-              {el.text}
-            </div>
+            editingId === el.id ? (
+              <div
+                className="cv-free__text"
+                contentEditable
+                suppressContentEditableWarning
+                style={textStyle(el, fontScale, page)}
+                onBlur={(e) => {
+                  setEditingId(null);
+                  updateEl(el.id, { text: e.currentTarget.textContent ?? "" });
+                }}
+              >
+                {el.text}
+              </div>
+            ) : (
+              <FittedText el={el} scale={fontScale} className="cv-free__text" style={textStyle(el, fontScale, page)} />
+            )
           ) : el.type === "shape" ? (
             <div style={shapeStyle(el, fontScale)} />
           ) : el.type === "table" ? (

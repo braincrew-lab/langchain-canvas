@@ -125,6 +125,10 @@ class SlideElement(_CamelModel):
     y: float
     w: float
     h: float
+    # Clockwise rotation in degrees about the box centre, the way PowerPoint
+    # stores it. Absent means 0 (unrotated); the renderer and exporter both
+    # treat a missing value as no rotation.
+    rotation: float | None = None
     text: str | None = None
     src: str | None = None
     font_size: float | None = None
@@ -158,6 +162,10 @@ class SlideElement(_CamelModel):
     # people upload grow with their text; without this field every one of
     # them arrived frozen at the height of its placeholder.
     autofit: Literal["shape", "text", "none"] | None = None
+    # False for a box PowerPoint never wraps (bodyPr wrap="none") — a one-line
+    # label that folds on the canvas is the fastest way an import stops
+    # looking like its original. Absent means the text wraps, as ever.
+    wrap: bool | None = None
     # A table (`type: "table"`): the words as a grid of strings, row-major,
     # and the table's look in the fields above (`stroke` draws the grid,
     # `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the

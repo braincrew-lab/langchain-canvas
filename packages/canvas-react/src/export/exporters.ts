@@ -143,18 +143,21 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
         : "";
       const els = resolveElements(slide, page)
         .map((el) => {
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el)}%`;
+          // Rotation rides the shared box string so every element type (text,
+          // shape, table, image) turns about its centre in the printed page,
+          // matching the editor and the .pptx export. `rotation` is numeric.
+          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el, page)}%${el.rotation ? `;transform:rotate(${el.rotation}deg)` : ""}`;
           if (el.type === "text") {
             // box is numeric; colours and the face are escaped individually — the
             // composed style string is then safe to place in the attribute as-is.
             const style = [
               box,
-              `font-size:${(el.fontSize ?? 24) * textFitScale(el)}px`,
+              `font-size:${(el.fontSize ?? 24) * textFitScale(el, page)}px`,
               `font-weight:${el.bold ? 700 : 400}`,
               `color:${escapeAttr(el.color ?? fg)}`,
               el.stroke ? `-webkit-text-stroke:${Math.max(0.5, el.strokeWidth ?? 1)}px ${escapeAttr(el.stroke)}` : "",
               `text-align:${escapeAttr(el.align ?? "left")}`,
-              "white-space:pre-wrap",
+              el.wrap === false ? "white-space:pre" : "white-space:pre-wrap",
               el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
               el.lineHeight ? `line-height:${el.lineHeight}` : "",
               el.highlight ? `background:${escapeAttr(el.highlight)}` : "",
@@ -170,7 +173,14 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             ]
               .filter(Boolean)
               .join(";");
-            return `<div class="el" style="${style}">${escapeXml(el.text ?? "")}</div>`;
+            // Snug one-liners are marked for the print pipeline to fit: the
+            // host (trusted) measures and shrinks them a hair before print()
+            // — the sandboxed frame itself runs no scripts.
+            const snug =
+              el.text && !el.text.includes("\n") && el.wrap !== false && el.autofit !== "text"
+                ? ' data-snug="1"'
+                : "";
+            return `<div class="el"${snug} style="${style}">${escapeXml(el.text ?? "")}</div>`;
           }
           if (el.type === "shape") {
             // A box drawn by its outline alone carries no fill — painting one
