@@ -1099,7 +1099,6 @@ def test_a_nested_table_no_longer_ends_the_outer_one():
 
 def test_a_plain_table_exports_exactly_as_before():
     """No spans, no styles — the writer adds nothing the source did not say."""
-    from docx.oxml.ns import qn
 
     content = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"
     table = _docx_table(HtmlDocxExporter().export(content, path="p.html"))
@@ -1111,7 +1110,6 @@ def test_a_plain_table_exports_exactly_as_before():
 def test_html_docx_paragraph_backgrounds_land_and_read_back():
     """A highlighted notice keeps its box: the fill lands as paragraph
     shading, and the outline (the read side) prints it back."""
-    from docx.oxml.ns import qn
 
     import docx as docx_lib
 

@@ -269,7 +269,7 @@ def _table_lines(table: Any) -> list[str]:
     for row_index, row in enumerate(all_rows):
         cells: list[str] = []
         emitted_here: set[int] = set()
-        for col_index, cell in enumerate(grid[row_index]):
+        for cell in grid[row_index]:
             tc = id(cell._tc)
             if tc in emitted_here:
                 continue  # horizontal continuation — the (CxR) already says how wide
