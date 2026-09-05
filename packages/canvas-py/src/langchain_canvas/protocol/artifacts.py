@@ -10,7 +10,7 @@ to a React component; `data` is the type-specific payload that component reads.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
@@ -262,7 +262,7 @@ class FileData(_CamelModel):
 
 # The union of every known artifact data shape. `data` on the wire is one of
 # these; the discriminator lives on the enclosing `Artifact.type`.
-ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, SlidesData, FileData]
+ArtifactData = HtmlData | DocumentData | ChartData | TableData | SlidesData | FileData
 
 
 # --- the envelope every artifact shares -----------------------------------------
