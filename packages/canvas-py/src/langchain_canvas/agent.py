@@ -8,7 +8,8 @@ Everything `create_agent` accepts is forwarded verbatim.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from langchain.agents import create_agent
 

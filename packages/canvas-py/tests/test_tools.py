@@ -1961,3 +1961,96 @@ def test_a_failing_recalc_hook_still_lands_the_export_with_a_note() -> None:
     text = reply if isinstance(reply, str) else reply[0]["text"]
     assert "Formula caches were not recalculated" in text and "endpoint down" in text
     assert store.read_bytes("t1", "exports/book.xlsx").data[:2] == b"PK"  # the real workbook
+
+
+# --- review_deck: the pixel note ------------------------------------------------
+
+
+class _PixelEye:
+    """A pptx page renderer whose PNGs the test hands it, in call order —
+    so 'now' and 'before' can be made to differ (or not) on purpose."""
+
+    suffixes = (".pptx",)
+
+    def __init__(self, batches: list[list[bytes]]) -> None:
+        self.batches = list(batches)
+
+    def convert(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        return ConvertedSource(blocks=[{"type": "text", "text": "deck"}], metadata={})
+
+    def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> Any:
+        import base64 as b64
+
+        from langchain_canvas.converters import ConvertedSource
+
+        pngs = self.batches.pop(0)
+        return ConvertedSource(
+            blocks=[
+                {"type": "image", "source_type": "base64", "mime_type": "image/png",
+                 "data": b64.b64encode(png).decode()}
+                for png in pngs[: len(pages)]
+            ],
+            metadata={},
+        )
+
+    def render_grid(self, data: bytes, *, path: str) -> Any:
+        from langchain_canvas.converters import ConvertedSource
+
+        return ConvertedSource(blocks=[], metadata={})
+
+
+def _png(painted: bool) -> bytes:
+    import io as bytes_io
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 360), "#ffffff")
+    if painted:
+        ImageDraw.Draw(image).rectangle([320, 180, 560, 320], fill="#cc3333")
+    out = bytes_io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _clean_deck(text: str) -> str:
+    from langchain_canvas import encode_slides
+
+    return encode_slides("Deck", {"slides": [
+        # the element sits over the region _png paints, so the pixel note
+        # can name it
+        {"elements": [{"id": "hero", "type": "text", "x": 45, "y": 45,
+                       "w": 45, "h": 40, "text": text}]},
+    ]})
+
+
+def _reviewed_with_pixels(batches: list[list[bytes]]) -> str:
+    """Two saves of the deck, then review_deck with the pixel renderer."""
+    pytest.importorskip("pptx")
+    pytest.importorskip("PIL")
+    store = InMemoryCanvasStore()
+    eye = _PixelEye(batches)
+    tools = {t.name: t for t in create_canvas_tools(store, converters=[eye])}
+    for text in ("first words", "second words"):
+        tools["write_canvas"].func(
+            path="deck.slides.json", content=_clean_deck(text),
+            description="c", runtime=_runtime(thread_id="t1"),
+        )
+    report = tools["review_deck"].func(path="deck.slides.json", runtime=_runtime(thread_id="t1"))
+    return report[0]["text"] if isinstance(report, list) else report
+
+
+def test_review_deck_names_what_the_last_save_visibly_changed() -> None:
+    # render order inside the note: the deck now (painted), then the
+    # previous revision (plain), then whatever the side-by-side grid asks.
+    text = _reviewed_with_pixels([[_png(True)], [_png(False)], [], []])
+    assert "visual: slide 1 changed" in text
+    assert '"hero"' in text  # the element under the changed region is named
+
+
+def test_review_deck_stays_silent_when_the_pixels_held() -> None:
+    """A data change that renders identically (both revisions print the same
+    page) adds no visual line — a wrong 'changed' is worse than none."""
+    text = _reviewed_with_pixels([[_png(False)], [_png(False)], [], []])
+    assert "visual:" not in text

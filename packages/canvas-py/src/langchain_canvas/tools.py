@@ -101,6 +101,7 @@ from .replay import (
     source_preview_events,
     working_copy_path,
 )
+from .slide_diff import diff_slides, format_slide_diff
 from .state import last_change_line
 from .store import (
     BinaryContentError,
@@ -914,6 +915,27 @@ def create_canvas_tools(
         )
         return format_layout_warnings(warnings)
 
+    def _deck_diff_note(
+        canvas_id: str, path: str, content: str, previous_revision: str | None
+    ) -> str:
+        """What this save changed, element by element, or '' when there is no
+        prior revision to compare against (a new deck, or anything unreadable).
+
+        The diff is a bonus on top of the deck check, never a gate: any read or
+        parse failure returns '' rather than disturbing the save.
+        """
+        if previous_revision is None or not path.lower().endswith(".slides.json"):
+            return ""
+        try:
+            before = store.read(canvas_id, path, revision=previous_revision).content
+            old_data = json.loads(before).get("data")
+            new_data = json.loads(content).get("data")
+        except (CanvasStoreError, json.JSONDecodeError, AttributeError):
+            return ""
+        changes = diff_slides(old_data, new_data)
+        formatted = format_slide_diff(changes)
+        return f"\n\n{formatted}" if formatted else ""
+
     def _deck_eye(
         canvas_id: str,
         path: str,
@@ -1245,6 +1267,9 @@ def create_canvas_tools(
           it: `shape` grows the box to hold them, `text` shrinks the type
           to fit, `none` (the default) leaves the overflow for the deck
           check to name.
+          An element's `rotation` turns it clockwise about its own centre,
+          in degrees (omit or 0 for upright); it carries through to the
+          .pptx and the printed page.
           A `table` is `{"id": "t1", "type": "table", "x": 10, "y": 25,
           "w": 80, "h": 40, "rows": [["Item", "Q1"], ["Sales", "120"]],
           "header": true, "stroke": "#9E9E9E", "fontSize": 18}` — the
@@ -1262,6 +1287,13 @@ def create_canvas_tools(
         with no `template` takes the only `.pptx` under `sources/` when
         there is exactly one; write `"template": null` to build on a blank
         page instead.
+        Optional `page`, inside `data` next to `slides`: `{"widthIn": 10,
+        "heightIn": 5.625}` sets the page size the percent geometry and
+        `fontSize` refer to. Absent means the classic 16:9 landscape (10 x
+        5.625); make `heightIn` larger than `widthIn` for a portrait deck
+        (e.g. `{"widthIn": 7.5, "heightIn": 10}`), and the editor, the
+        preview and the exported .pptx all follow that shape. A `template`
+        brings its own page, so do not set both.
 
         A deck is refused, not saved, when a deck key sits outside `data`,
         when it does not match the schema, or when a slide carries both
@@ -1314,9 +1346,10 @@ def create_canvas_tools(
             return f"Error: {exc}."
         _broadcast(runtime, canvas_id, path, is_new, commit)
         save_note = _save_note(canvas_id, path, content)
+        diff_note = _deck_diff_note(canvas_id, path, content, None if is_new else revision)
         return _with_eye(
             f"Wrote {path} (revision {commit.revision})."
-            f"{template_note}{page_note or ''}{save_note}",
+            f"{template_note}{page_note or ''}{save_note}{diff_note}",
             _deck_eye(canvas_id, path, content, save_note, previous_revision=revision),
         )
 
@@ -1380,8 +1413,9 @@ def create_canvas_tools(
             # not there. Check the file as the edit left it.
             edited = store.read(canvas_id, path, revision=commit.revision).content
             save_note = _save_note(canvas_id, path, edited)
+            diff_note = _deck_diff_note(canvas_id, path, edited, revision)
             return _with_eye(
-                f"Edited {path} (revision {commit.revision}).{save_note}",
+                f"Edited {path} (revision {commit.revision}).{save_note}{diff_note}",
                 _deck_eye(canvas_id, path, edited, save_note, previous_revision=revision),
             )
         return f"Edited {path} (revision {commit.revision}).{save_note}"
@@ -1481,10 +1515,12 @@ def create_canvas_tools(
 
         With no `slide`: the full deck check (the original's own findings
         folded out), a per-slide note of what changed against the original,
-        and — when a page renderer is mounted — the deck now as a page grid,
-        then the original's grid, for side-by-side comparison. With
-        `slide=N`: that one slide rendered large, the deck now first, the
-        original second.
+        a pixel note of what the last save *visibly* changed (`visual:
+        slide 2 changed 6.6% (elements "title")` — a font that fell back or
+        a box that now clips only shows in pixels), and — when a page
+        renderer is mounted — the deck now as a page grid, then the
+        original's grid, for side-by-side comparison. With `slide=N`: that
+        one slide rendered large, the deck now first, the original second.
 
         Call it after the last text change and before `export_canvas` — the
         export refuses while findings that hide content remain.
@@ -1545,11 +1581,103 @@ def create_canvas_tools(
                     )
                 lines.append(f"[s{number}] " + "; ".join(parts))
 
+        visual = _visual_note(canvas_id, path, content, data, slide)
+        if visual:
+            lines.append(visual)
+
         images = _review_images(canvas_id, path, content, data, slide)
         if images:
             what = "that slide" if slide is not None else "every page"
             lines.append(f"Images: {what} of the deck now, then the original.")
         return _with_eye("\n".join(lines), images)
+
+    def _visual_note(
+        canvas_id: str,
+        path: str,
+        content: str,
+        data: dict[str, Any],
+        slide: int | None,
+    ) -> str:
+        """Pixel diff against the previous saved revision, as report lines.
+
+        The JSON diff says what the data changed; this says what the printed
+        page changed — a font that fell back or a box that now clips only
+        shows in pixels. The JSON layer gates the pixel layer: only the
+        slides the last save touched are printed and compared, so the pass
+        stays cheap. Needs a mounted page renderer and at least two saved
+        revisions; without either (or on any failure) it says nothing — a
+        visual finding is a bonus on the review, never its gate.
+        """
+        stem = _deck_stem(path)
+        renderer = _renderer_for(f"{stem}.pptx", active_converters)
+        if renderer is None:
+            return ""
+        try:
+            touched = [c for c in store.history(canvas_id) if path in c.paths]
+            if len(touched) < 2:
+                return ""
+            previous = touched[1].revision
+            changed = _changed_slides(canvas_id, path, content, previous)
+            if not changed:
+                return ""
+            before_content = store.read(canvas_id, path, revision=previous).content
+            before_slides = json.loads(before_content)["data"]["slides"]
+            slides = data.get("slides") or []
+            # Only pages both revisions can print — a slide added or removed
+            # is the JSON diff's finding, not a page pair to compare.
+            common = min(len(slides), len(before_slides))
+            numbers = sorted(n for n in changed if n <= common)
+            if slide is not None:
+                numbers = [n for n in numbers if n == slide]
+            numbers = numbers[:_EYE_MAX_SLIDES]
+            if not numbers:
+                return ""
+
+            import base64 as b64
+            import io as bytes_io
+
+            from PIL import Image
+
+            from .exporters import SlidesPptxExporter
+            from .slide_visual_diff import (
+                PageDiff,
+                attribute_to_elements,
+                compare_images,
+                format_visual_diff,
+            )
+
+            def printed_pages(deck_json: str) -> list[Image.Image]:
+                printed = SlidesPptxExporter().export(
+                    inline_slides_assets(deck_json, store, canvas_id), path=path
+                )
+                converted = renderer.render_pages(
+                    printed.data, path=f"{stem}.pptx", pages=numbers
+                )
+                return [
+                    Image.open(bytes_io.BytesIO(b64.b64decode(block["data"])))
+                    for block in converted.blocks
+                    if block.get("type") == "image"
+                ]
+
+            pages_now = printed_pages(content)
+            pages_before = printed_pages(before_content)
+            if len(pages_now) != len(numbers) or len(pages_before) != len(numbers):
+                return ""  # a page failed to inline; a partial pairing would mislabel
+
+            diffs: list[PageDiff] = []
+            attribution: dict[int, list[str]] = {}
+            for number, now, before in zip(numbers, pages_now, pages_before, strict=True):
+                ratio, bbox = compare_images(before, now)
+                diff = PageDiff(page=number, ratio=round(ratio, 4), bbox=bbox, size=now.size)
+                diffs.append(diff)
+                elements = slides[number - 1].get("elements") or [] if number <= len(slides) else []
+                names = attribute_to_elements(diff, elements)
+                if names:
+                    attribution[number] = names
+            formatted = format_visual_diff(diffs, attribution)
+            return formatted or ""
+        except Exception:  # noqa: BLE001 - the pixel pass is a bonus, never a failure
+            return ""
 
     def _original_deck_data(canvas_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """The template re-imported, for comparison — or ``None``, quietly."""

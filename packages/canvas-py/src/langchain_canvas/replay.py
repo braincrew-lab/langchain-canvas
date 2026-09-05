@@ -157,7 +157,9 @@ def encode_artifact(artifact: dict[str, Any], path: str) -> str:
     suffix = _ENVELOPE_SUFFIX_FOR.get(artifact_type) if isinstance(artifact_type, str) else None
     if artifact_type is None or suffix is None:
         allowed = ", ".join(sorted(_ENVELOPE_SUFFIX_FOR))
-        raise ValueError(f"only {allowed} artifacts persist as JSON envelopes (got {artifact_type!r})")
+        raise ValueError(
+            f"only {allowed} artifacts persist as JSON envelopes (got {artifact_type!r})"
+        )
     if not isinstance(artifact.get("data"), dict):
         raise ValueError(f"{artifact_type} artifact needs a data object")
     if not path.endswith(suffix):

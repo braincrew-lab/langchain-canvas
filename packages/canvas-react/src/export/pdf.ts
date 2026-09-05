@@ -18,6 +18,35 @@
  * the frame; `allow-modals` permits the print dialog. `srcdoc` is used instead of
  * `document.write` so the content is parsed inertly.
  */
+/** How much wider than its box a one-line text may run before fitting gives
+ *  up and lets it wrap — the print twin of the renderer's snug fit. */
+const SNUG_MAX_OVERFLOW = 1.22;
+
+/**
+ * Shrink marked one-line texts a hair instead of letting them wrap.
+ *
+ * The deck's snug labels (`data-snug`) fit their file's own font exactly;
+ * the print font runs a few percent wider and folded them onto a second
+ * line the original never had. This runs from the *host* (trusted code) on
+ * the sandboxed frame's document — the frame itself executes no scripts,
+ * which is the point of the sandbox.
+ */
+function fitSnugLines(doc: Document): void {
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return;
+  doc.querySelectorAll<HTMLElement>("[data-snug]").forEach((node) => {
+    const computed = doc.defaultView?.getComputedStyle(node);
+    if (!computed) return;
+    context.font = `${computed.fontWeight} ${computed.fontSize} ${computed.fontFamily}`;
+    const needed = context.measureText(node.textContent ?? "").width;
+    const box = node.clientWidth;
+    if (box > 0 && needed > box && needed <= box * SNUG_MAX_OVERFLOW) {
+      node.style.whiteSpace = "nowrap";
+      node.style.fontSize = `${parseFloat(computed.fontSize) * (box / needed)}px`;
+    }
+  });
+}
+
 export function printToPdf(html: string): void {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
@@ -35,6 +64,7 @@ export function printToPdf(html: string): void {
     // A beat to lay out fonts/images before printing.
     setTimeout(() => {
       try {
+        fitSnugLines(win.document);
         win.focus();
         win.print();
       } catch {

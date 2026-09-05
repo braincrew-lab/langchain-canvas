@@ -112,6 +112,9 @@ export interface SlideElement {
   y: number;
   w: number;
   h: number;
+  /** Clockwise rotation in degrees about the box centre (PowerPoint's own
+   *  units). Absent means 0 — unrotated. */
+  rotation?: number;
   text?: string;
   src?: string;
   fontSize?: number;
@@ -143,6 +146,10 @@ export interface SlideElement {
    *  settles it: `shape` grows the box, `text` shrinks the type, `none`
    *  (the default) leaves the overflow for the deck check to name. */
   autofit?: "shape" | "text" | "none";
+  /** `false` for a box PowerPoint never wraps (`bodyPr wrap="none"`) — the
+   *  canvas must not fold a one-line label the original shows straight.
+   *  Absent means the text wraps, as ever. */
+  wrap?: boolean;
   /** A table's words: a grid of strings, row-major. `stroke` draws the grid;
    *  `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the
    *  cells' defaults. */

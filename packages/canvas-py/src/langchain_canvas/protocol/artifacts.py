@@ -10,7 +10,7 @@ to a React component; `data` is the type-specific payload that component reads.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
@@ -70,7 +70,7 @@ class ChartData(_CamelModel):
     """
 
     chart: Literal["line", "bar", "area", "pie"]
-    rows: list[dict[str, Union[str, int, float]]] = Field(default_factory=list)
+    rows: list[dict[str, str | int | float]] = Field(default_factory=list)
     x_key: str  # serialized as `xKey`
     series: list[ChartSeries] = Field(default_factory=list)
     options: ChartOptions | None = None
@@ -95,7 +95,7 @@ class TableData(_CamelModel):
     """
 
     columns: list[TableColumn] = Field(default_factory=list)
-    rows: list[dict[str, Union[str, int, float]]] = Field(default_factory=list)
+    rows: list[dict[str, str | int | float]] = Field(default_factory=list)
     sheet: list[dict[str, object]] | None = None
 
 
@@ -125,6 +125,10 @@ class SlideElement(_CamelModel):
     y: float
     w: float
     h: float
+    # Clockwise rotation in degrees about the box centre, the way PowerPoint
+    # stores it. Absent means 0 (unrotated); the renderer and exporter both
+    # treat a missing value as no rotation.
+    rotation: float | None = None
     text: str | None = None
     src: str | None = None
     font_size: float | None = None
@@ -158,6 +162,10 @@ class SlideElement(_CamelModel):
     # people upload grow with their text; without this field every one of
     # them arrived frozen at the height of its placeholder.
     autofit: Literal["shape", "text", "none"] | None = None
+    # False for a box PowerPoint never wraps (bodyPr wrap="none") — a one-line
+    # label that folds on the canvas is the fastest way an import stops
+    # looking like its original. Absent means the text wraps, as ever.
+    wrap: bool | None = None
     # A table (`type: "table"`): the words as a grid of strings, row-major,
     # and the table's look in the fields above (`stroke` draws the grid,
     # `fill` / `color` / `fontSize` / `fontFamily` / `bold` / `align` are the
@@ -254,7 +262,7 @@ class FileData(_CamelModel):
 
 # The union of every known artifact data shape. `data` on the wire is one of
 # these; the discriminator lives on the enclosing `Artifact.type`.
-ArtifactData = Union[HtmlData, DocumentData, ChartData, TableData, SlidesData, FileData]
+ArtifactData = HtmlData | DocumentData | ChartData | TableData | SlidesData | FileData
 
 
 # --- the envelope every artifact shares -----------------------------------------

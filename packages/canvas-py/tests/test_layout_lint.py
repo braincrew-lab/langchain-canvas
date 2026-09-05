@@ -151,11 +151,11 @@ def test_the_same_mistake_across_many_elements_is_summarized() -> None:
 
 
 def test_a_field_the_schema_has_no_place_for_is_flagged_as_ignored() -> None:
-    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", rotation=45))
+    deck = _deck(_el("box", "shape", 5, 5, 10, 10, shape="rect", fill="#dddddd", wobble=45))
     warnings = lint_slides_data(deck)
     assert len(warnings) == 1
     assert "the canvas and the export both ignore them" in warnings[0]
-    assert 'slide 1, element "box": "rotation"' in warnings[0]
+    assert 'slide 1, element "box": "wobble"' in warnings[0]
 
 
 def test_unknown_fields_are_caught_at_every_level() -> None:
@@ -422,10 +422,10 @@ def test_an_unknown_field_alone_still_lands_with_a_warning() -> None:
     store = InMemoryCanvasStore()
     result = _write(store, {"slides": [{"elements": [
         {"id": "t", "type": "text", "x": 10, "y": 10, "w": 50, "h": 10,
-         "text": "Hi", "rotation": 45}
+         "text": "Hi", "wobble": 45}
     ]}]})
     assert result.startswith("Wrote deck.slides.json")
-    assert '"rotation"' in result
+    assert '"wobble"' in result
 
 
 def test_a_deck_key_outside_data_is_refused_with_its_place() -> None:
@@ -900,3 +900,15 @@ def test_a_shape_with_no_fill_and_no_stroke_is_called_invisible() -> None:
     with_stroke = _deck(_el("g", "shape", 5, 5, 20, 10, shape="rect",
                             fill="none", stroke="#112233"))
     assert lint_slides_data(with_stroke) == []
+
+
+def test_a_no_wrap_box_is_measured_sideways_not_by_wrapped_height() -> None:
+    """A box that never folds overflows *wide*: a fitting one-liner stays
+    silent whatever the wrapped estimate would have said, and a too-wide one
+    is named by width."""
+    fits = _deck(_el("label", "text", 5, 5, 60, 6, text="한 줄 라벨", fontSize=24, wrap=False))
+    assert lint_slides_data(fits) == []
+    wide = _deck(_el("label", "text", 5, 5, 20, 6,
+                     text="아주 긴 한 줄 라벨 " * 10, fontSize=24, wrap=False))
+    (warning,) = lint_slides_data(wide)
+    assert "run past the box" in warning and "no-wrap" in warning
