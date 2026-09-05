@@ -297,6 +297,9 @@ class _HtmlOutline(HTMLParser):
         # must not end the outer one (its text still lands in the cell).
         self._table_depth = 0
         self._has_header = False
+        # The background the open paragraph/heading asked for (a highlight
+        # box); rides the block to the writer, cleared on every flush.
+        self._block_fill: str | None = None
 
     def finish(self) -> None:
         self.close()
@@ -326,11 +329,13 @@ class _HtmlOutline(HTMLParser):
         elif tag in _HEADING_TAGS:
             self._flush()
             self._kind = ("heading", int(tag[1]))
+            self._block_fill = _block_fill_from_attrs(dict(attrs))
         elif tag == "li":
             self._flush()
             self._kind = ("bullet",)
         elif tag in _PARA_TAGS:
             self._flush()
+            self._block_fill = _block_fill_from_attrs(dict(attrs))
         elif tag in ("b", "strong"):
             self._bold += 1
         elif tag in ("i", "em"):
@@ -393,9 +398,21 @@ class _HtmlOutline(HTMLParser):
     def _flush(self) -> None:
         runs, self._runs = self._runs, []
         kind, self._kind = self._kind, ("para",)
+        fill, self._block_fill = self._block_fill, None
         trimmed = _trim_runs(runs)
         if trimmed:
-            self.blocks.append((*kind, trimmed))
+            # The fill rides only the blocks that can wear it — a paragraph
+            # or heading is a box in Word; a bullet is not extended here.
+            if fill and kind[0] in ("para", "heading"):
+                self.blocks.append((*kind, trimmed, fill))
+            else:
+                self.blocks.append((*kind, trimmed))
+
+
+def _block_fill_from_attrs(attrs: dict[str, str | None]) -> str | None:
+    """The background a paragraph-level tag states inline, or ``None``."""
+    style = _style_map(attrs.get("style"))
+    return _css_color(style.get("background-color")) or _css_color(style.get("background"))
 
 
 def _squash(text: str) -> str:
@@ -606,12 +623,17 @@ def _blocks_to_docx(
         if kind == "heading":
             paragraph = document.add_heading("", level=min(int(block[1]), 4))
             _add_runs(paragraph, block[2])
+            if len(block) > 3 and block[3]:
+                _shade_paragraph(paragraph, block[3])
         elif kind == "bullet":
             _add_runs(document.add_paragraph(style=_list_style("List Bullet", block)), block[1])
         elif kind == "numbered":
             _add_runs(document.add_paragraph(style=_list_style("List Number", block)), block[1])
         elif kind == "para":
-            _add_runs(document.add_paragraph(), block[1])
+            paragraph = document.add_paragraph()
+            _add_runs(paragraph, block[1])
+            if len(block) > 2 and block[2]:
+                _shade_paragraph(paragraph, block[2])
         elif kind == "quote":
             _add_runs(document.add_paragraph(style="Intense Quote"), block[1])
         elif kind == "code":
@@ -889,6 +911,17 @@ def _add_rule(document: Any) -> None:
         bottom.set(qn(key), value)
     border.append(bottom)
     props.append(border)
+
+
+def _shade_paragraph(paragraph: Any, fill: str) -> None:
+    """A paragraph's background — the full-width box Word draws for ``w:shd``
+    in the paragraph properties, the way a highlighted notice reads."""
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), fill.lstrip("#"))
+    paragraph._p.get_or_add_pPr().append(shading)
 
 
 def _as_cell_spec(value: Any) -> _CellSpec:

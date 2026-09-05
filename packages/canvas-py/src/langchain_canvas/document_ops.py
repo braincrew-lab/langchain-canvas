@@ -213,6 +213,16 @@ def _cell_fill(cell: Any) -> str | None:
     return f"#{str(fill).upper()}"
 
 
+def _paragraph_fill(paragraph: Any) -> str | None:
+    """The paragraph's own shading as ``#RRGGBB`` — same silence rule as
+    :func:`_cell_fill` (auto and white are the page showing through)."""
+    values = paragraph._p.xpath("./w:pPr/w:shd/@w:fill")
+    fill = values[0] if values else None
+    if not fill or str(fill).lower() in ("auto", "ffffff"):
+        return None
+    return f"#{str(fill).upper()}"
+
+
 def _cell_text(cell: Any) -> str:
     """One line of cell text, safe inside a pipe row (bars escaped, paragraph
     breaks folded to ``;``)."""
@@ -314,7 +324,11 @@ def outline(data: bytes, *, path: str = "document.docx") -> Outline:
         prefix = f"[p{paragraph_index}]"
         if text:
             named = style and style != "Normal"
-            lines.append(f"{prefix} ({style}) {text}" if named else f"{prefix} {text}")
+            line = f"{prefix} ({style}) {text}" if named else f"{prefix} {text}"
+            # A paragraph's own background (a highlight box) is part of what
+            # the page shows; same silence rule as a table cell's shading.
+            fill = _paragraph_fill(item)
+            lines.append(f"{line} [{fill}]" if fill else line)
         for _ in item._p.xpath(".//w:drawing//a:blip"):
             width, height = shape_size.get(image_index, (0.0, 0.0))
             lines.append(f"[img{image_index}] {width} x {height} in, in p{paragraph_index}")

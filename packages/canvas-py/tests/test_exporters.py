@@ -1106,3 +1106,35 @@ def test_a_plain_table_exports_exactly_as_before():
     assert [c.text for c in table.rows[1].cells] == ["1", "2"]
     assert table.rows[0].cells[0].paragraphs[0].runs[0].bold is True  # header bold kept
     assert not table.cell(0, 0)._tc.xpath("./w:tcPr/w:shd")  # no shading invented
+
+
+def test_html_docx_paragraph_backgrounds_land_and_read_back():
+    """A highlighted notice keeps its box: the fill lands as paragraph
+    shading, and the outline (the read side) prints it back."""
+    from docx.oxml.ns import qn
+
+    import docx as docx_lib
+
+    from langchain_canvas.document_ops import outline
+
+    html = (
+        '<h3 style="background-color:#DDEBF7">공지</h3>'
+        '<p style="background:#FFF9C4">주의: 반입 전 보안 검토 필수</p>'
+        "<p>배경 없는 문단</p>"
+    )
+    result = HtmlDocxExporter().export(html, path="notice.html")
+    document = docx_lib.Document(io.BytesIO(result.data))
+
+    def fill(paragraph):
+        values = paragraph._p.xpath("./w:pPr/w:shd/@w:fill")
+        return values[0] if values else None
+
+    heading, notice, plain = document.paragraphs[:3]
+    assert fill(heading) == "DDEBF7"
+    assert fill(notice) == "FFF9C4"
+    assert fill(plain) is None  # nothing invented for an unstated paragraph
+
+    rendered = outline(result.data).render()
+    assert "주의: 반입 전 보안 검토 필수 [#FFF9C4]" in rendered
+    assert "공지 [#DDEBF7]" in rendered
+    assert "배경 없는 문단 [" not in rendered
