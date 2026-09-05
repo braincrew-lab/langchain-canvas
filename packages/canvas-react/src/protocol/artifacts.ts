@@ -224,6 +224,8 @@ export interface FileData {
   size?: number;
   /** data: URI thumbnail of page one (page-renderable sources). */
   cover?: string;
+  /** Every page as labeled thumbnails tiled into grid sheets, 20 per sheet. */
+  grids?: string[];
   /** Short text sample, via the source converter. */
   excerpt?: string;
   /** One-line content summary ("3 pages", "5 slides"). */

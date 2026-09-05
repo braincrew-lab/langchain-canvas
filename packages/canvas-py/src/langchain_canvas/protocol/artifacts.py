@@ -256,6 +256,7 @@ class FileData(_CamelModel):
     media_type: str | None = None  # serialized as `mediaType`
     size: int | None = None
     cover: str | None = None  # data: URI thumbnail of page one (page-renderable sources)
+    grids: list[str] | None = None  # data: URI grid sheets of every page, 20 per sheet
     excerpt: str | None = None  # short text sample, via the source converter
     detail: str | None = None  # one-line content summary ("3 pages", "5 slides")
 
