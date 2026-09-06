@@ -771,6 +771,61 @@ def _deck_eye_images(
     ]
 
 
+def _element_signature(element: dict[str, Any]) -> tuple[Any, ...] | None:
+    """What makes two elements on different slides "the same thing", or None.
+
+    Tables and long text are content, never furniture; everything else is
+    compared by type, box (to a tenth of a percent), words, picture and fill.
+    """
+    kind = element.get("type")
+    if kind == "table":
+        return None
+    text = element.get("text")
+    if kind == "text" and isinstance(text, str) and len(text.strip()) > 40:
+        return None
+    try:
+        box = tuple(round(float(element[k]), 1) for k in ("x", "y", "w", "h"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (kind, box, text, element.get("src"), element.get("fill"), element.get("shape"))
+
+
+def _furniture_ids(slides: list[Any], index: int) -> list[str]:
+    """Ids of the elements slide ``index`` shares with other slides of the deck.
+
+    An index tab, a header rule, a footer, a page-number box sit at the same
+    place with the same look on slide after slide; those are the page's
+    furniture, and a slide written fresh should keep them. A slide that is
+    a near copy of this one (``add_slide`` just made it, or the template
+    repeats a layout) says nothing about furniture and is left out of the
+    comparison: only slides that share fewer than four fifths of this
+    slide's elements count. With no such slide the list is empty.
+    """
+    if not 0 <= index < len(slides) or not isinstance(slides[index], dict):
+        return []
+    own = [e for e in slides[index].get("elements") or [] if isinstance(e, dict)]
+    own_signatures: dict[str, tuple[Any, ...]] = {
+        str(e.get("id")): sig
+        for e in own
+        if isinstance(e.get("id"), str) and (sig := _element_signature(e)) is not None
+    }
+    if not own_signatures:
+        return []
+    shared: set[str] = set()
+    for other_index, other in enumerate(slides):
+        if other_index == index or not isinstance(other, dict):
+            continue
+        signatures = {
+            sig for e in (other.get("elements") or [])
+            if isinstance(e, dict) and (sig := _element_signature(e)) is not None
+        }
+        common = {i for i, sig in own_signatures.items() if sig in signatures}
+        if len(common) >= 0.8 * len(own_signatures):
+            continue  # a near copy of this slide, not evidence of furniture
+        shared |= common
+    return [str(e.get("id")) for e in own if e.get("id") in shared]
+
+
 def _one_slide_view(content: str, number: int) -> str:
     """The outline head plus one slide's JSON, or the refusal to relay.
 
@@ -791,9 +846,15 @@ def _one_slide_view(content: str, number: int) -> str:
     head = "\n".join(line for line in outline.splitlines() if not line.startswith("["))
     head = "\n".join(line for line in head.splitlines() if not line.startswith("Each id"))
     body = json.dumps(slides[number - 1], ensure_ascii=False, indent=1)
+    furniture = _furniture_ids(slides, number - 1)
+    note = (
+        f"\nShared with other slides (page furniture — index tab, header, footer, page "
+        f"number; set_slide_elements keeps these unless you pass keep): {', '.join(furniture)}"
+        if furniture else ""
+    )
     return (
         f"{head}\n[s{number}] of {len(slides)} — this slide's JSON (ids are what "
-        "set_slide_texts / edit_slide_elements / set_slide_elements address):\n" + body
+        f"set_slide_texts / edit_slide_elements / set_slide_elements address):{note}\n" + body
     )
 
 
@@ -3698,19 +3759,28 @@ def create_deck_tools(
         description: str,
         revision: str,
         runtime: ToolRuntime,
+        keep: list[str] | str | None = None,
     ) -> str | list[dict]:
-        """Replace one slide's `elements` list whole; every other slide stays.
+        """Replace one slide's content elements; its furniture and every other slide stay.
 
         This is how a copied slide gets a structure of its own — other
         tables, other sections, fewer boxes — without rewriting the deck:
-        write just this slide's elements (each with an id, a `type` of
-        text|image|shape|table, `x`/`y`/`w`/`h` in percent of the page named
-        in the outline, and its style), the way `write_canvas` describes an
-        element. Keep the look by reusing the boxes, fonts and colours of
-        the elements you read with `read_canvas(path, slide=N)`; a table is
-        `rows` plus `header`, `stroke`, `fontSize`. Background, notes and
-        the master backdrop of the slide stay; the `page` and `template`
-        stay. `revision` is from your most recent `read_canvas` of this file.
+        write just this slide's content elements (each with an id, a `type`
+        of text|image|shape|table, `x`/`y`/`w`/`h` in percent of the page
+        named in the outline, and its style), the way `write_canvas`
+        describes an element. Keep the look by reusing the boxes, fonts and
+        colours of the elements you read with `read_canvas(path, slide=N)`;
+        a table is `rows` plus `header`, `stroke`, `fontSize`.
+
+        The slide's page furniture — the index tab, header rule, footer and
+        page number it shares with other slides, listed by that read as
+        "Shared with other slides" — is kept as it is unless you say
+        otherwise: `keep` names the ids of the current slide's elements to
+        carry over (default: that shared set; `[]` keeps none). Do not
+        rewrite furniture into `elements`; an id in both is refused.
+        Background, notes and the master backdrop stay; the `page` and
+        `template` stay. `revision` is from your most recent `read_canvas`
+        of this file.
         """
         canvas_id = _canvas_id(runtime)
         envelope, problem = _deck_of(canvas_id, path)
@@ -3732,13 +3802,36 @@ def create_deck_tools(
         if dupes:
             return f"Error: duplicate element id(s) on the slide: {', '.join(dupes)}."
         target = slides[slide - 1]
+        current = [e for e in target.get("elements") or [] if isinstance(e, dict)]
+        by_id = {e.get("id"): e for e in current}
+        wanted, problem = _json_arg(keep, "keep", list)
+        if problem is not None:
+            return problem
+        if wanted is None:
+            wanted = _furniture_ids(slides, slide - 1)
+        for ident in wanted:
+            if ident not in by_id:
+                have = ", ".join(str(i) for i in by_id)
+                return f"Error: slide {slide} has no element {ident!r} to keep. It has: {have}."
+        clash = sorted(set(names) & set(wanted))
+        if clash:
+            return (
+                f"Error: {', '.join(clash)} is both kept and in `elements` — leave a kept "
+                "element out of `elements`, or drop it from `keep`."
+            )
+        kept = [copy.deepcopy(by_id[i]) for i in wanted]
         for key in ("title", "subtitle", "bullets", "bullets2", "image", "layout"):
             target.pop(key, None)
-        target["elements"] = copy.deepcopy(items)
+        target["elements"] = kept + copy.deepcopy(items)
+        kept_note = (
+            f", keeping {len(kept)} shared element(s) ({', '.join(str(i) for i in wanted)})"
+            if kept else ""
+        )
         return _save_slides(
             runtime, canvas_id, path, envelope, description, revision,
-            f"Replaced the elements of slide {slide} of {path} with {len(items)} element(s); "
-            "the other slides, the page and the template are as they were",
+            f"Replaced the content of slide {slide} of {path} with {len(items)} "
+            f"element(s){kept_note}; the other slides, the page and the template are as "
+            "they were",
         )
 
     return [open_deck_for_editing, add_slide, edit_slide_elements, set_slide_elements]
