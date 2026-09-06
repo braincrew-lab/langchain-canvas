@@ -352,25 +352,55 @@ def test_a_host_can_open_uploaded_workbooks_read_only(tmp_path) -> None:
     assert _create_event(replayed)["type"] == "file"
 
 
-def test_pdf_chart_pages_are_the_pages_that_draw_pictures_or_shapes() -> None:
-    """A text-only page is not a chart; a page carrying a picture is."""
-    import io
+def _vector_pdf(pages: list[str]) -> bytes:
+    """A small PDF written by hand: one content stream per page."""
+    objs: list[bytes] = []
+    kids = []
+    n_pages = len(pages)
+    # 1 catalog, 2 pages, then (page, content) pairs
+    for i, stream in enumerate(pages):
+        page_id = 3 + i * 2
+        content_id = page_id + 1
+        kids.append(f"{page_id} 0 R")
+        objs.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {content_id} 0 R "
+                "/Resources << /Font << /F1 "
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+            ).encode()
+        )
+        data = stream.encode()
+        objs.append(b"<< /Length %d >>\nstream\n" % len(data) + data + b"\nendstream")
+    header = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {n_pages} >>".encode(),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for k, body in enumerate(header + objs, 1):
+        offsets.append(len(out))
+        out += f"{k} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(offsets) + 1}\n".encode() + b"0000000000 65535 f \n"
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    trailer = f"trailer\n<< /Size {len(offsets) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    out += trailer.encode()
+    return bytes(out)
 
-    from PIL import Image, ImageDraw
 
+def test_pdf_chart_pages_are_shape_pages_with_little_text() -> None:
+    """Three big filled rectangles = a chart; two big cell fills under a
+    wall of text = a table."""
     from langchain_canvas.converters import PdfSourceConverter
 
-    plain = Image.new("RGB", (400, 560), "white")
-    chart = Image.new("RGB", (400, 560), "white")
-    draw = ImageDraw.Draw(chart)
-    for i in range(6):
-        draw.rectangle([20 + i * 60, 300 - i * 30, 60 + i * 60, 500], fill="steelblue")
-    out = io.BytesIO()
-    plain.save(out, format="PDF", save_all=True, append_images=[chart])
-    pdf = out.getvalue()
+    chart = "0 0 1 rg 50 50 400 400 re f 100 100 60 300 re f 200 100 60 200 re f"
+    cells = " ".join(
+        f"{x} {y} Td (cell) Tj" for x in range(0, 500, 50) for y in range(0, 800, 25)
+    )
+    text_wall = "BT /F1 9 Tf " + cells + " ET"
+    table = "0.9 g 40 700 500 60 re f 40 620 500 60 re f " + text_wall
+    empty = ""
 
-    # Pillow prints every page as one picture; a page that is entirely white
-    # still carries an image object, so both count. The point is the contract
-    # shape (1-based, in order) and that a page of nothing draws no path.
-    pages = PdfSourceConverter().chart_pages(pdf, path="x.pdf")
-    assert pages == [1, 2]
+    pages = PdfSourceConverter().chart_pages(_vector_pdf([empty, chart, table]), path="x.pdf")
+    assert pages == [2]
