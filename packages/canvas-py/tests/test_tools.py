@@ -1886,6 +1886,48 @@ def test_the_copy_gets_the_master_as_a_display_backdrop() -> None:
     assert len(stored) == 1
 
 
+def _portrait_upload() -> bytes:
+    import io as iolib
+
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    deck = Presentation()
+    deck.slide_width, deck.slide_height = Inches(8.27), Inches(11.69)
+    slide = deck.slides.add_slide(deck.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(7), Inches(0.6))
+    box.text_frame.text = "경영실적보고서"
+    box.text_frame.paragraphs[0].runs[0].font.size = Pt(20)
+    out = iolib.BytesIO()
+    deck.save(out)
+    return out.getvalue()
+
+
+def test_the_copy_reply_names_the_page_so_a_portrait_deck_is_never_taken_for_16_9() -> None:
+    pytest.importorskip("pptx")
+    from langchain_canvas.tools import create_deck_tools
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t1", "sources/report.pptx", _portrait_upload(), "Upload", actor="human")
+    tools = {t.name: t for t in create_deck_tools(store, converters=None)}
+    reply = tools["open_deck_for_editing"].func(
+        source="sources/report.pptx", runtime=_runtime(thread_id="t1")
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith(
+        "Copied sources/report.pptx to report.slides.json "
+        "(1 slide(s), page 8.27 x 11.69 in (portrait), 0 picture(s)"
+    )
+    assert "keep `page` as it is when you write the deck" in text
+    # The outline the model reads next says the same thing in its first line.
+    canvas = _tools(store)
+    read = canvas["read_canvas"].func(path="report.slides.json", runtime=_runtime(thread_id="t1"))
+    assert (
+        "deck: report — 1 slide(s), page 8.27 x 11.69 in (portrait), "
+        "template sources/report.pptx"
+    ) in read
+
+
 def test_without_a_renderer_the_reply_says_the_master_is_safe() -> None:
     pytest.importorskip("pptx")
     from langchain_canvas.tools import create_deck_tools
