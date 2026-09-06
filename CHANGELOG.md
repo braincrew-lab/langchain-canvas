@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.43] — 2026-09-07
+
+### Fixed
+
+- `PdfSourceConverter.chart_pages` no longer counts embedded pictures as charts and skips pages with more than 200 text objects, so a sheet full of screenshots or colored header cells is not shown as a stack of page images under the workbook grid. Measured: a 26-page QA workbook went from 21 "chart pages" to none; a deck with four chart sheets still reports exactly those. Python only; no npm change.
+
 ## [0.7.42] — 2026-09-06
 
 ### Added

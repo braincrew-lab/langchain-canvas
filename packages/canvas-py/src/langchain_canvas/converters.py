@@ -354,22 +354,25 @@ class PdfSourceConverter:
             "data": base64.b64encode(png).decode(),
         }
 
-    #: A chart page is dozens of filled vector shapes with a few large ones
-    #: (plot area, wide bars, wedges); a printed sheet is text plus, at most,
-    #: cell fills that are small. Measured on LibreOffice output: table pages
-    #: 0-16 small fills and no large shape, chart pages 4-25 fills with 3-7
-    #: shapes wider than 40pt.
+    #: A chart page is a few large vector shapes (plot area, wide bars,
+    #: wedges) on a page with little text; a printed sheet is text with, at
+    #: most, cell fills. Pictures do not count: a sheet full of screenshots
+    #: is still a sheet. Measured on LibreOffice output: table pages carried
+    #: 0-35 fills, up to 3 large ones and 60-770 text objects; chart pages
+    #: 4-25 fills, 3-7 large ones and 30-100 text objects.
     chart_min_big_paths: int = 2
     chart_min_area_paths: int = 40
+    chart_max_text_objects: int = 200
 
     def chart_pages(self, data: bytes, *, path: str) -> list[int]:
         """1-based pages whose vector content reads as a chart.
 
-        A page counts when it embeds a picture, draws at least
-        ``chart_min_big_paths`` shapes larger than 40pt on a side, or
-        ``chart_min_area_paths`` shapes with any real area. Hosts that
-        render office files to PDF call this on that PDF so the workbook
-        viewer can show chart pages under the read-only grid.
+        A page counts when it draws at least ``chart_min_big_paths`` shapes
+        larger than 40pt on a side (or ``chart_min_area_paths`` shapes with
+        any real area) and carries no more than ``chart_max_text_objects``
+        text objects. Embedded pictures are ignored. Hosts that render
+        office files to PDF call this on that PDF so the workbook viewer can
+        show chart pages under the read-only grid.
         """
         import ctypes
 
@@ -385,21 +388,18 @@ class PdfSourceConverter:
         pages: list[int] = []
         try:
             for index, page in enumerate(document, 1):
-                area = big = images = 0
+                area = big = text = 0
                 for obj in page.get_objects(max_depth=2):
-                    if obj.type == pdfium_c.FPDF_PAGEOBJ_IMAGE:
-                        images += 1
+                    if obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT:
+                        text += 1
                     elif obj.type == pdfium_c.FPDF_PAGEOBJ_PATH:
                         width, height = _size(obj.raw)
                         if width > 4 and height > 4:
                             area += 1
                         if width > 40 and height > 40:
                             big += 1
-                if (
-                    images
-                    or big >= self.chart_min_big_paths
-                    or area >= self.chart_min_area_paths
-                ):
+                shapes = big >= self.chart_min_big_paths or area >= self.chart_min_area_paths
+                if shapes and text <= self.chart_max_text_objects:
                     pages.append(index)
         finally:
             document.close()
