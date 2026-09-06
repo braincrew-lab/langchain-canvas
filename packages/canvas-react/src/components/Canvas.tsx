@@ -77,6 +77,14 @@ export interface CanvasProps {
    * references stay unresolved — everything else behaves exactly as before.
    */
   assetBaseUrl?: string;
+  /**
+   * URL prefix that renders one page of a stored file (`.pdf`, `.pptx`,
+   * `.docx`) as an image — the encoded path is appended, then
+   * `&page=N&width=W`, e.g. `http://host/api/canvas/<id>/file/page?path=`.
+   * With it, a file whose `pageCount` is known opens as a page viewer;
+   * without it, the cover shows.
+   */
+  pageBaseUrl?: string;
   /** The agent is working: hand editing is frozen and a banner says so. */
   busy?: boolean;
   /** What the banner reads while `busy` (default `labels.busy`). */
@@ -104,6 +112,7 @@ export function Canvas({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  pageBaseUrl,
   busy = false,
   busyLabel,
   labels,
@@ -121,6 +130,7 @@ export function Canvas({
           onFilesOpened={onFilesOpened}
           onImported={onImported}
           assetBaseUrl={assetBaseUrl}
+          pageBaseUrl={pageBaseUrl}
           busy={busy}
           busyLabel={busyLabel}
         />
@@ -138,6 +148,7 @@ function CanvasPanel({
   onFilesOpened,
   onImported,
   assetBaseUrl,
+  pageBaseUrl,
   busy = false,
   busyLabel,
 }: Pick<
@@ -150,6 +161,7 @@ function CanvasPanel({
   | "onFilesOpened"
   | "onImported"
   | "assetBaseUrl"
+  | "pageBaseUrl"
   | "busy"
   | "busyLabel"
 >) {
@@ -170,6 +182,7 @@ function CanvasPanel({
   const setOnUserEdit = useCanvasStore((s) => s.setOnUserEdit);
   const setSaveFlusher = useCanvasStore((s) => s.setSaveFlusher);
   const setAssetBaseUrl = useCanvasStore((s) => s.setAssetBaseUrl);
+  const setPageBaseUrl = useCanvasStore((s) => s.setPageBaseUrl);
   const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
 
@@ -178,6 +191,9 @@ function CanvasPanel({
   useEffect(() => {
     setAssetBaseUrl(assetBaseUrl ?? null);
   }, [assetBaseUrl, setAssetBaseUrl]);
+  useEffect(() => {
+    setPageBaseUrl(pageBaseUrl ?? null);
+  }, [pageBaseUrl, setPageBaseUrl]);
 
   // Open = hand the raw files to the host (upload) + preview what we can import.
   const openFiles = (files: FileList) => {

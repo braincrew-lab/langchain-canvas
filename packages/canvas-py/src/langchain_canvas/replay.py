@@ -516,7 +516,9 @@ def _table_preview_events(
     return events
 
 
-_FILE_DATA_KEYS = ("path", "name", "mediaType", "size", "cover", "grids", "excerpt", "detail")
+_FILE_DATA_KEYS = (
+    "path", "name", "mediaType", "size", "cover", "grids", "pageCount", "excerpt", "detail"
+)
 
 # Derived previews only — the stored file stays the truth. Bounded so a canvas
 # with many uploads cannot grow the process without limit.
@@ -603,16 +605,20 @@ def _file_preview_data(
         "size": len(got.data),
         "cover": None,
         "grids": None,
+        "pageCount": None,
         "excerpt": None,
         "detail": None,
     }
     # Images need no derived preview — the renderer shows the original bytes
     # straight from the store (one truth, nothing duplicated on the wire).
     if not (media_type or "").startswith("image/"):
-        cover, detail = _derive_cover(path, got.data, active)
+        cover, detail, pages = _derive_cover(path, got.data, active)
         data["cover"] = cover
         data["detail"] = detail
-        if cover is not None:
+        data["pageCount"] = pages
+        # A workbook reads best as sheets at a glance; a paged document is
+        # read one page at a time through the host's page endpoint instead.
+        if cover is not None and path.lower().endswith(".xlsx"):
             data["grids"] = _derive_grids(path, got.data, active)
         if cover is None:
             excerpt, fallback_detail = _derive_excerpt(path, got.data)
@@ -626,8 +632,8 @@ def _file_preview_data(
 
 def _derive_cover(
     path: str, data: bytes, converters: list[SourceConverter]
-) -> tuple[str | None, str | None]:
-    """(cover data-URI, detail line) via the page-render pipeline, or Nones.
+) -> tuple[str | None, str | None, int | None]:
+    """(cover data-URI, detail line, page count) via the page-render pipeline.
 
     Reuses the same ``PageRenderable`` slot the agent's eye uses — one
     pipeline, two audiences. The full-size page-one render is shrunk to a
@@ -636,7 +642,7 @@ def _derive_cover(
     """
     converter = converter_for(path, converters)
     if converter is None or not isinstance(converter, PageRenderable):
-        return None, None
+        return None, None, None
     try:
         converted = converter.render_pages(data, path=path, pages=[1])
         block = next(b for b in converted.blocks if b.get("type") == "image")
@@ -649,9 +655,11 @@ def _derive_cover(
         image.convert("RGB").save(out, format="JPEG", quality=80)
         cover = "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode()
     except Exception:  # noqa: BLE001 — a failed derivation degrades to the card
-        return None, None
+        return None, None, None
     pages = converted.metadata.get("pages")
-    return cover, f"{pages} pages" if isinstance(pages, int) else None
+    if not isinstance(pages, int):
+        return cover, None, None
+    return cover, f"{pages} pages", pages
 
 
 def _derive_grids(

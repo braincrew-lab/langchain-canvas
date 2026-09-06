@@ -71,6 +71,23 @@ export function resolveCanvasFileUrl(path: string, assetBaseUrl: string): string
   return assetBaseUrl + encodeURIComponent(path);
 }
 
+/**
+ * Absolute URL for one rendered page of a stored file. `pageBaseUrl` is a
+ * prefix the encoded path is appended to, followed by the 1-based page and
+ * the wanted pixel width; `version` (the artifact's version) rides along so a
+ * new commit never shows a cached image of the old bytes.
+ */
+export function resolveCanvasPageUrl(
+  path: string,
+  page: number,
+  width: number,
+  pageBaseUrl: string,
+  version?: number | string,
+): string {
+  const base = `${pageBaseUrl}${encodeURIComponent(path)}&page=${page}&width=${width}`;
+  return version === undefined ? base : `${base}&v=${encodeURIComponent(String(version))}`;
+}
+
 // src="assets/..." / src='sources/...' (leading ./ and ../ tolerated) — built
 // from the constant above so the matcher can never drift from the contract.
 const REF_ALTERNATION = ASSET_REFERENCE_PREFIXES.map((p) => p.slice(0, -1)).join("|");

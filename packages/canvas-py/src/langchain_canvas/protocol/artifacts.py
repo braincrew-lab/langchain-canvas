@@ -257,6 +257,7 @@ class FileData(_CamelModel):
     size: int | None = None
     cover: str | None = None  # data: URI thumbnail of page one (page-renderable sources)
     grids: list[str] | None = None  # data: URI grid sheets of every page, 20 per sheet
+    page_count: int | None = None  # pages a host can render one at a time (`pageCount`)
     excerpt: str | None = None  # short text sample, via the source converter
     detail: str | None = None  # one-line content summary ("3 pages", "5 slides")
 
