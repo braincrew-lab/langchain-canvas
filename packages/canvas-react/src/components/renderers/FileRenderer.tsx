@@ -16,6 +16,8 @@
  * Any other paged file (a deck, a PDF) whose `pageCount` is known opens as a
  * `PageViewer` when the host provides a page endpoint (`pageBaseUrl`): pages
  * are fetched one at a time at reading size instead of tiled into a sheet.
+ * The viewer is the whole tab: the file card below it only stays when it has
+ * a download link to offer.
  */
 
 import { Suspense, lazy } from "react";
@@ -109,6 +111,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
       ) : (
         preview
       )}
+      {(!paged || (chrome.fileDownload && href)) && (
       <div className="cv-file__card">
         <span className="cv-file__icon" aria-hidden>
           {iconFor(mediaType, name)}
@@ -123,6 +126,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
           </a>
         )}
       </div>
+      )}
     </div>
   );
 }

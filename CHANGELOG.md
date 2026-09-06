@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.35] — 2026-09-06
+
+### Changed
+
+- Page viewer: pages and thumbnails draw with square corners (a document, not a card), and the file card below the viewer is left out unless it carries a download link.
+
 ## [0.7.34] — 2026-09-06
 
 ### Added
