@@ -771,59 +771,44 @@ def _deck_eye_images(
     ]
 
 
-def _element_signature(element: dict[str, Any]) -> tuple[Any, ...] | None:
-    """What makes two elements on different slides "the same thing", or None.
+#: The page margins where a slide's furniture lives, as percent of the page:
+#: an index tab hugs the right edge, a header rule and page number sit at the
+#: top, a footer at the bottom. Content never starts inside these bands on a
+#: report page; a section bar begins below the header band.
+_FURNITURE_BANDS = {"top": 13.0, "bottom": 88.0, "right": 90.0, "left": 8.0}
 
-    Tables and long text are content, never furniture; everything else is
-    compared by type, box (to a tenth of a percent), words, picture and fill.
+
+def _furniture_ids(slide: dict[str, Any]) -> list[str]:
+    """Ids of the elements that sit in the page margins — the page's furniture.
+
+    An index tab, a header rule, a page number, a footer: the model that
+    writes a slide fresh forgets them, and a slide that shares nothing with
+    the rest of the deck (a template's one tabbed page, a copy just made)
+    gives no other way to tell them from content. Tables and long text are
+    content wherever they sit.
     """
-    kind = element.get("type")
-    if kind == "table":
-        return None
-    text = element.get("text")
-    if kind == "text" and isinstance(text, str) and len(text.strip()) > 40:
-        return None
-    try:
-        box = tuple(round(float(element[k]), 1) for k in ("x", "y", "w", "h"))
-    except (KeyError, TypeError, ValueError):
-        return None
-    return (kind, box, text, element.get("src"), element.get("fill"), element.get("shape"))
-
-
-def _furniture_ids(slides: list[Any], index: int) -> list[str]:
-    """Ids of the elements slide ``index`` shares with other slides of the deck.
-
-    An index tab, a header rule, a footer, a page-number box sit at the same
-    place with the same look on slide after slide; those are the page's
-    furniture, and a slide written fresh should keep them. A slide that is
-    a near copy of this one (``add_slide`` just made it, or the template
-    repeats a layout) says nothing about furniture and is left out of the
-    comparison: only slides that share fewer than four fifths of this
-    slide's elements count. With no such slide the list is empty.
-    """
-    if not 0 <= index < len(slides) or not isinstance(slides[index], dict):
-        return []
-    own = [e for e in slides[index].get("elements") or [] if isinstance(e, dict)]
-    own_signatures: dict[str, tuple[Any, ...]] = {
-        str(e.get("id")): sig
-        for e in own
-        if isinstance(e.get("id"), str) and (sig := _element_signature(e)) is not None
-    }
-    if not own_signatures:
-        return []
-    shared: set[str] = set()
-    for other_index, other in enumerate(slides):
-        if other_index == index or not isinstance(other, dict):
+    out: list[str] = []
+    for element in slide.get("elements") or []:
+        if not isinstance(element, dict) or not isinstance(element.get("id"), str):
             continue
-        signatures = {
-            sig for e in (other.get("elements") or [])
-            if isinstance(e, dict) and (sig := _element_signature(e)) is not None
-        }
-        common = {i for i, sig in own_signatures.items() if sig in signatures}
-        if len(common) >= 0.8 * len(own_signatures):
-            continue  # a near copy of this slide, not evidence of furniture
-        shared |= common
-    return [str(e.get("id")) for e in own if e.get("id") in shared]
+        if element.get("type") == "table":
+            continue
+        text = element.get("text")
+        if element.get("type") == "text" and isinstance(text, str) and len(text.strip()) > 40:
+            continue
+        try:
+            x, y, w, h = (float(element[k]) for k in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        bands = _FURNITURE_BANDS
+        if (
+            y + h <= bands["top"]
+            or y >= bands["bottom"]
+            or x >= bands["right"]
+            or x + w <= bands["left"]
+        ):
+            out.append(element["id"])
+    return out
 
 
 def _one_slide_view(content: str, number: int) -> str:
@@ -846,10 +831,11 @@ def _one_slide_view(content: str, number: int) -> str:
     head = "\n".join(line for line in outline.splitlines() if not line.startswith("["))
     head = "\n".join(line for line in head.splitlines() if not line.startswith("Each id"))
     body = json.dumps(slides[number - 1], ensure_ascii=False, indent=1)
-    furniture = _furniture_ids(slides, number - 1)
+    furniture = _furniture_ids(slides[number - 1]) if isinstance(slides[number - 1], dict) else []
     note = (
-        f"\nShared with other slides (page furniture — index tab, header, footer, page "
-        f"number; set_slide_elements keeps these unless you pass keep): {', '.join(furniture)}"
+        f"\nIn the page margins (page furniture — index tab, header, footer, page number; "
+        f"set_slide_elements keeps these unless you rewrite or drop them): "
+        f"{', '.join(furniture)}"
         if furniture else ""
     )
     return (
@@ -3773,14 +3759,14 @@ def create_deck_tools(
         a table is `rows` plus `header`, `stroke`, `fontSize`.
 
         The slide's page furniture — the index tab, header rule, footer and
-        page number it shares with other slides, listed by that read as
-        "Shared with other slides" — is kept as it is unless you say
-        otherwise: `keep` names the ids of the current slide's elements to
-        carry over (default: that shared set; `[]` keeps none). Do not
-        rewrite furniture into `elements`; an id in both is refused.
-        Background, notes and the master backdrop stay; the `page` and
-        `template` stay. `revision` is from your most recent `read_canvas`
-        of this file.
+        page number in the page margins, listed by that read as "In the
+        page margins" — is kept as it is by default, so write only the
+        content; an element in `elements` with a furniture id replaces that
+        one (a new header title, the next page number). `keep` names the
+        ids to carry over instead (`[]` keeps none); with `keep` given, an
+        id in both is refused. Background, notes and the master backdrop
+        stay; the `page` and `template` stay. `revision` is from your most
+        recent `read_canvas` of this file.
         """
         canvas_id = _canvas_id(runtime)
         envelope, problem = _deck_of(canvas_id, path)
@@ -3808,23 +3794,25 @@ def create_deck_tools(
         if problem is not None:
             return problem
         if wanted is None:
-            wanted = _furniture_ids(slides, slide - 1)
+            # The default: furniture stays, except what `elements` rewrites.
+            wanted = [i for i in _furniture_ids(target) if i not in set(names)]
+        else:
+            clash = sorted(set(names) & set(wanted))
+            if clash:
+                return (
+                    f"Error: {', '.join(clash)} is both kept and in `elements` — leave a "
+                    "kept element out of `elements`, or drop it from `keep`."
+                )
         for ident in wanted:
             if ident not in by_id:
                 have = ", ".join(str(i) for i in by_id)
                 return f"Error: slide {slide} has no element {ident!r} to keep. It has: {have}."
-        clash = sorted(set(names) & set(wanted))
-        if clash:
-            return (
-                f"Error: {', '.join(clash)} is both kept and in `elements` — leave a kept "
-                "element out of `elements`, or drop it from `keep`."
-            )
         kept = [copy.deepcopy(by_id[i]) for i in wanted]
         for key in ("title", "subtitle", "bullets", "bullets2", "image", "layout"):
             target.pop(key, None)
         target["elements"] = kept + copy.deepcopy(items)
         kept_note = (
-            f", keeping {len(kept)} shared element(s) ({', '.join(str(i) for i in wanted)})"
+            f", keeping {len(kept)} margin element(s) ({', '.join(str(i) for i in wanted)})"
             if kept else ""
         )
         return _save_slides(

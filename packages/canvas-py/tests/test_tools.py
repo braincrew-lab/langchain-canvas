@@ -2094,7 +2094,7 @@ def test_set_slide_elements_replaces_one_slide_and_nothing_else() -> None:
 
 
 def _deck_with_furniture() -> str:
-    """Three slides sharing an index tab and a footer; slide 3 is a copy of slide 2."""
+    """A cover and a report page with an index tab, a header rule and a footer."""
     from langchain_canvas import encode_slides
 
     tab = {"id": "e40", "type": "shape", "shape": "rect", "x": 94, "y": 20, "w": 4, "h": 10,
@@ -2103,105 +2103,95 @@ def _deck_with_furniture() -> str:
               "text": "경영실적보고서작성기관"}
     rule = {"id": "e42", "type": "shape", "shape": "line", "x": 5, "y": 6, "w": 88, "h": 0.1,
             "stroke": "#808080"}
+    number = {"id": "e43", "type": "text", "x": 82, "y": 1.5, "w": 9, "h": 4, "fontSize": 30,
+              "text": "02"}
     body = [
-        {"id": "e0", "type": "text", "x": 5, "y": 8, "w": 80, "h": 6, "fontSize": 20,
+        {"id": "e0", "type": "text", "x": 5, "y": 14, "w": 80, "h": 6, "fontSize": 20,
          "text": "주요사업 계량 지표명"},
-        {"id": "t1", "type": "table", "x": 5, "y": 20, "w": 80, "h": 20, "fontSize": 10,
+        {"id": "t1", "type": "table", "x": 5, "y": 92, "w": 80, "h": 6, "fontSize": 10,
          "rows": [["연도", "산식"], ["20YY", "가나"]]},
-        {"id": "e2", "type": "text", "x": 5, "y": 45, "w": 80, "h": 20, "fontSize": 11,
+        {"id": "e2", "type": "text", "x": 5, "y": 89, "w": 80, "h": 3, "fontSize": 11,
          "text": "□ 가나다라마바사 " * 6},
+        {"id": "e3", "type": "text", "x": 5, "y": 45, "w": 80, "h": 6, "fontSize": 11,
+         "text": "본문"},
     ]
     cover = {"elements": [
         {"id": "e0", "type": "text", "x": 5, "y": 40, "w": 90, "h": 10, "fontSize": 40,
          "text": "표지"},
-        dict(footer),
     ]}
-    page = {"elements": [dict(tab), dict(rule), *body, dict(footer)]}
-    return encode_slides("Deck", {"slides": [cover, page, json.loads(json.dumps(page))]})
+    page = {"elements": [tab, rule, number, *body, footer]}
+    return encode_slides("Deck", {"slides": [cover, page]})
 
 
-def test_the_slide_read_names_the_furniture_it_shares_with_other_slides() -> None:
+def test_the_slide_read_names_the_furniture_in_the_page_margins() -> None:
     from langchain_canvas.tools import _furniture_ids
 
     slides = json.loads(_deck_with_furniture())["data"]["slides"]
-    # slide 3 is a copy of slide 2: the copy is not evidence, the cover is.
-    assert _furniture_ids(slides, 2) == ["e41"]
-    # give the deck a second real page with the tab and the rule: now they count
-    slides.append({"elements": [
-        dict(slides[1]["elements"][0]), dict(slides[1]["elements"][1]),
-        {"id": "e0", "type": "text", "x": 5, "y": 8, "w": 80, "h": 6, "fontSize": 20,
-         "text": "경영관리"},
-        dict(slides[0]["elements"][1]),
-    ]})
-    assert _furniture_ids(slides, 2) == ["e40", "e42", "e41"]
-    assert _furniture_ids(slides, 0) == ["e41"]
-    # tables and long text never count, whatever they share
-    assert "t1" not in _furniture_ids(slides, 1) and "e2" not in _furniture_ids(slides, 1)
+    # the tab (right), the rule and the page number (top), the footer (bottom);
+    # a table or long text in a margin is content, and the body is not there
+    assert _furniture_ids(slides[1]) == ["e40", "e42", "e43", "e41"]
+    assert _furniture_ids(slides[0]) == []
     store = InMemoryCanvasStore()
     tools = _tools(store)
     runtime = _runtime(thread_id="t1")
-    deck = json.loads(_deck_with_furniture())
-    deck["data"]["slides"] = slides
     _invoke(tools["write_canvas"], runtime, path="d.slides.json", description="d",
-            content=json.dumps(deck, ensure_ascii=False))
-    out = _invoke(tools["read_canvas"], runtime, path="d.slides.json", slide=3)
-    assert "Shared with other slides (page furniture" in out and "e40, e42, e41" in out
+            content=_deck_with_furniture())
+    out = _invoke(tools["read_canvas"], runtime, path="d.slides.json", slide=2)
+    assert "In the page margins (page furniture" in out and ": e40, e42, e43, e41" in out
     out = _invoke(tools["read_canvas"], runtime, path="d.slides.json", slide=1)
-    assert "Shared with other slides" in out and ": e41" in out
+    assert "In the page margins" not in out
 
 
 def test_set_slide_elements_keeps_the_furniture_unless_told_otherwise() -> None:
     pytest.importorskip("pptx")
     store = InMemoryCanvasStore()
     tools = _deck_tools(store)
-    slides = json.loads(_deck_with_furniture())["data"]["slides"]
-    slides.append({"elements": [
-        dict(slides[1]["elements"][0]), dict(slides[1]["elements"][1]),
-        {"id": "e0", "type": "text", "x": 5, "y": 8, "w": 80, "h": 6, "fontSize": 20,
-         "text": "경영관리"},
-        dict(slides[0]["elements"][1]),
-    ]})
-    from langchain_canvas import encode_slides
-
-    revision = _written(store, tools, encode_slides("Deck", {"slides": slides}))
+    revision = _written(store, tools, _deck_with_furniture())
+    original = json.loads(_deck_with_furniture())["data"]["slides"]
     fresh = [
-        {"id": "e0", "type": "text", "x": 5, "y": 8, "w": 80, "h": 6, "fontSize": 20,
+        {"id": "e0", "type": "text", "x": 5, "y": 14, "w": 80, "h": 6, "fontSize": 20,
          "text": "3. 향후 추진계획"},
-        {"id": "t1", "type": "table", "x": 5, "y": 20, "w": 80, "h": 18, "fontSize": 10,
+        {"id": "t1", "type": "table", "x": 5, "y": 24, "w": 80, "h": 18, "fontSize": 10,
          "rows": [["과제", "담당"], ["모델", "데이터"]], "header": True},
+        # the page number is furniture, but a rewrite of it wins over the default keep
+        {"id": "e43", "type": "text", "x": 82, "y": 1.5, "w": 9, "h": 4, "fontSize": 30,
+         "text": "03"},
     ]
     run = tools["set_slide_elements"].func
-    reply = run(path="d.slides.json", slide=3, elements=fresh, description="page",
+    reply = run(path="d.slides.json", slide=2, elements=fresh, description="page",
                 revision=revision, runtime=_runtime(thread_id="t1"))
     text = reply if isinstance(reply, str) else reply[0]["text"]
     assert text.startswith(
-        "Replaced the content of slide 3 of d.slides.json with 2 element(s), keeping 3 "
-        "shared element(s) (e40, e42, e41); the other slides"
+        "Replaced the content of slide 2 of d.slides.json with 3 element(s), keeping 3 "
+        "margin element(s) (e40, e42, e41); the other slides"
     )
     saved = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
-    assert [e["id"] for e in saved[2]["elements"]] == ["e40", "e42", "e41", "e0", "t1"]
-    assert saved[2]["elements"][2]["text"] == "경영실적보고서작성기관"
-    assert saved[1] == slides[1] and saved[0] == slides[0]
+    assert [e["id"] for e in saved[1]["elements"]] == ["e40", "e42", "e41", "e0", "t1", "e43"]
+    assert saved[1]["elements"][2]["text"] == "경영실적보고서작성기관"
+    assert saved[1]["elements"][5]["text"] == "03"
+    assert saved[0] == original[0]
     # keep=[] drops the furniture; keep=[ids] keeps exactly those
-    reply = run(path="d.slides.json", slide=3, elements=fresh, description="bare", keep=[],
+    reply = run(path="d.slides.json", slide=2, elements=fresh[:2], description="bare", keep=[],
                 revision="v2", runtime=_runtime(thread_id="t1"))
     assert (reply if isinstance(reply, str) else reply[0]["text"]).startswith(
-        "Replaced the content of slide 3 of d.slides.json with 2 element(s); the other"
+        "Replaced the content of slide 2 of d.slides.json with 2 element(s); the other"
     )
     saved = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
-    assert [e["id"] for e in saved[2]["elements"]] == ["e0", "t1"]
-    reply = run(path="d.slides.json", slide=2, elements=fresh, description="one",
-                keep="[\"e41\"]", revision="v3", runtime=_runtime(thread_id="t1"))
+    assert [e["id"] for e in saved[1]["elements"]] == ["e0", "t1"]
+    revision = _written(store, tools, _deck_with_furniture())
+    reply = run(path="d.slides.json", slide=2, elements=fresh[:2], description="one",
+                keep="[\"e41\"]", revision=revision, runtime=_runtime(thread_id="t1"))
     text = reply if isinstance(reply, str) else reply[0]["text"]
-    assert "keeping 1 shared element(s) (e41)" in text
-    # a kept id written into elements too, or an id the slide lacks, is refused and nothing saved
-    clash = run(path="d.slides.json", slide=1, elements=[dict(slides[0]["elements"][1])],
-                description="x", keep=["e41"], revision="v4", runtime=_runtime(thread_id="t1"))
-    assert clash.startswith("Error: e41 is both kept and in `elements`")
-    missing = run(path="d.slides.json", slide=1, elements=fresh, description="x", keep=["zz"],
-                  revision="v4", runtime=_runtime(thread_id="t1"))
-    assert missing.startswith("Error: slide 1 has no element 'zz' to keep.")
-    assert store.read("t1", "d.slides.json").revision == "v4"
+    assert "keeping 1 margin element(s) (e41)" in text
+    revision = store.read("t1", "d.slides.json").revision
+    # with keep given, an id in both is refused; an id the slide lacks too — nothing saved
+    clash = run(path="d.slides.json", slide=2, elements=fresh, description="x", keep=["e43"],
+                revision=revision, runtime=_runtime(thread_id="t1"))
+    assert clash.startswith("Error: e43 is both kept and in `elements`")
+    missing = run(path="d.slides.json", slide=2, elements=fresh, description="x", keep=["zz"],
+                  revision=revision, runtime=_runtime(thread_id="t1"))
+    assert missing.startswith("Error: slide 2 has no element 'zz' to keep.")
+    assert store.read("t1", "d.slides.json").revision == revision
 
 
 # --- the export gate and the review ----------------------------------------------------
