@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.37] — 2026-09-06
+
+### Added
+
+- `chrome.fileVersions` (default on): a host can leave the version rail off on stored-file tabs, where the file is viewed rather than edited.
+
 ## [0.7.36] — 2026-09-06
 
 ### Fixed
