@@ -373,7 +373,14 @@ def source_preview_events(
     # back to a card, or the person sees two grids and edits the one that
     # cannot save. Without a copy the upload still opens as a grid (hosts
     # that never call :func:`workbook_working_copy` keep today's behaviour).
-    if path.lower().endswith(".xlsx") and not _has_working_copy(store, canvas_id, path):
+    # Only uploads: a workbook code published at the canvas root is a finished
+    # deliverable, shown as itself (its own charts and formatting through the
+    # host's page renderer) and never as an editable grid.
+    if (
+        path.startswith(SOURCES_PREFIX)
+        and path.lower().endswith(".xlsx")
+        and not _has_working_copy(store, canvas_id, path)
+    ):
         table_events = _table_preview_events(
             store, canvas_id, path, is_new=is_new, revision=revision, description=description
         )

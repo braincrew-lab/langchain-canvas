@@ -288,3 +288,34 @@ def test_a_root_deck_replays_as_a_file_with_a_hosts_renderer() -> None:
     assert data["cover"] is not None
     assert data["pageCount"] == 2
     assert data["grids"] is None
+
+
+class _XlsxPages(_PptxPages):
+    """A host's office page renderer for workbooks: any xlsx renders as the test PDF."""
+
+    suffixes: tuple[str, ...] = (".xlsx",)
+
+
+def test_a_root_workbook_is_a_file_tab_not_an_editable_grid(tmp_path) -> None:
+    """A workbook code published at the root is a finished deliverable: a
+    ``file`` tab with sheet grids from the host renderer, never the editable
+    table an upload under ``sources/`` opens as."""
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    book.active["A1"] = "total"
+    book.active["A2"] = 42
+    out = tmp_path / "report.xlsx"
+    book.save(out)
+    data = out.read_bytes()
+
+    store = InMemoryCanvasStore()
+    store.write_bytes("t", "report.xlsx", data, "publish", actor="agent")
+    store.write_bytes("t", "sources/upload.xlsx", data, "upload", actor="human")
+
+    _PREVIEW_CACHE.clear()
+    events = hydrate_events(store, "t", converters=[_XlsxPages()])
+    created = {e["artifact"]["id"]: e["artifact"] for e in events if e["type"] == "canvas.create"}
+    assert created["report.xlsx"]["type"] == "file"
+    assert created["report.xlsx"]["data"]["grids"]
+    assert created["sources/upload.xlsx"]["type"] == "table"
