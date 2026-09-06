@@ -771,6 +771,98 @@ def _deck_eye_images(
     ]
 
 
+#: The page margins where a slide's furniture lives, as percent of the page:
+#: an index tab hugs the right edge, a header rule and page number sit at the
+#: top, a footer at the bottom. Content never starts inside these bands on a
+#: report page; a section bar begins below the header band.
+_FURNITURE_BANDS = {"top": 13.0, "bottom": 88.0, "right": 90.0, "left": 8.0}
+
+
+def _furniture_ids(slide: dict[str, Any]) -> list[str]:
+    """Ids of the elements that sit in the page margins — the page's furniture.
+
+    An index tab, a header rule, a page number, a footer: the model that
+    writes a slide fresh forgets them, and a slide that shares nothing with
+    the rest of the deck (a template's one tabbed page, a copy just made)
+    gives no other way to tell them from content. Tables and long text are
+    content wherever they sit.
+    """
+    out: list[str] = []
+    for element in slide.get("elements") or []:
+        if not isinstance(element, dict) or not isinstance(element.get("id"), str):
+            continue
+        if element.get("type") == "table":
+            continue
+        text = element.get("text")
+        if element.get("type") == "text" and isinstance(text, str) and len(text.strip()) > 40:
+            continue
+        try:
+            x, y, w, h = (float(element[k]) for k in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        bands = _FURNITURE_BANDS
+        if (
+            y + h <= bands["top"]
+            or y >= bands["bottom"]
+            or x >= bands["right"]
+            or x + w <= bands["left"]
+        ):
+            out.append(element["id"])
+    return out
+
+
+def _one_slide_view(content: str, number: int) -> str:
+    """The outline head plus one slide's JSON, or the refusal to relay.
+
+    A model that pages through a 2,800-line deck to find the slide it is
+    copying spends the context it needs for the edit; the slide alone is a
+    tenth of that and carries every id, box and style the id-addressed
+    tools take.
+    """
+    try:
+        envelope = json.loads(content)
+        slides = envelope["data"]["slides"]
+        assert isinstance(slides, list)
+    except Exception:  # noqa: BLE001 - not a deck we can address into
+        return "Error: not a readable deck — read it without `slide`."
+    if not isinstance(number, int) or not 1 <= number <= len(slides):
+        return f"Error: slide {number} is out of range — the deck has {len(slides)} slide(s)."
+    outline = deck_outline(content) or ""
+    head = "\n".join(line for line in outline.splitlines() if not line.startswith("["))
+    head = "\n".join(line for line in head.splitlines() if not line.startswith("Each id"))
+    body = json.dumps(slides[number - 1], ensure_ascii=False, indent=1)
+    furniture = _furniture_ids(slides[number - 1]) if isinstance(slides[number - 1], dict) else []
+    note = (
+        f"\nIn the page margins (page furniture — index tab, header, footer, page number; "
+        f"set_slide_elements keeps these unless you rewrite or drop them): "
+        f"{', '.join(furniture)}"
+        if furniture else ""
+    )
+    return (
+        f"{head}\n[s{number}] of {len(slides)} — this slide's JSON (ids are what "
+        f"set_slide_texts / edit_slide_elements / set_slide_elements address):{note}\n" + body
+    )
+
+
+def _json_arg(value: Any, name: str, kind: type) -> tuple[Any, str | None]:
+    """``(parsed, error)`` for a tool argument that may arrive as JSON text.
+
+    A model that writes ``texts="{\"e0\": ...}"`` instead of an object has
+    said what it meant; parse it rather than spend a turn on a type error.
+    """
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None, f"Error: `{name}` is not valid JSON — pass an object, not text."
+    if not isinstance(value, kind):
+        want = "a list" if kind is list else "an object"
+        return None, f"Error: `{name}` must be {want} (got {type(value).__name__})."
+    return value, None
+
+
 def _texts_onto_slide(slide: dict[str, Any], number: int, texts: dict[str, str]) -> str | None:
     """Put ``texts`` (element id -> words) on one slide's text elements.
 
@@ -1197,6 +1289,7 @@ def create_canvas_tools(
         pages: str | None = None,
         sheet: str | None = None,
         fields: str | None = None,
+        slide: int | None = None,
     ) -> str | list[dict]:
         """Read one canvas file before viewing or editing it.
 
@@ -1231,10 +1324,22 @@ def create_canvas_tools(
         at a glance — check the outline's `colors:`/`fonts:` lines first,
         then project the slide you are about to touch and give a new
         element its neighbours' values instead of inventing new ones.
+
+        To work on one slide of a deck, pass `slide=N` (1-based): the reply
+        is the outline head plus that slide's JSON alone — every element
+        with its id, box and style — instead of the whole file. That is the
+        read to make before `set_slide_texts`, `edit_slide_elements`,
+        `set_slide_elements` or `add_slide`; the whole-file read is for a
+        deck you have never seen.
         """
         canvas_id = _canvas_id(runtime)
         if pages is not None:
             return _read_source_pages(canvas_id, path, pages)
+        if slide is not None and not path.lower().endswith(".slides.json"):
+            return (
+                f"Error: `slide` applies to .slides.json decks; {path} is not "
+                "one — read it without `slide`."
+            )
         if sheet is not None and not path.endswith(".table.json"):
             return (
                 f"Error: `sheet` applies to .table.json tables; {path} is not "
@@ -1275,6 +1380,9 @@ def create_canvas_tools(
                 )
             projection = deck_projection(got.content, fields)
             return f"{_revision_header(canvas_id, path, got.revision)}\n{projection}"
+        if slide is not None:
+            one = _one_slide_view(got.content, slide)
+            return f"{_revision_header(canvas_id, path, got.revision)}\n{one}"
         sliced, note = _sliced(got.content, offset, limit)
         header = _revision_header(canvas_id, path, got.revision)
         if path.lower().endswith(".slides.json") and offset == 0:
@@ -1437,6 +1545,13 @@ def create_canvas_tools(
         `old` must match exactly once; include enough surrounding context to
         make it unique. `description` is the version-history entry. Files
         under `sources/` (the user's uploads) are read-only.
+
+        Not for the elements of a `.slides.json` deck: two slides that share
+        a layout carry the same strings, so a string match lands on the
+        wrong slide or on both. Address a slide's elements by id instead —
+        `set_slide_texts` (words), `edit_slide_elements` (remove, add, table
+        rows, boxes), `set_slide_elements` (the whole slide) — after reading
+        that slide with `read_canvas(path, slide=N)`.
 
         Word files ({document_formats}) are edited the same way: `old` is text
         copied from `read_canvas`, matched across the runs Word split it into,
@@ -3009,10 +3124,13 @@ def create_deck_tools(
     copy names the original as its ``template``, so exporting rebuilds on the
     real masters and layouts rather than a blank page.
 
-    ``add_slide`` is the other half: a page is added to a deck by copying one
-    of its own slides, so an uploaded deck grows without ever being re-typed
-    through ``write_canvas`` (a rewrite of a 60-element slide by a model
-    drops elements and styling on the slides it was not asked to touch).
+    ``add_slide``, ``edit_slide_elements`` and ``set_slide_elements`` are the
+    other half: a page is added by copying one of the deck's own slides and
+    then shaped by element id or replaced one slide at a time, so an uploaded
+    deck grows without ever being re-typed through ``write_canvas`` (a
+    rewrite of a 60-element slide by a model drops elements and styling on
+    the slides it was not asked to touch) and without string matching (two
+    slides that share a layout carry the same strings).
 
     Kept out of :func:`create_canvas_tools` so the four standard tools stay a
     stable contract; mount these when your agent should edit decks people
@@ -3176,7 +3294,9 @@ def create_deck_tools(
             "the page bottom and what sits below it); a fixed box does not — when "
             "new words run longer than its placeholder, shorten them, set `autofit`, "
             "or ask the user which they prefer. To add a page, copy one of these slides "
-            f"with add_slide. Export it to pptx when done; {source} keeps the user's original."
+            "with add_slide and give the copy its own elements with set_slide_elements; "
+            "read one slide at a time with read_canvas(path, slide=N). Export it to pptx "
+            f"when done; {source} keeps the user's original."
         )
 
     def _master_backdrops(
@@ -3323,82 +3443,35 @@ def create_deck_tools(
                 element["src"] = path
         return len(stored)
 
-    @tool
-    def add_slide(
-        path: str,
-        description: str,
-        revision: str,
-        runtime: ToolRuntime,
-        from_slide: int | None = None,
-        after: int | None = None,
-        texts: dict[str, str] | None = None,
-    ) -> str | list[dict]:
-        """Add one slide to a deck by copying one of its own slides.
-
-        `from_slide` (1-based, as `read_canvas` prints it; default the last
-        slide) is copied whole — every element with its box, font, colour
-        and id — and the copy goes in after slide `after` (default the end;
-        `0` puts it first). `texts` gives the copy its words, exactly as
-        `set_slide_texts` takes them: `{"e0": "새 제목", "e3": "본문"}`, with
-        the ids the outline shows for the slide being copied. The other
-        slides, the `page` and the `template` stay byte for byte as they
-        were.
-
-        This is how a page is added to an uploaded deck: its slides are
-        copied, never re-typed — do not rewrite the deck with write_canvas
-        to add a page; a rewrite drops elements and styling on the slides
-        you were not asked to touch. Copy the slide whose look the new page
-        should have, then refine the copy: `set_slide_texts` for words,
-        `edit_canvas` for a table's `rows`, a box, or an element to drop.
-        `revision` is the value from your most recent `read_canvas` of this
-        file.
-        """
+    def _deck_of(canvas_id: str, path: str) -> tuple[dict[str, Any] | None, str | None]:
+        """``(envelope, error)`` for a deck the slide tools address into."""
         if not path.lower().endswith(SLIDES_SUFFIX):
-            return f"Error: add_slide edits {SLIDES_SUFFIX} decks (got {path})."
-        canvas_id = _canvas_id(runtime)
+            return None, f"Error: this tool edits {SLIDES_SUFFIX} decks (got {path})."
         try:
             got = store.read(canvas_id, path)
         except CanvasFileNotFoundError as exc:
-            return f"Error: {exc}. Use list_canvas_files to see available files."
+            return None, f"Error: {exc}. Use list_canvas_files to see available files."
         except CanvasStoreError as exc:
-            return f"Error: {exc}."
+            return None, f"Error: {exc}."
         try:
             envelope = json.loads(got.content)
             data = envelope["data"]
-            slides = data["slides"]
-            assert isinstance(data, dict) and isinstance(slides, list)
+            assert isinstance(data, dict) and isinstance(data["slides"], list)
         except Exception:  # noqa: BLE001 - not a deck we can address into
-            return f"Error: {path} does not parse as a slides deck; read it and use edit_canvas."
-        if not slides:
-            return f"Error: {path} has no slide to copy — write its first slide with write_canvas."
-        source = len(slides) if from_slide is None else from_slide
-        if (
-            isinstance(source, bool)
-            or not isinstance(source, int)
-            or not 1 <= source <= len(slides)
-        ):
-            return (
-                f"Error: from_slide {from_slide!r} is out of range — the deck has "
-                f"{len(slides)} slide(s)."
-            )
-        place = len(slides) if after is None else after
-        if (
-            isinstance(place, bool)
-            or not isinstance(place, int)
-            or not 0 <= place <= len(slides)
-        ):
-            return (
-                f"Error: after {after!r} is out of range — 0 puts the copy first, "
-                f"{len(slides)} puts it last."
-            )
-        copied = copy.deepcopy(slides[source - 1])
-        if texts:
-            problem = _texts_onto_slide(copied, source, texts)
-            if problem is not None:
-                return problem
-        slides.insert(place, copied)
-        number = place + 1
-        content = encode_slides(envelope.get("title") or display_title(path), data)
+            return None, f"Error: {path} does not parse as a slides deck."
+        return envelope, None
+
+    def _save_slides(
+        runtime: ToolRuntime,
+        canvas_id: str,
+        path: str,
+        envelope: dict[str, Any],
+        description: str,
+        revision: str,
+        lead: str,
+    ) -> str | list[dict]:
+        """One save path for every slide tool: refusal, write, broadcast, check, eye."""
+        content = encode_slides(envelope.get("title") or display_title(path), envelope["data"])
         refusal = _deck_refusal(path, content)
         if refusal is not None:
             return refusal
@@ -3421,16 +3494,332 @@ def create_deck_tools(
             ):
                 writer(event)
         save_note = _deck_check(store, canvas_id, content)
-        worded = f" with {len(texts)} text(s) set" if texts else ""
         return _with_eye(
-            f"Added slide {number} to {path}, copied from slide {source}{worded} "
-            f"({len(slides)} slide(s) now, revision {commit.revision}). The other slides, "
-            "the page and the template are as they were; refine the new slide with "
-            f"set_slide_texts and edit_canvas.{save_note}",
+            f"{lead} (revision {commit.revision}).{save_note}",
             _deck_eye_images(
                 store, active_converters, canvas_id, path, content, save_note,
                 previous_revision=revision,
             ),
         )
 
-    return [open_deck_for_editing, add_slide]
+    @tool
+    def add_slide(
+        path: str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        from_slide: int | None = None,
+        after: int | None = None,
+        texts: dict[str, str] | str | None = None,
+    ) -> str | list[dict]:
+        """Add one slide to a deck by copying one of its own slides.
+
+        `from_slide` (1-based, as `read_canvas` prints it; default the last
+        slide) is copied whole — every element with its box, font, colour
+        and id — and the copy goes in after slide `after` (default the end;
+        `0` puts it first). `texts` gives the copy its words, exactly as
+        `set_slide_texts` takes them: `{"e0": "새 제목", "e3": "본문"}`, with
+        the ids the outline shows for the slide being copied. The other
+        slides, the `page` and the `template` stay byte for byte as they
+        were.
+
+        This is how a page is added to an uploaded deck: its slides are
+        copied, never re-typed — do not rewrite the deck with write_canvas
+        to add a page; a rewrite drops elements and styling on the slides
+        you were not asked to touch. Copy the slide whose look the new page
+        should have, then give the copy its own shape: `set_slide_elements`
+        when its structure differs from the original (other tables, other
+        sections), `edit_slide_elements` for a few id-addressed changes.
+        `revision` is the value from your most recent `read_canvas` of this
+        file.
+        """
+        canvas_id = _canvas_id(runtime)
+        envelope, problem = _deck_of(canvas_id, path)
+        if envelope is None:
+            return problem or "Error: unreadable deck."
+        data = envelope["data"]
+        slides = data["slides"]
+        if not slides:
+            return f"Error: {path} has no slide to copy — write its first slide with write_canvas."
+        source = len(slides) if from_slide is None else from_slide
+        if (
+            isinstance(source, bool)
+            or not isinstance(source, int)
+            or not 1 <= source <= len(slides)
+        ):
+            return (
+                f"Error: from_slide {from_slide!r} is out of range — the deck has "
+                f"{len(slides)} slide(s)."
+            )
+        place = len(slides) if after is None else after
+        if (
+            isinstance(place, bool)
+            or not isinstance(place, int)
+            or not 0 <= place <= len(slides)
+        ):
+            return (
+                f"Error: after {after!r} is out of range — 0 puts the copy first, "
+                f"{len(slides)} puts it last."
+            )
+        words, problem = _json_arg(texts, "texts", dict)
+        if problem is not None:
+            return problem
+        copied = copy.deepcopy(slides[source - 1])
+        if words:
+            problem = _texts_onto_slide(copied, source, words)
+            if problem is not None:
+                return problem
+        slides.insert(place, copied)
+        number = place + 1
+        worded = f" with {len(words)} text(s) set" if words else ""
+        return _save_slides(
+            runtime, canvas_id, path, envelope, description, revision,
+            f"Added slide {number} to {path}, copied from slide {source}{worded} "
+            f"({len(slides)} slide(s) now). The other slides, the page and the template "
+            f"are as they were; read it with read_canvas(path, slide={number}) and give "
+            "it its own shape with set_slide_elements or edit_slide_elements",
+        )
+
+    @tool
+    def edit_slide_elements(
+        path: str,
+        slide: int,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        remove: list[str] | str | None = None,
+        add: list[dict[str, Any]] | str | None = None,
+        texts: dict[str, str] | str | None = None,
+        rows: dict[str, list[list[str]]] | str | None = None,
+        boxes: dict[str, dict[str, float]] | str | None = None,
+    ) -> str | list[dict]:
+        """Change one slide's elements by id, in one save — no string matching.
+
+        `slide` is 1-based. Each argument is optional and they apply in this
+        order: `remove` — ids to drop (`["t22", "e30"]`); `add` — new
+        elements, each a full element object with a fresh id, `type`,
+        `x`/`y`/`w`/`h` and its style; `texts` — `{id: words}` for text
+        elements, as `set_slide_texts` takes them; `rows` — `{table id:
+        rows}` replacing a table's words (every row the same length; when
+        the column count changes, its column widths and cell styles reset
+        to plain); `boxes` — `{id: {"x": …, "y": …, "w": …, "h": …,
+        "fontSize": …}}` moving or resizing elements, any subset of keys.
+
+        Nothing is written until every id and value checks out, so a reply
+        that names a problem leaves the slide as it was. The other slides,
+        the `page` and the `template` are untouched. Read the slide first
+        with `read_canvas(path, slide=N)` — its ids, boxes and styles are
+        what you address here. When most of a slide has to change, use
+        `set_slide_elements` instead. `revision` is from your most recent
+        `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        envelope, problem = _deck_of(canvas_id, path)
+        if envelope is None:
+            return problem or "Error: unreadable deck."
+        slides = envelope["data"]["slides"]
+        if isinstance(slide, bool) or not isinstance(slide, int) or not 1 <= slide <= len(slides):
+            return f"Error: slide {slide} is out of range — the deck has {len(slides)} slide(s)."
+        target = slides[slide - 1]
+        elements = target.get("elements")
+        if not isinstance(elements, list):
+            return (
+                f"Error: slide {slide} has no `elements` (it is a structured slide) — "
+                "edit its `title`/`bullets` with edit_canvas."
+            )
+        parsed: dict[str, Any] = {}
+        for name, value, kind in (
+            ("remove", remove, list), ("add", add, list), ("texts", texts, dict),
+            ("rows", rows, dict), ("boxes", boxes, dict),
+        ):
+            parsed[name], problem = _json_arg(value, name, kind)
+            if problem is not None:
+                return problem
+        if not any(parsed.values()):
+            return "Error: nothing to change — give remove, add, texts, rows or boxes."
+        by_id = {e.get("id"): e for e in elements if isinstance(e, dict)}
+        have = ", ".join(f'{e.get("id")} ({e.get("type")})' for e in elements)
+
+        def _missing(ident: object) -> str:
+            return f"Error: slide {slide} has no element {ident!r}. It has: {have}."
+
+        # Validate everything before touching anything.
+        for ident in parsed["remove"] or []:
+            if ident not in by_id:
+                return _missing(ident)
+        remaining = {i: e for i, e in by_id.items() if i not in set(parsed["remove"] or [])}
+        for item in parsed["add"] or []:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                return "Error: every element in `add` needs an `id`, a `type` and x/y/w/h."
+            if item["id"] in remaining:
+                return (
+                    f"Error: slide {slide} already has an element {item['id']!r} — "
+                    "give the new one a fresh id."
+                )
+        for ident, grid in (parsed["rows"] or {}).items():
+            element = remaining.get(ident)
+            if element is None:
+                return _missing(ident)
+            if element.get("type") != "table":
+                return f"Error: {ident!r} on slide {slide} is a {element.get('type')}, not a table."
+            if (
+                not isinstance(grid, list)
+                or not grid
+                or not all(isinstance(row, list) and row for row in grid)
+                or len({len(row) for row in grid}) != 1
+            ):
+                return f"Error: rows for {ident!r} must be a non-empty list of equal-length rows."
+        for ident, box in (parsed["boxes"] or {}).items():
+            if ident not in remaining:
+                return _missing(ident)
+            if not isinstance(box, dict) or not box:
+                return (
+                    f"Error: the box for {ident!r} must be an object with x, y, w, h "
+                    "or fontSize."
+                )
+            for key, value in box.items():
+                if key not in ("x", "y", "w", "h", "fontSize"):
+                    return f"Error: box key {key!r} for {ident!r} — use x, y, w, h or fontSize."
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    return f"Error: box {key} for {ident!r} must be a number."
+        if parsed["texts"]:
+            probe = {"elements": [copy.deepcopy(e) for e in remaining.values()]}
+            problem = _texts_onto_slide(probe, slide, parsed["texts"])
+            if problem is not None:
+                return problem
+
+        # Apply.
+        dropped = set(parsed["remove"] or [])
+        kept = [e for e in elements if not (isinstance(e, dict) and e.get("id") in dropped)]
+        kept.extend(copy.deepcopy(parsed["add"] or []))
+        by_id = {e.get("id"): e for e in kept if isinstance(e, dict)}
+        if parsed["texts"]:
+            for ident, words in parsed["texts"].items():
+                by_id[ident]["text"] = words
+        for ident, grid in (parsed["rows"] or {}).items():
+            element = by_id[ident]
+            old_rows = element.get("rows") or []
+            old_cols = len(old_rows[0]) if old_rows and isinstance(old_rows[0], list) else None
+            element["rows"] = [[str(cell) for cell in row] for row in grid]
+            if old_cols != len(grid[0]):
+                element.pop("colWidths", None)
+                element.pop("cells", None)
+            if len(old_rows) != len(grid):
+                element.pop("rowHeights", None)
+                cells = element.get("cells")
+                if isinstance(cells, list):
+                    element["cells"] = [
+                        c for c in cells
+                        if isinstance(c, dict)
+                        and isinstance(c.get("r"), int)
+                        and c["r"] < len(grid)
+                    ]
+        for ident, box in (parsed["boxes"] or {}).items():
+            by_id[ident].update(box)
+        target["elements"] = kept
+        done = []
+        if parsed["remove"]:
+            done.append(f"removed {len(parsed['remove'])} ({', '.join(parsed['remove'])})")
+        if parsed["add"]:
+            done.append(f"added {len(parsed['add'])} ({', '.join(e['id'] for e in parsed['add'])})")
+        if parsed["texts"]:
+            done.append(f"set {len(parsed['texts'])} text(s)")
+        if parsed["rows"]:
+            done.append(
+                "replaced rows of " + ", ".join(
+                    f"{i} ({len(g)}x{len(g[0])})" for i, g in parsed["rows"].items()
+                )
+            )
+        if parsed["boxes"]:
+            done.append(f"moved/resized {len(parsed['boxes'])}")
+        return _save_slides(
+            runtime, canvas_id, path, envelope, description, revision,
+            f"Edited slide {slide} of {path}: {'; '.join(done)} — {len(kept)} element(s) now",
+        )
+
+    @tool
+    def set_slide_elements(
+        path: str,
+        slide: int,
+        elements: list[dict[str, Any]] | str,
+        description: str,
+        revision: str,
+        runtime: ToolRuntime,
+        keep: list[str] | str | None = None,
+    ) -> str | list[dict]:
+        """Replace one slide's content elements; its furniture and every other slide stay.
+
+        This is how a copied slide gets a structure of its own — other
+        tables, other sections, fewer boxes — without rewriting the deck:
+        write just this slide's content elements (each with an id, a `type`
+        of text|image|shape|table, `x`/`y`/`w`/`h` in percent of the page
+        named in the outline, and its style), the way `write_canvas`
+        describes an element. Keep the look by reusing the boxes, fonts and
+        colours of the elements you read with `read_canvas(path, slide=N)`;
+        a table is `rows` plus `header`, `stroke`, `fontSize`.
+
+        The slide's page furniture — the index tab, header rule, footer and
+        page number in the page margins, listed by that read as "In the
+        page margins" — is kept as it is by default, so write only the
+        content; an element in `elements` with a furniture id replaces that
+        one (a new header title, the next page number). `keep` names the
+        ids to carry over instead (`[]` keeps none); with `keep` given, an
+        id in both is refused. Background, notes and the master backdrop
+        stay; the `page` and `template` stay. `revision` is from your most
+        recent `read_canvas` of this file.
+        """
+        canvas_id = _canvas_id(runtime)
+        envelope, problem = _deck_of(canvas_id, path)
+        if envelope is None:
+            return problem or "Error: unreadable deck."
+        slides = envelope["data"]["slides"]
+        if isinstance(slide, bool) or not isinstance(slide, int) or not 1 <= slide <= len(slides):
+            return f"Error: slide {slide} is out of range — the deck has {len(slides)} slide(s)."
+        items, problem = _json_arg(elements, "elements", list)
+        if problem is not None:
+            return problem
+        if not items:
+            return "Error: `elements` is empty — to drop a slide, edit the deck with edit_canvas."
+        ids = [e.get("id") for e in items if isinstance(e, dict)]
+        if len(ids) != len(items) or not all(isinstance(i, str) and i for i in ids):
+            return "Error: every element needs a string `id`, a `type` and x/y/w/h."
+        names: list[str] = [str(i) for i in ids]
+        dupes = sorted({i for i in names if names.count(i) > 1})
+        if dupes:
+            return f"Error: duplicate element id(s) on the slide: {', '.join(dupes)}."
+        target = slides[slide - 1]
+        current = [e for e in target.get("elements") or [] if isinstance(e, dict)]
+        by_id = {e.get("id"): e for e in current}
+        wanted, problem = _json_arg(keep, "keep", list)
+        if problem is not None:
+            return problem
+        if wanted is None:
+            # The default: furniture stays, except what `elements` rewrites.
+            wanted = [i for i in _furniture_ids(target) if i not in set(names)]
+        else:
+            clash = sorted(set(names) & set(wanted))
+            if clash:
+                return (
+                    f"Error: {', '.join(clash)} is both kept and in `elements` — leave a "
+                    "kept element out of `elements`, or drop it from `keep`."
+                )
+        for ident in wanted:
+            if ident not in by_id:
+                have = ", ".join(str(i) for i in by_id)
+                return f"Error: slide {slide} has no element {ident!r} to keep. It has: {have}."
+        kept = [copy.deepcopy(by_id[i]) for i in wanted]
+        for key in ("title", "subtitle", "bullets", "bullets2", "image", "layout"):
+            target.pop(key, None)
+        target["elements"] = kept + copy.deepcopy(items)
+        kept_note = (
+            f", keeping {len(kept)} margin element(s) ({', '.join(str(i) for i in wanted)})"
+            if kept else ""
+        )
+        return _save_slides(
+            runtime, canvas_id, path, envelope, description, revision,
+            f"Replaced the content of slide {slide} of {path} with {len(items)} "
+            f"element(s){kept_note}; the other slides, the page and the template are as "
+            "they were",
+        )
+
+    return [open_deck_for_editing, add_slide, edit_slide_elements, set_slide_elements]
