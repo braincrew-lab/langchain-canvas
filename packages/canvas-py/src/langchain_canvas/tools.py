@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import copy
 import hashlib
 import io
 import json
@@ -640,174 +639,6 @@ def _skin_baseline(
     return baseline.smallest_text_px, baseline.max_overhang, baseline.overflow
 
 
-def _deck_refusal(path: str, content: str) -> str | None:
-    """The refusal for a deck save that must not land, or ``None``.
-
-    A deck that is not JSON, or that :func:`blocking_deck_findings`
-    objects to, would sit on the canvas broken while this tool reported
-    success. Nothing is written; the reply carries the fix.
-    """
-    try:
-        envelope = json.loads(content)
-    except json.JSONDecodeError as exc:
-        return (
-            f"Error: {path} was not saved — it is not valid JSON ({exc.msg} at "
-            f"line {exc.lineno}). A deck is "
-            '{"type": "slides", "title": "...", "data": {"slides": [...]}}.'
-        )
-    findings = blocking_deck_findings(envelope, path)
-    if not findings:
-        return None
-    lines = "\n".join(f"  - {finding}" for finding in findings)
-    return f"Error: {path} was not saved — fix these and write it again:\n{lines}"
-
-
-def _deck_check(store: CanvasStore, canvas_id: str, content: str) -> str:
-    """The deck check over the envelope's ``data`` ('' when clean or unreadable).
-
-    One check for every deck save — ``write_canvas``, ``set_slide_texts`` and
-    ``add_slide`` all pass through here, so a slide added by copy is judged
-    by the same rule as one typed in. See :mod:`langchain_canvas.layout_lint`
-    for the no-false-positives contract.
-    """
-    try:
-        envelope = json.loads(content)
-    except json.JSONDecodeError:
-        return ""
-    data = envelope.get("data") if isinstance(envelope, dict) else None
-    if not isinstance(data, dict):
-        return ""
-    try:
-        on_canvas: set[str] | None = {info.path for info in store.list_files(canvas_id)}
-    except CanvasStoreError:
-        on_canvas = None
-    floor, overhang, own_overflow = _skin_baseline(store, canvas_id, data)
-    warnings = lint_slides_data(
-        data,
-        ref_exists=None if on_canvas is None else on_canvas.__contains__,
-        min_text_px=floor,
-        max_overhang=overhang,
-        known_overflow=own_overflow,
-    )
-    return format_layout_warnings(warnings)
-
-
-def _slides_changed(
-    store: CanvasStore, canvas_id: str, path: str, content: str, previous_revision: str | None
-) -> set[int] | None:
-    """1-based numbers of the slides this save changed, or ``None``.
-
-    ``None`` (no previous revision, or anything unreadable) means "no
-    idea", and the caller falls back to every flagged slide.
-    """
-    if previous_revision is None:
-        return None
-    try:
-        before = store.read(canvas_id, path, revision=previous_revision).content
-        old_slides = json.loads(before)["data"]["slides"]
-        new_slides = json.loads(content)["data"]["slides"]
-    except Exception:  # noqa: BLE001 - a diff is a bonus, never a failure
-        return None
-    if not isinstance(old_slides, list) or not isinstance(new_slides, list):
-        return None
-    changed: set[int] = set()
-    for index in range(max(len(old_slides), len(new_slides))):
-        a = old_slides[index] if index < len(old_slides) else None
-        b = new_slides[index] if index < len(new_slides) else None
-        if json.dumps(a, sort_keys=True) != json.dumps(b, sort_keys=True):
-            changed.add(index + 1)
-    return changed
-
-
-def _deck_eye_images(
-    store: CanvasStore,
-    converters: list[SourceConverter],
-    canvas_id: str,
-    path: str,
-    content: str,
-    save_note: str,
-    previous_revision: str | None = None,
-) -> list[dict]:
-    """Page images of the slides the check named, or ``[]``.
-
-    Telling the model to look was measured at 14 asks, 1 look. So when
-    a save leaves a finding on a slide and a page renderer is mounted,
-    the slide arrives with the finding — rendered from the deck as the
-    exporter would print it. Quiet saves, decks without a renderer, and
-    any render failure add nothing.
-
-    Among the named slides, the ones this save actually changed come
-    first — fourteen saves once arrived with the same two untouched
-    slides while the slide being written was never shown. The images are
-    resized to glance size on the way out: the model reads a finding,
-    not a poster.
-    """
-    if not path.lower().endswith(".slides.json") or "Deck check" not in save_note:
-        return []
-    flagged = sorted({int(n) for n in re.findall(r"slide (\d+)", save_note)})
-    changed = _slides_changed(store, canvas_id, path, content, previous_revision)
-    touched = [n for n in flagged if n in changed] if changed is not None else flagged
-    numbers = touched or flagged
-    numbers = numbers[:_EYE_MAX_SLIDES]
-    if not numbers:
-        return []
-    stem = _deck_stem(path)
-    renderer = _renderer_for(f"{stem}.pptx", converters)
-    if renderer is None:
-        return []
-    try:
-        from .exporters import SlidesPptxExporter
-
-        printed = SlidesPptxExporter().export(
-            inline_slides_assets(content, store, canvas_id), path=path
-        )
-        converted = renderer.render_pages(printed.data, path=f"{stem}.pptx", pages=numbers)
-    except Exception:  # noqa: BLE001 - the eye is a bonus, never a failure
-        return []
-    return [
-        _glance_size(block)
-        for block in converted.blocks
-        if block.get("type") == "image"
-    ]
-
-
-def _texts_onto_slide(slide: dict[str, Any], number: int, texts: dict[str, str]) -> str | None:
-    """Put ``texts`` (element id -> words) on one slide's text elements.
-
-    Returns the refusal to relay, or ``None`` once every word is in place.
-    Nothing is written until every id checks out, so a reply that names a
-    wrong id leaves the slide as it was. The rule is shared by
-    ``set_slide_texts`` and ``add_slide``: ids are per slide (two slides may
-    both carry ``e0``), tables keep their words in ``rows``, and only text
-    elements take words.
-    """
-    elements = slide.get("elements")
-    if not isinstance(elements, list) or not elements:
-        return (
-            f"Error: slide {number} has no `elements` (it is a structured slide) — "
-            "edit its `title`/`bullets` with edit_canvas."
-        )
-    by_id = {e.get("id"): e for e in elements if isinstance(e, dict)}
-    for element_id, words in texts.items():
-        element = by_id.get(element_id)
-        if element is None:
-            have = ", ".join(f'{e.get("id")} ({e.get("type")})' for e in elements)
-            return f"Error: slide {number} has no element {element_id!r}. It has: {have}."
-        if element.get("type") == "table":
-            return (
-                f"Error: {element_id!r} on slide {number} is a table — its words are "
-                "its `rows`; change them with edit_canvas."
-            )
-        if element.get("type") != "text":
-            kind = element.get("type")
-            return f"Error: {element_id!r} on slide {number} is a {kind}, not text."
-        if not isinstance(words, str):
-            return f"Error: the text for {element_id!r} must be a string."
-    for element_id, words in texts.items():
-        by_id[element_id]["text"] = words
-    return None
-
-
 #: The deck-check lines that mean content is hidden or missing — the ones the
 #: export gate refuses on. Small type and layout advice pass; a person can
 #: read a 12px footnote, not a line drawn past the box's edge.
@@ -938,6 +769,27 @@ def create_canvas_tools(
             )
         return ""
 
+    def _deck_refusal(path: str, content: str) -> str | None:
+        """The refusal for a deck save that must not land, or ``None``.
+
+        A deck that is not JSON, or that :func:`blocking_deck_findings`
+        objects to, would sit on the canvas broken while this tool reported
+        success. Nothing is written; the reply carries the fix.
+        """
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError as exc:
+            return (
+                f"Error: {path} was not saved — it is not valid JSON ({exc.msg} at "
+                f"line {exc.lineno}). A deck is "
+                '{"type": "slides", "title": "...", "data": {"slides": [...]}}.'
+            )
+        findings = blocking_deck_findings(envelope, path)
+        if not findings:
+            return None
+        lines = "\n".join(f"  - {finding}" for finding in findings)
+        return f"Error: {path} was not saved — fix these and write it again:\n{lines}"
+
     def _with_default_template(canvas_id: str, content: str) -> tuple[str, str]:
         """A new deck with no ``template`` takes the one PowerPoint upload.
 
@@ -1033,9 +885,37 @@ def create_canvas_tools(
             return f"Error: {path} was not saved — {exc}", content
         return None, content
 
+    def _baseline(
+        canvas_id: str, data: dict[str, Any]
+    ) -> tuple[float | None, float, dict[tuple[float, float, float, float], float]]:
+        """``(min font px, max overhang, own overflows)`` from the deck's skin.
+
+        A deck copied from an upload is judged by what its author did: the
+        smallest size they printed is the readability floor, and how far their
+        own shapes reach past the page is the overflow allowance. Without a
+        skin the defaults apply.
+        """
+        return _skin_baseline(store, canvas_id, data)
+
     def _deck_note(canvas_id: str, path: str, content: str) -> str:
         """The deck check, over the envelope's ``data`` ('' when unreadable)."""
-        return _deck_check(store, canvas_id, content)
+        try:
+            envelope = json.loads(content)
+        except json.JSONDecodeError:
+            return ""
+        data = envelope.get("data") if isinstance(envelope, dict) else None
+        if not isinstance(data, dict):
+            return ""
+        on_canvas = _canvas_paths(canvas_id)
+        floor, overhang, own_overflow = _baseline(canvas_id, data)
+        warnings = lint_slides_data(
+            data,
+            ref_exists=None if on_canvas is None else on_canvas.__contains__,
+            min_text_px=floor,
+            max_overhang=overhang,
+            known_overflow=own_overflow,
+        )
+        return format_layout_warnings(warnings)
 
     def _deck_diff_note(
         canvas_id: str, path: str, content: str, previous_revision: str | None
@@ -1065,18 +945,73 @@ def create_canvas_tools(
         save_note: str,
         previous_revision: str | None = None,
     ) -> list[dict]:
-        """Page images of the slides the check named, or ``[]`` — see
-        :func:`_deck_eye_images`."""
-        return _deck_eye_images(
-            store, active_converters, canvas_id, path, content, save_note, previous_revision
-        )
+        """Page images of the slides the check named, or ``[]``.
+
+        Telling the model to look was measured at 14 asks, 1 look. So when
+        a save leaves a finding on a slide and a page renderer is mounted,
+        the slide arrives with the finding — rendered from the deck as the
+        exporter would print it. Quiet saves, decks without a renderer, and
+        any render failure add nothing.
+
+        Among the named slides, the ones this save actually changed come
+        first — fourteen saves once arrived with the same two untouched
+        slides while the slide being written was never shown. The images are
+        resized to glance size on the way out: the model reads a finding,
+        not a poster.
+        """
+        if not path.lower().endswith(".slides.json") or "Deck check" not in save_note:
+            return []
+        flagged = sorted({int(n) for n in re.findall(r"slide (\d+)", save_note)})
+        changed = _changed_slides(canvas_id, path, content, previous_revision)
+        touched = [n for n in flagged if n in changed] if changed is not None else flagged
+        numbers = touched or flagged
+        numbers = numbers[:_EYE_MAX_SLIDES]
+        if not numbers:
+            return []
+        stem = _deck_stem(path)
+        renderer = _renderer_for(f"{stem}.pptx", active_converters)
+        if renderer is None:
+            return []
+        try:
+            from .exporters import SlidesPptxExporter
+
+            printed = SlidesPptxExporter().export(
+                inline_slides_assets(content, store, canvas_id), path=path
+            )
+            converted = renderer.render_pages(printed.data, path=f"{stem}.pptx", pages=numbers)
+        except Exception:  # noqa: BLE001 - the eye is a bonus, never a failure
+            return []
+        return [
+            _glance_size(block)
+            for block in converted.blocks
+            if block.get("type") == "image"
+        ]
 
     def _changed_slides(
         canvas_id: str, path: str, content: str, previous_revision: str | None
     ) -> set[int] | None:
-        """1-based numbers of the slides this save changed, or ``None`` — see
-        :func:`_slides_changed`."""
-        return _slides_changed(store, canvas_id, path, content, previous_revision)
+        """1-based numbers of the slides this save changed, or ``None``.
+
+        ``None`` (no previous revision, or anything unreadable) means "no
+        idea", and the caller falls back to every flagged slide.
+        """
+        if previous_revision is None:
+            return None
+        try:
+            before = store.read(canvas_id, path, revision=previous_revision).content
+            old_slides = json.loads(before)["data"]["slides"]
+            new_slides = json.loads(content)["data"]["slides"]
+        except Exception:  # noqa: BLE001 - a diff is a bonus, never a failure
+            return None
+        if not isinstance(old_slides, list) or not isinstance(new_slides, list):
+            return None
+        changed: set[int] = set()
+        for index in range(max(len(old_slides), len(new_slides))):
+            a = old_slides[index] if index < len(old_slides) else None
+            b = new_slides[index] if index < len(new_slides) else None
+            if json.dumps(a, sort_keys=True) != json.dumps(b, sort_keys=True):
+                changed.add(index + 1)
+        return changed
 
     def _read_source_pages(canvas_id: str, path: str, spec: str) -> str | list[dict]:
         """Rendered page images (or the grid overview) for one paged source.
@@ -1530,9 +1465,30 @@ def create_canvas_tools(
             return "Error: `texts` is empty — nothing to change."
         if not isinstance(slide, int) or not 1 <= slide <= len(slides):
             return f"Error: slide {slide} is out of range — the deck has {len(slides)} slide(s)."
-        problem = _texts_onto_slide(slides[slide - 1], slide, texts)
-        if problem is not None:
-            return problem
+        elements = slides[slide - 1].get("elements")
+        if not isinstance(elements, list) or not elements:
+            return (
+                f"Error: slide {slide} has no `elements` (it is a structured slide) — "
+                "edit its `title`/`bullets` with edit_canvas."
+            )
+        by_id = {e.get("id"): e for e in elements if isinstance(e, dict)}
+        for element_id, words in texts.items():
+            element = by_id.get(element_id)
+            if element is None:
+                have = ", ".join(f'{e.get("id")} ({e.get("type")})' for e in elements)
+                return f"Error: slide {slide} has no element {element_id!r}. It has: {have}."
+            if element.get("type") == "table":
+                return (
+                    f"Error: {element_id!r} on slide {slide} is a table — its words are "
+                    "its `rows`; change them with edit_canvas."
+                )
+            if element.get("type") != "text":
+                kind = element.get("type")
+                return f"Error: {element_id!r} on slide {slide} is a {kind}, not text."
+            if not isinstance(words, str):
+                return f"Error: the text for {element_id!r} must be a string."
+        for element_id, words in texts.items():
+            by_id[element_id]["text"] = words
         content = encode_slides(envelope.get("title") or display_title(path), envelope["data"])
         refusal = _deck_refusal(path, content)
         if refusal is not None:
@@ -2996,7 +2952,7 @@ def create_check_table_tool(
 def create_deck_tools(
     store: CanvasStore, *, converters: list[SourceConverter] | None = None
 ) -> list[Any]:
-    """Build the tools that make an uploaded deck editable and let it grow.
+    """Build the tool that makes an uploaded deck editable.
 
     An uploaded ``.pptx`` already shows as slides — the upload path reads it
     with :func:`~langchain_canvas.pptx_import.pptx_to_slides`. But it shows
@@ -3009,16 +2965,10 @@ def create_deck_tools(
     copy names the original as its ``template``, so exporting rebuilds on the
     real masters and layouts rather than a blank page.
 
-    ``add_slide`` is the other half: a page is added to a deck by copying one
-    of its own slides, so an uploaded deck grows without ever being re-typed
-    through ``write_canvas`` (a rewrite of a 60-element slide by a model
-    drops elements and styling on the slides it was not asked to touch).
-
     Kept out of :func:`create_canvas_tools` so the four standard tools stay a
-    stable contract; mount these when your agent should edit decks people
-    send. ``converters`` is the list ``create_canvas_tools`` takes; a page
-    renderer among them is what lets charts come across as pictures and
-    shows a finding on a freshly added slide.
+    stable contract; mount this when your agent should edit decks people send.
+    ``converters`` is the list ``create_canvas_tools`` takes; a page renderer
+    among them is what lets charts come across as pictures.
     """
     active_converters = default_converters() if converters is None else converters
 
@@ -3175,8 +3125,8 @@ def create_deck_tools(
             "its words need (mind "
             "the page bottom and what sits below it); a fixed box does not — when "
             "new words run longer than its placeholder, shorten them, set `autofit`, "
-            "or ask the user which they prefer. To add a page, copy one of these slides "
-            f"with add_slide. Export it to pptx when done; {source} keeps the user's original."
+            f"or ask the user which they prefer. Export it to pptx when done; {source} "
+            "keeps the user's original."
         )
 
     def _master_backdrops(
@@ -3323,114 +3273,4 @@ def create_deck_tools(
                 element["src"] = path
         return len(stored)
 
-    @tool
-    def add_slide(
-        path: str,
-        description: str,
-        revision: str,
-        runtime: ToolRuntime,
-        from_slide: int | None = None,
-        after: int | None = None,
-        texts: dict[str, str] | None = None,
-    ) -> str | list[dict]:
-        """Add one slide to a deck by copying one of its own slides.
-
-        `from_slide` (1-based, as `read_canvas` prints it; default the last
-        slide) is copied whole — every element with its box, font, colour
-        and id — and the copy goes in after slide `after` (default the end;
-        `0` puts it first). `texts` gives the copy its words, exactly as
-        `set_slide_texts` takes them: `{"e0": "새 제목", "e3": "본문"}`, with
-        the ids the outline shows for the slide being copied. The other
-        slides, the `page` and the `template` stay byte for byte as they
-        were.
-
-        This is how a page is added to an uploaded deck: its slides are
-        copied, never re-typed — do not rewrite the deck with write_canvas
-        to add a page; a rewrite drops elements and styling on the slides
-        you were not asked to touch. Copy the slide whose look the new page
-        should have, then refine the copy: `set_slide_texts` for words,
-        `edit_canvas` for a table's `rows`, a box, or an element to drop.
-        `revision` is the value from your most recent `read_canvas` of this
-        file.
-        """
-        if not path.lower().endswith(SLIDES_SUFFIX):
-            return f"Error: add_slide edits {SLIDES_SUFFIX} decks (got {path})."
-        canvas_id = _canvas_id(runtime)
-        try:
-            got = store.read(canvas_id, path)
-        except CanvasFileNotFoundError as exc:
-            return f"Error: {exc}. Use list_canvas_files to see available files."
-        except CanvasStoreError as exc:
-            return f"Error: {exc}."
-        try:
-            envelope = json.loads(got.content)
-            data = envelope["data"]
-            slides = data["slides"]
-            assert isinstance(data, dict) and isinstance(slides, list)
-        except Exception:  # noqa: BLE001 - not a deck we can address into
-            return f"Error: {path} does not parse as a slides deck; read it and use edit_canvas."
-        if not slides:
-            return f"Error: {path} has no slide to copy — write its first slide with write_canvas."
-        source = len(slides) if from_slide is None else from_slide
-        if (
-            isinstance(source, bool)
-            or not isinstance(source, int)
-            or not 1 <= source <= len(slides)
-        ):
-            return (
-                f"Error: from_slide {from_slide!r} is out of range — the deck has "
-                f"{len(slides)} slide(s)."
-            )
-        place = len(slides) if after is None else after
-        if (
-            isinstance(place, bool)
-            or not isinstance(place, int)
-            or not 0 <= place <= len(slides)
-        ):
-            return (
-                f"Error: after {after!r} is out of range — 0 puts the copy first, "
-                f"{len(slides)} puts it last."
-            )
-        copied = copy.deepcopy(slides[source - 1])
-        if texts:
-            problem = _texts_onto_slide(copied, source, texts)
-            if problem is not None:
-                return problem
-        slides.insert(place, copied)
-        number = place + 1
-        content = encode_slides(envelope.get("title") or display_title(path), data)
-        refusal = _deck_refusal(path, content)
-        if refusal is not None:
-            return refusal
-        try:
-            commit = store.write(
-                canvas_id, path, content, description, base_revision=revision, actor="agent"
-            )
-        except RevisionMismatchError as exc:
-            return f"Error: {exc}. {_RETRY_HINT}"
-        except CanvasStoreError as exc:
-            return f"Error: {exc}."
-        writer = getattr(runtime, "stream_writer", None)
-        if writer is not None:
-            for event in events_for_commit(
-                path,
-                content,
-                is_new=False,
-                revision=commit.revision,
-                description=commit.description,
-            ):
-                writer(event)
-        save_note = _deck_check(store, canvas_id, content)
-        worded = f" with {len(texts)} text(s) set" if texts else ""
-        return _with_eye(
-            f"Added slide {number} to {path}, copied from slide {source}{worded} "
-            f"({len(slides)} slide(s) now, revision {commit.revision}). The other slides, "
-            "the page and the template are as they were; refine the new slide with "
-            f"set_slide_texts and edit_canvas.{save_note}",
-            _deck_eye_images(
-                store, active_converters, canvas_id, path, content, save_note,
-                previous_revision=revision,
-            ),
-        )
-
-    return [open_deck_for_editing, add_slide]
+    return [open_deck_for_editing]
