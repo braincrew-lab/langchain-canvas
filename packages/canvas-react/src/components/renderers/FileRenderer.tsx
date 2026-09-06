@@ -12,12 +12,17 @@
  * real layout and lets the user point at a paragraph, which the card cannot.
  * That component is split out and optional — without its renderer installed,
  * or before it loads, this card is what shows.
+ *
+ * Any other paged file (a deck, a PDF) whose `pageCount` is known opens as a
+ * `PageViewer` when the host provides a page endpoint (`pageBaseUrl`): pages
+ * are fetched one at a time at reading size instead of tiled into a sheet.
  */
 
 import { Suspense, lazy } from "react";
 
 import type { FileData } from "../../protocol/artifacts";
 import { resolveCanvasFileUrl } from "../../io/canvasAssets";
+import { PageViewer } from "./PageViewer";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import { useChrome, useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
@@ -45,8 +50,9 @@ function iconFor(mediaType: string | undefined, name: string): string {
 }
 
 export function FileRenderer({ artifact }: RendererProps<FileData>) {
-  const { path, name, mediaType, size, cover, grids, excerpt, detail } = artifact.data;
+  const { path, name, mediaType, size, cover, grids, pageCount, excerpt, detail } = artifact.data;
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
+  const pageBaseUrl = useCanvasStore((s) => s.pageBaseUrl);
   const labels = useLabels();
   const chrome = useChrome();
   // Without an asset endpoint the card still states the file's facts —
@@ -54,6 +60,8 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const href = assetBaseUrl && path ? resolveCanvasFileUrl(path, assetBaseUrl) : null;
   const isImage = Boolean(mediaType?.startsWith("image/"));
   const isWord = `${path} ${name}`.toLowerCase().includes(".docx");
+  const paged =
+    !isImage && !isWord && Boolean(pageBaseUrl) && typeof pageCount === "number" && pageCount > 0;
 
   const facts = [mediaType, formatSize(size), detail]
     .filter(Boolean)
@@ -62,6 +70,14 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const preview =
     isImage && href ? (
       <img className="cv-file__image" src={href} alt={name} />
+    ) : paged && pageBaseUrl ? (
+      <PageViewer
+        path={path}
+        name={name}
+        pageCount={pageCount as number}
+        pageBaseUrl={pageBaseUrl}
+        version={artifact.version}
+      />
     ) : grids && grids.length > 0 ? (
       // Every page at a glance — the same grid sheets the agent reads.
       <div className="cv-file__grids">
@@ -80,7 +96,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
     ) : null;
 
   return (
-    <div className="cv-file">
+    <div className={"cv-file" + (paged ? " cv-file--pages" : "")}>
       {isWord && href ? (
         <Suspense fallback={preview}>
           <DocxPreview

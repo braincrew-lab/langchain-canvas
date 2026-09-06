@@ -148,7 +148,7 @@ def test_reupload_patches_every_file_data_key() -> None:
     patch = next(e for e in events if e["type"] == "canvas.patch")["patch"]
     assert patch["size"] == len(PNG_BYTES) + 1
     assert set(patch) == {
-        "path", "name", "mediaType", "size", "cover", "grids", "excerpt", "detail"
+        "path", "name", "mediaType", "size", "cover", "grids", "pageCount", "excerpt", "detail"
     }
 
 
@@ -250,7 +250,7 @@ class _PptxPages:
         return self._pdf.render_grid(_pdf(2), path="x.pdf")
 
 
-def test_a_pdf_upload_carries_its_page_grid() -> None:
+def test_a_pdf_upload_carries_its_page_count_not_a_grid() -> None:
     store = InMemoryCanvasStore()
     commit = store.write_bytes("t", "sources/deck.pdf", _pdf(3), "upload", actor="human")
     events = source_preview_events(
@@ -263,7 +263,10 @@ def test_a_pdf_upload_carries_its_page_grid() -> None:
     )
     data = _create_event(events)["data"]
     assert data["cover"].startswith("data:image/jpeg;base64,")
-    assert data["grids"] and data["grids"][0].startswith("data:image/png;base64,")
+    # Paged documents are read one page at a time through the host's page
+    # endpoint; only workbooks carry grid sheets.
+    assert data["grids"] is None
+    assert data["pageCount"] == 3
     assert data["detail"] == "3 pages"
 
 
@@ -283,4 +286,5 @@ def test_a_root_deck_replays_as_a_file_with_a_hosts_renderer() -> None:
     rich = hydrate_events(store, "t", converters=[_PptxPages()])
     data = _create_event(rich)["data"]
     assert data["cover"] is not None
-    assert len(data["grids"]) == 1
+    assert data["pageCount"] == 2
+    assert data["grids"] is None

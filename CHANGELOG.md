@@ -4,6 +4,16 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.34] — 2026-09-06
+
+### Added
+
+- Page viewer for stored files: a `file` tab whose `pageCount` is known (a deck, a PDF) opens as a rail of numbered thumbnails plus the chosen page at reading size, with keyboard paging. Pages are fetched one at a time from the host's page endpoint (`pageBaseUrl` on `<Canvas>`, `resolveCanvasPageUrl`), so a 38-page deck no longer arrives as base64 sheets. `FileData.pageCount` is derived by the same page-one render that makes the cover — no extra render.
+
+### Changed
+
+- Grid sheets (`FileData.grids`) are derived for workbooks only; paged documents carry `pageCount` instead. Without a page endpoint the cover still shows.
+
 ## [0.7.33] — 2026-09-06
 
 ### Fixed

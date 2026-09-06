@@ -226,6 +226,8 @@ export interface FileData {
   cover?: string;
   /** Every page as labeled thumbnails tiled into grid sheets, 20 per sheet. */
   grids?: string[];
+  /** Pages the host can render one at a time (see `pageBaseUrl`). */
+  pageCount?: number;
   /** Short text sample, via the source converter. */
   excerpt?: string;
   /** One-line content summary ("3 pages", "5 slides"). */

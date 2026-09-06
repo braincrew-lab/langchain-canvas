@@ -84,5 +84,5 @@ export {
   inlineHtmlAssets,
   inlineArtifactAssets,
 } from "./io/canvasAssets";
-export { resolveCanvasFileUrl } from "./io/canvasAssets";
+export { resolveCanvasFileUrl, resolveCanvasPageUrl } from "./io/canvasAssets";
 export { useAssetUrl } from "./hooks/useAssetUrl";

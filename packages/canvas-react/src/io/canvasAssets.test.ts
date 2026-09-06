@@ -173,3 +173,15 @@ describe("inlineArtifactAssets", () => {
     expect(await inlineArtifactAssets(a, BASE)).toBe(a);
   });
 });
+
+describe("resolveCanvasPageUrl", () => {
+  it("appends the encoded path, page, width and version to the page base", async () => {
+    const { resolveCanvasPageUrl } = await import("./canvasAssets");
+    expect(resolveCanvasPageUrl("deck a.pptx", 3, 240, "http://h/page?path=", 7)).toBe(
+      "http://h/page?path=deck%20a.pptx&page=3&width=240&v=7",
+    );
+    expect(resolveCanvasPageUrl("x.pdf", 1, 1600, "http://h/page?path=")).toBe(
+      "http://h/page?path=x.pdf&page=1&width=1600",
+    );
+  });
+});
