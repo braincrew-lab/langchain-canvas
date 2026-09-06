@@ -60,6 +60,12 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   // Without an asset endpoint the card still states the file's facts —
   // only the live image, the preview and the download link need the URL.
   const href = assetBaseUrl && path ? resolveCanvasFileUrl(path, assetBaseUrl) : null;
+  // Every commit re-stamps the artifact (store revision, else the version
+  // counter); the previews carry it in their URL so a new commit refetches
+  // at once instead of showing the bytes the browser already holds. The
+  // download link stays plain — it always serves the head.
+  const stamp = (artifact.meta as { revision?: string } | undefined)?.revision ?? artifact.version;
+  const previewHref = href ? `${href}&v=${encodeURIComponent(String(stamp))}` : null;
   const isImage = Boolean(mediaType?.startsWith("image/"));
   const isWord = `${path} ${name}`.toLowerCase().includes(".docx");
   const paged =
@@ -71,14 +77,14 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
 
   const preview =
     isImage && href ? (
-      <img className="cv-file__image" src={href} alt={name} />
+      <img className="cv-file__image" src={previewHref ?? undefined} alt={name} />
     ) : paged && pageBaseUrl ? (
       <PageViewer
         path={path}
         name={name}
         pageCount={pageCount as number}
         pageBaseUrl={pageBaseUrl}
-        version={artifact.version}
+        version={stamp}
       />
     ) : grids && grids.length > 0 ? (
       // Every page at a glance — the same grid sheets the agent reads.
@@ -99,11 +105,11 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
 
   return (
     <div className={"cv-file" + (paged ? " cv-file--pages" : "")}>
-      {isWord && href ? (
+      {isWord && previewHref ? (
         <Suspense fallback={preview}>
           <DocxPreview
             artifactId={artifact.id}
-            href={href}
+            href={previewHref}
             name={name}
             fallback={preview}
           />

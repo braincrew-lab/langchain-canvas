@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.36] — 2026-09-06
+
+### Fixed
+
+- File previews (Word preview, images, page viewer) refetch the moment a commit lands: the preview URL carries the commit revision, so an agent edit shows at once instead of whenever the file URL happened to change. Measured: the Word preview lagged the tool's commit by about ten seconds.
+
 ## [0.7.35] — 2026-09-06
 
 ### Changed
