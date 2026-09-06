@@ -4,6 +4,18 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.45] — 2026-09-07
+
+### Added
+
+- `readOnly` prop on `<Canvas>`: an `.html` page renders as something to look at, not to hand-edit. The in-frame inspector is not wired (no hover, selection, drag, `contenteditable` or toolbar commands) and the edit toolbar is left out; only the device-width switch stays. Asset references (`assets/…`, `sources/…`) still resolve for display, and agent edits still land through the store. JavaScript only; the Python package is unchanged since 0.7.44.
+
+## [0.7.44] — 2026-09-07
+
+### Added
+
+- Deck editing one slide at a time, by element id: `read_canvas(slide=)`, `edit_slide_elements`, `set_slide_elements` (#131); `add_slide` copies one of the deck's own slides (#130); the deck outline and the copy reply name the page and its orientation (#129). Python only; no npm change.
+
 ## [0.7.43] — 2026-09-07
 
 ### Fixed

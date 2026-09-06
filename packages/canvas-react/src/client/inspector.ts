@@ -26,15 +26,22 @@ export const INSPECTOR_MARK = "langchain-canvas";
  *  Also ensures a responsive viewport meta so device-width media queries behave
  *  the same in the preview, in export, and on a real device.
  *
+ *  With `readOnly`, the script resolves asset references and stops: nothing is
+ *  selectable or editable, and the frame answers no commands.
+ *
  *  With `assetBaseUrl`, the inspector also resolves canvas-asset references
  *  (`src="assets/…"` / `src="sources/…"`) for display: the original relative
  *  src is kept in `data-lcx-src` and restored on every serialization, so the
  *  stored document never sees a resolved URL. */
-export function withInspector(html: string, assetBaseUrl?: string): string {
+export function withInspector(
+  html: string,
+  assetBaseUrl?: string,
+  options: { readOnly?: boolean } = {},
+): string {
   let out = withViewport(html);
-  const config = assetBaseUrl
-    ? `<script data-lcx>window.__LCX_ASSET_BASE=${JSON.stringify(assetBaseUrl)}</script>`
-    : "";
+  const config =
+    (assetBaseUrl ? `<script data-lcx>window.__LCX_ASSET_BASE=${JSON.stringify(assetBaseUrl)}</script>` : "") +
+    (options.readOnly ? `<script data-lcx>window.__LCX_READONLY=true</script>` : "");
   const injection = `<style data-lcx>${INSPECTOR_CSS}</style>${config}<script data-lcx>${INSPECTOR_SCRIPT}</script>`;
   const marker = "</body>";
   const at = out.lastIndexOf(marker);
@@ -265,7 +272,6 @@ const INSPECTOR_SCRIPT = `
     positionResize();
   }
   function start() {
-    assign(document.body, "e");
     // Resolve asset references now and after any change (insert_html, set_src,
     // duplicate). Idempotent: rewritten images carry data-lcx-src and are
     // skipped, so the observer settles after one pass.
@@ -275,6 +281,11 @@ const INSPECTOR_SCRIPT = `
         subtree: true, childList: true, attributes: true, attributeFilter: ["src"]
       });
     }
+    // Read-only (the host's readOnly prop): the page is looked at, never edited.
+    // Asset references still resolve; nothing else of the inspector is wired —
+    // no element ids, hover, selection, drag, contenteditable or commands.
+    if (window.__LCX_READONLY) return;
+    assign(document.body, "e");
     var hovered = null;
     var selected = [];               // currently highlighted elements
     var marquee = null, sx = 0, sy = 0, dragging = false, moved = false, suppressClick = false;

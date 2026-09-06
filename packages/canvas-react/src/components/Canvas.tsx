@@ -90,6 +90,14 @@ export interface CanvasProps {
   /** What the banner reads while `busy` (default `labels.busy`). */
   busyLabel?: string;
   /**
+   * Pages are for looking at, not hand editing: an `.html` artifact renders
+   * without the in-frame inspector (no hover, selection, drag or text
+   * editing) and without its edit toolbar; only the device-width switch
+   * stays. Asset references still resolve, and agent edits still land
+   * through the store. Off by default.
+   */
+  readOnly?: boolean;
+  /**
    * Override any user-facing string the panel renders (a partial map — the
    * rest keep their defaults). See `CanvasLabels` for every key.
    */
@@ -115,6 +123,7 @@ export function Canvas({
   pageBaseUrl,
   busy = false,
   busyLabel,
+  readOnly = false,
   labels,
   chrome,
 }: CanvasProps) {
@@ -133,6 +142,7 @@ export function Canvas({
           pageBaseUrl={pageBaseUrl}
           busy={busy}
           busyLabel={busyLabel}
+          readOnly={readOnly}
         />
       </ChromeProvider>
     </CanvasRegistryProvider>
@@ -151,6 +161,7 @@ function CanvasPanel({
   pageBaseUrl,
   busy = false,
   busyLabel,
+  readOnly = false,
 }: Pick<
   CanvasProps,
   | "emptyState"
@@ -164,6 +175,7 @@ function CanvasPanel({
   | "pageBaseUrl"
   | "busy"
   | "busyLabel"
+  | "readOnly"
 >) {
   const labels = useLabels();
   const debouncedSave = useCanvasSave(onSave);
@@ -183,6 +195,7 @@ function CanvasPanel({
   const setSaveFlusher = useCanvasStore((s) => s.setSaveFlusher);
   const setAssetBaseUrl = useCanvasStore((s) => s.setAssetBaseUrl);
   const setPageBaseUrl = useCanvasStore((s) => s.setPageBaseUrl);
+  const setReadOnly = useCanvasStore((s) => s.setReadOnly);
   const { importFiles } = useCanvasImport({ onImported });
   const [dropping, setDropping] = useState(false);
 
@@ -194,6 +207,10 @@ function CanvasPanel({
   useEffect(() => {
     setPageBaseUrl(pageBaseUrl ?? null);
   }, [pageBaseUrl, setPageBaseUrl]);
+  useEffect(() => {
+    setReadOnly(readOnly);
+    return () => setReadOnly(false);
+  }, [readOnly, setReadOnly]);
 
   // Open = hand the raw files to the host (upload) + preview what we can import.
   const openFiles = (files: FileList) => {
