@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.38] — 2026-09-06
+
+### Changed
+
+- A workbook published at the canvas root (`.xlsx` written by code) replays as a `file` tab — its own sheets, charts and formatting through the host's page renderer — instead of the editable grid an upload under `sources/` opens as. Python only; no npm change.
+
 ## [0.7.37] — 2026-09-06
 
 ### Added
