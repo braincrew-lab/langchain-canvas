@@ -355,6 +355,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const selections = useCanvasStore((s) => s.selections);
   const iframeCommand = useCanvasStore((s) => s.iframeCommand);
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
+  const readOnly = useCanvasStore((s) => s.readOnly);
   const [device, setDevice] = useState<(typeof DEVICES)[number]["id"]>("desktop");
   const [mode, setMode] = useState<"design" | "code">("design");
   const [a11y, setA11y] = useState<string[] | null>(null);
@@ -377,12 +378,12 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const isFixedSlide = Boolean(artifact.meta?.ratio);
   const srcDoc = useMemo(() => {
     if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
-    const base = withInspector(artifact.data.html, assetBaseUrl ?? undefined);
+    const base = withInspector(artifact.data.html, assetBaseUrl ?? undefined, { readOnly });
     srcDocRef.current = isFixedSlide ? base : withScrollableBody(base);
     lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html, mode, isFixedSlide, assetBaseUrl]);
+  }, [artifact.data.html, mode, isFixedSlide, assetBaseUrl, readOnly]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 
@@ -491,22 +492,31 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const ratio = artifact.meta?.ratio as string | undefined;
   const slide = useSlideFit(ratio, stageRef);
 
+  const deviceSeg = (
+    <div className="cv-html-seg" role="group" aria-label={labels.previewWidth}>
+      {DEVICES.map((d) => (
+        <button key={d.id} className={device === d.id ? "is-on" : ""} onClick={() => setDevice(d.id)}>
+          {d.id === "desktop" ? labels.viewportDesktop : d.id === "tablet" ? labels.viewportTablet : labels.viewportMobile}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="cv-html-wrap">
       <input ref={imgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onImgFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={bgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onSlideBg(e.target.files?.[0]); e.target.value = ""; }} />
       <div className="cv-html-bar cv-chrome">
+        {readOnly ? (
+          // Looking only: the device-width switch is the whole toolbar.
+          !ratio && deviceSeg
+        ) : (
+          <>
         {mode === "design" && (
           <>
             {!ratio && (
               <>
-                <div className="cv-html-seg" role="group" aria-label={labels.previewWidth}>
-                  {DEVICES.map((d) => (
-                    <button key={d.id} className={device === d.id ? "is-on" : ""} onClick={() => setDevice(d.id)}>
-                      {d.id === "desktop" ? labels.viewportDesktop : d.id === "tablet" ? labels.viewportTablet : labels.viewportMobile}
-                    </button>
-                  ))}
-                </div>
+                {deviceSeg}
                 <span className="cv-html-bar__sep" />
               </>
             )}
@@ -692,6 +702,8 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
           <button className={mode === "design" ? "is-on" : ""} onClick={() => setMode("design")}>{labels.modeDesign}</button>
           <button className={mode === "code" ? "is-on" : ""} onClick={() => setMode("code")}>{labels.modeCode}</button>
         </div>
+          </>
+        )}
       </div>
 
       {a11y !== null && (

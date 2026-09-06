@@ -106,6 +106,9 @@ export interface CanvasStore {
    *  `resolveCanvasPageUrl`). Null = no page endpoint; paged files fall back
    *  to their cover. */
   pageBaseUrl: string | null;
+  /** The host shows pages to look at, not to edit: an html artifact renders
+   *  without the in-frame inspector and without its edit toolbar. */
+  readOnly: boolean;
 
   /** The shown artifact's rendered body HTML (editor chrome stripped), for a
    *  host-drawn export control — `<Canvas>` registers it while an artifact is
@@ -138,6 +141,7 @@ export interface CanvasStore {
   setOnUserEdit: (handler: UserEditHandler | null) => void;
   setAssetBaseUrl: (url: string | null) => void;
   setPageBaseUrl: (url: string | null) => void;
+  setReadOnly: (value: boolean) => void;
   setRenderedHtml: (getter: (() => string | null) | null) => void;
   reset: () => void;
 }
@@ -158,6 +162,7 @@ const initialState = () => ({
   onUserEdit: null as UserEditHandler | null,
   assetBaseUrl: null as string | null,
   pageBaseUrl: null as string | null,
+  readOnly: false,
   renderedHtml: null as (() => string | null) | null,
 });
 
@@ -285,10 +290,11 @@ function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, ge
     setOnUserEdit: (handler) => set({ onUserEdit: handler }),
     setAssetBaseUrl: (url) => set({ assetBaseUrl: url }),
     setPageBaseUrl: (url) => set({ pageBaseUrl: url }),
+    setReadOnly: (value) => set({ readOnly: value }),
     setRenderedHtml: (getter) => set({ renderedHtml: getter }),
 
     // Host configuration (the asset endpoint) survives a session reset.
-    reset: () => set({ ...initialState(), assetBaseUrl: get().assetBaseUrl }),
+    reset: () => set({ ...initialState(), assetBaseUrl: get().assetBaseUrl, readOnly: get().readOnly }),
   }));
 }
 
