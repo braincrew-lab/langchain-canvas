@@ -1268,6 +1268,10 @@
   background: #fff;
 }
 .cv-file--pages { max-width: none; align-items: stretch; }
+.cv-file__workbook { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.cv-file__workbook .cv-sheet-panel--readonly .cv-sheet { min-height: 420px; }
+.cv-file__charts { display: flex; flex-direction: column; gap: 8px; }
+.cv-file__chart { display: block; max-width: 100%; border: 1px solid var(--cv-border); background: #fff; }
 .cv-file__grids { display: flex; flex-direction: column; gap: 8px; }
 
 /* Page viewer — a rail of numbered thumbnails and the chosen page at reading size. */

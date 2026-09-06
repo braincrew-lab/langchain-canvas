@@ -258,6 +258,8 @@ class FileData(_CamelModel):
     cover: str | None = None  # data: URI thumbnail of page one (page-renderable sources)
     grids: list[str] | None = None  # data: URI grid sheets of every page, 20 per sheet
     page_count: int | None = None  # pages a host can render one at a time (`pageCount`)
+    workbook: dict[str, Any] | None = None  # sheets in the table wire shape (read-only grid)
+    chart_pages: list[int] | None = None  # rendered pages that carry charts (`chartPages`)
     excerpt: str | None = None  # short text sample, via the source converter
     detail: str | None = None  # one-line content summary ("3 pages", "5 slides")
 

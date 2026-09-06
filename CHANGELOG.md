@@ -4,6 +4,13 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.39] — 2026-09-06
+
+### Added
+
+- Workbook viewer: a `.xlsx` published at the canvas root opens as a read-only spreadsheet (its sheets on the wire as `FileData.workbook`, drawn by the table renderer with editing, toolbar and formula bar off) with the rendered pages that carry charts underneath (`FileData.chartPages`, from a host converter's optional `chart_pages`). A printed page of a spreadsheet was unreadable; a grid is what a workbook is.
+- `TableRenderer` takes `readOnly`.
+
 ## [0.7.38] — 2026-09-06
 
 ### Changed

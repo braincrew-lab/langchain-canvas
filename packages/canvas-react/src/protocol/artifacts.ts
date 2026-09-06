@@ -228,6 +228,10 @@ export interface FileData {
   grids?: string[];
   /** Pages the host can render one at a time (see `pageBaseUrl`). */
   pageCount?: number;
+  /** A workbook's sheets, for a read-only grid (same shape as a table's data). */
+  workbook?: TableData;
+  /** Rendered pages (1-based) that carry charts, shown under the grid. */
+  chartPages?: number[];
   /** Short text sample, via the source converter. */
   excerpt?: string;
   /** One-line content summary ("3 pages", "5 slides"). */

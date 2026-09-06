@@ -163,7 +163,18 @@ function deriveColumns(rows: TableData["rows"]): TableColumn[] {
 
 const EMPTY_FORMULAS: FormulaValues = new Map();
 
-export function TableRenderer({ artifact }: RendererProps<TableData>) {
+/** Fortune-sheet settings for a grid that is looked at, not typed into. */
+const READ_ONLY_SETTINGS = {
+  allowEdit: false,
+  showToolbar: false,
+  showFormulaBar: false,
+  showSheetTabs: true,
+} as const;
+
+export function TableRenderer({
+  artifact,
+  readOnly = false,
+}: RendererProps<TableData> & { readOnly?: boolean }) {
   const labels = useLabels();
   // A table written by hand or by an agent may carry only `sheet`, or only
   // `rows`; neither absence is a reason to crash the tab.
@@ -372,7 +383,8 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
   }
 
   return (
-    <div className="cv-sheet-panel">
+    <div className={"cv-sheet-panel" + (readOnly ? " cv-sheet-panel--readonly" : "")}>
+      {!readOnly && (
       <div className="cv-sheet-tools">
         <button type="button" onClick={() => insert("column")}>{labels.addColumn}</button>
         <button type="button" onClick={() => insert("row")}>{labels.addRow}</button>
@@ -406,6 +418,7 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
         )}
         <span className="cv-sheet-tools__hint">{labels.tableHint}</span>
       </div>
+      )}
       <div
         className="cv-sheet"
         ref={rootRef}
@@ -417,7 +430,13 @@ export function TableRenderer({ artifact }: RendererProps<TableData>) {
         }}
       >
         <Suspense fallback={<div className="cv-sheet--empty">{labels.loading}</div>}>
-          <Workbook key={wbKey} ref={wbRef} data={initialData as never} onChange={handleChange} />
+          <Workbook
+            key={wbKey}
+            ref={wbRef}
+            data={initialData as never}
+            onChange={readOnly ? undefined : handleChange}
+            {...(readOnly ? READ_ONLY_SETTINGS : {})}
+          />
         </Suspense>
       </div>
     </div>
