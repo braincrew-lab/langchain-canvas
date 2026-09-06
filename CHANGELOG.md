@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.40] — 2026-09-06
+
+### Fixed
+
+- Workbook viewer: the read-only grid collapsed to its sheet-tab bar inside a file tab because Fortune-sheet needs an explicit container height; the panel now sets one.
+
 ## [0.7.39] — 2026-09-06
 
 ### Added
