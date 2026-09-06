@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.41] — 2026-09-06
+
+### Added
+
+- `editable_workbooks` (default on) on `source_preview_events` and `hydrate_events`: a host that keeps workbooks read-only opens an uploaded `.xlsx` as a file tab with its sheets on the wire, the same grid as a published workbook, with editing off. Python only; no npm change.
+
 ## [0.7.40] — 2026-09-06
 
 ### Fixed
