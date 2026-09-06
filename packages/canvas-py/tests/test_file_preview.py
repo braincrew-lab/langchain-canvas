@@ -383,17 +383,21 @@ def _vector_pdf(pages: list[str]) -> bytes:
     out += f"xref\n0 {len(offsets) + 1}\n".encode() + b"0000000000 65535 f \n"
     for off in offsets:
         out += f"{off:010d} 00000 n \n".encode()
-    out += f"trailer\n<< /Size {len(offsets) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    trailer = f"trailer\n<< /Size {len(offsets) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    out += trailer.encode()
     return bytes(out)
 
 
 def test_pdf_chart_pages_are_shape_pages_with_little_text() -> None:
-    """Three big filled rectangles = a chart; one big cell fill under a wall
-    of text = a table; a picture-only page is not a chart."""
+    """Three big filled rectangles = a chart; two big cell fills under a
+    wall of text = a table."""
     from langchain_canvas.converters import PdfSourceConverter
 
     chart = "0 0 1 rg 50 50 400 400 re f 100 100 60 300 re f 200 100 60 200 re f"
-    text_wall = "BT /F1 9 Tf " + " ".join(f"{x} {y} Td (cell) Tj" for x in range(0, 500, 50) for y in range(0, 800, 25)) + " ET"
+    cells = " ".join(
+        f"{x} {y} Td (cell) Tj" for x in range(0, 500, 50) for y in range(0, 800, 25)
+    )
+    text_wall = "BT /F1 9 Tf " + cells + " ET"
     table = "0.9 g 40 700 500 60 re f 40 620 500 60 re f " + text_wall
     empty = ""
 
