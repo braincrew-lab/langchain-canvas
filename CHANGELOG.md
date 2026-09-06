@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.42] — 2026-09-06
+
+### Added
+
+- `PdfSourceConverter.chart_pages(pdf, path=)`: the 1-based pages that draw a chart (a picture, two or more shapes wider than 40pt, or forty filled shapes). A host that renders office files to PDF can point its converter's `chart_pages` at this so the workbook viewer lists chart pages the same way live and on reload. Python only; no npm change.
+
 ## [0.7.41] — 2026-09-06
 
 ### Added

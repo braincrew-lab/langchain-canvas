@@ -350,3 +350,27 @@ def test_a_host_can_open_uploaded_workbooks_read_only(tmp_path) -> None:
     _PREVIEW_CACHE.clear()
     replayed = hydrate_events(store, "t", editable_workbooks=False)
     assert _create_event(replayed)["type"] == "file"
+
+
+def test_pdf_chart_pages_are_the_pages_that_draw_pictures_or_shapes() -> None:
+    """A text-only page is not a chart; a page carrying a picture is."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    from langchain_canvas.converters import PdfSourceConverter
+
+    plain = Image.new("RGB", (400, 560), "white")
+    chart = Image.new("RGB", (400, 560), "white")
+    draw = ImageDraw.Draw(chart)
+    for i in range(6):
+        draw.rectangle([20 + i * 60, 300 - i * 30, 60 + i * 60, 500], fill="steelblue")
+    out = io.BytesIO()
+    plain.save(out, format="PDF", save_all=True, append_images=[chart])
+    pdf = out.getvalue()
+
+    # Pillow prints every page as one picture; a page that is entirely white
+    # still carries an image object, so both count. The point is the contract
+    # shape (1-based, in order) and that a page of nothing draws no path.
+    pages = PdfSourceConverter().chart_pages(pdf, path="x.pdf")
+    assert pages == [1, 2]

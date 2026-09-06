@@ -354,6 +354,57 @@ class PdfSourceConverter:
             "data": base64.b64encode(png).decode(),
         }
 
+    #: A chart page is dozens of filled vector shapes with a few large ones
+    #: (plot area, wide bars, wedges); a printed sheet is text plus, at most,
+    #: cell fills that are small. Measured on LibreOffice output: table pages
+    #: 0-16 small fills and no large shape, chart pages 4-25 fills with 3-7
+    #: shapes wider than 40pt.
+    chart_min_big_paths: int = 2
+    chart_min_area_paths: int = 40
+
+    def chart_pages(self, data: bytes, *, path: str) -> list[int]:
+        """1-based pages whose vector content reads as a chart.
+
+        A page counts when it embeds a picture, draws at least
+        ``chart_min_big_paths`` shapes larger than 40pt on a side, or
+        ``chart_min_area_paths`` shapes with any real area. Hosts that
+        render office files to PDF call this on that PDF so the workbook
+        viewer can show chart pages under the read-only grid.
+        """
+        import ctypes
+
+        import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
+
+        def _size(raw: object) -> tuple[float, float]:
+            left, bottom, right, top = (ctypes.c_float() for _ in range(4))
+            if not pdfium_c.FPDFPageObj_GetBounds(raw, left, bottom, right, top):
+                return 0.0, 0.0
+            return right.value - left.value, top.value - bottom.value
+
+        document = self._document(data)
+        pages: list[int] = []
+        try:
+            for index, page in enumerate(document, 1):
+                area = big = images = 0
+                for obj in page.get_objects(max_depth=2):
+                    if obj.type == pdfium_c.FPDF_PAGEOBJ_IMAGE:
+                        images += 1
+                    elif obj.type == pdfium_c.FPDF_PAGEOBJ_PATH:
+                        width, height = _size(obj.raw)
+                        if width > 4 and height > 4:
+                            area += 1
+                        if width > 40 and height > 40:
+                            big += 1
+                if (
+                    images
+                    or big >= self.chart_min_big_paths
+                    or area >= self.chart_min_area_paths
+                ):
+                    pages.append(index)
+        finally:
+            document.close()
+        return pages
+
     def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> ConvertedSource:
         """The requested 1-based pages as labeled PNG image blocks.
 
