@@ -1773,7 +1773,7 @@ def test_add_slide_copies_the_last_slide_to_the_end_by_default() -> None:
     )
     text = reply if isinstance(reply, str) else reply[0]["text"]
     assert text.startswith("Added slide 3 to d.slides.json, copied from slide 2 (3 slide(s) now")
-    assert "revision v2" in text and "set_slide_texts and edit_canvas" in text
+    assert "revision v2" in text and "set_slide_elements or edit_slide_elements" in text
     after = json.loads(store.read("t1", "d.slides.json").content)
     slides = after["data"]["slides"]
     assert len(slides) == 3
@@ -1885,7 +1885,7 @@ def test_add_slide_refuses_a_wrong_slide_or_id_and_writes_nothing() -> None:
     assert stale.startswith("Error:")
     not_a_deck = run(path="a.md", description="d", revision=revision,
                      runtime=_runtime(thread_id="t1"))
-    assert not_a_deck.startswith("Error: add_slide edits .slides.json decks")
+    assert not_a_deck.startswith("Error: this tool edits .slides.json decks")
     assert store.read("t1", "d.slides.json").revision == revision
     assert json.loads(store.read("t1", "d.slides.json").content) == json.loads(_two_slide_deck())
 
@@ -1904,6 +1904,193 @@ def test_add_slide_arrives_with_the_deck_check_and_the_eye_like_any_save() -> No
     assert reply[0]["text"].startswith("Added slide 3")
     assert "Deck check" in reply[0]["text"] and "slide 3" in reply[0]["text"]
     assert eye.calls[-1] == ("d.pptx", [3])
+
+
+# --- one slide at a time: read_canvas(slide=), edit_slide_elements, set_slide_elements --
+
+
+def _deck_with_a_table() -> str:
+    from langchain_canvas import encode_slides
+
+    return encode_slides("Deck", {"page": {"widthIn": 8.27, "heightIn": 11.69}, "slides": [
+        {"elements": [
+            {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 80, "h": 6, "fontSize": 20,
+             "text": "표지"},
+        ]},
+        {"background": "#FFFFFF", "elements": [
+            {"id": "e0", "type": "text", "x": 5, "y": 4, "w": 80, "h": 6, "fontSize": 20,
+             "text": "주요사업 계량 지표명"},
+            {"id": "e1", "type": "shape", "shape": "rect", "x": 5, "y": 12, "w": 6, "h": 4,
+             "fill": "#000000"},
+            {"id": "t2", "type": "table", "x": 5, "y": 18, "w": 80, "h": 20, "fontSize": 10,
+             "rows": [["연도", "산식", "목표", "실적"], ["20YY", "가나", "#", "#"]],
+             "colWidths": [20, 40, 20, 20], "header": True,
+             "cells": [{"r": 0, "c": 0, "bold": True}, {"r": 1, "c": 3, "fill": "#EEEEEE"}]},
+            {"id": "e3", "type": "text", "x": 5, "y": 40, "w": 80, "h": 6, "fontSize": 11,
+             "text": "□ 가나다라마바사"},
+        ]},
+    ]})
+
+
+def test_read_canvas_slide_returns_that_slides_json_under_the_outline_head() -> None:
+    store = InMemoryCanvasStore()
+    tools = _tools(store)
+    runtime = _runtime(thread_id="t1")
+    _invoke(tools["write_canvas"], runtime, path="d.slides.json", description="d",
+            content=_deck_with_a_table())
+    out = _invoke(tools["read_canvas"], runtime, path="d.slides.json", slide=2)
+    assert out.startswith("revision: v1")
+    assert "deck: Deck — 2 slide(s), page 8.27 x 11.69 in (portrait)" in out
+    assert "[s2] of 2 — this slide's JSON" in out
+    assert '"id": "t2"' in out and '"주요사업 계량 지표명"' in out
+    assert '"표지"' not in out  # slide 1 stays out of the reply
+    assert "[s1]" not in out.split("this slide's JSON")[0]  # the per-slide outline lines are cut
+    assert _invoke(tools["read_canvas"], runtime, path="d.slides.json", slide=3).endswith(
+        "slide 3 is out of range — the deck has 2 slide(s)."
+    )
+    _invoke(tools["write_canvas"], runtime, path="a.md", content="x", description="c")
+    assert _invoke(tools["read_canvas"], runtime, path="a.md", slide=1).startswith(
+        "Error: `slide` applies to .slides.json"
+    )
+
+
+def test_edit_slide_elements_changes_one_slide_by_id_in_one_save() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _deck_with_a_table())
+    before = json.loads(store.read("t1", "d.slides.json").content)
+    reply = tools["edit_slide_elements"].func(
+        path="d.slides.json", slide=2, description="reshape", revision=revision,
+        remove=["e1"],
+        add=[{"id": "e9", "type": "text", "x": 5, "y": 50, "w": 80, "h": 6, "fontSize": 11,
+              "text": "□ 기대효과 본문"}],
+        texts={"e0": "3. 향후 추진계획"},
+        rows={"t2": [["과제", "담당부서", "일정"], ["모델 고도화", "데이터사업팀", "2026.03~"],
+                     ["API 표준 v2", "플랫폼기획실", "2026.01~"]]},
+        boxes={"e3": {"y": 44, "fontSize": 12}},
+        runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith(
+        "Edited slide 2 of d.slides.json: removed 1 (e1); added 1 (e9); set 1 text(s); "
+        "replaced rows of t2 (3x3); moved/resized 1 — 4 element(s) now (revision v2)."
+    )
+    after = json.loads(store.read("t1", "d.slides.json").content)["data"]
+    slide = {e["id"]: e for e in after["slides"][1]["elements"]}
+    assert set(slide) == {"e0", "t2", "e3", "e9"}
+    assert slide["e0"]["text"] == "3. 향후 추진계획" and slide["e0"]["fontSize"] == 20
+    assert slide["t2"]["rows"][0] == ["과제", "담당부서", "일정"] and len(slide["t2"]["rows"]) == 3
+    # the column count changed: widths and cell styles for the old grid are gone
+    assert "colWidths" not in slide["t2"] and "cells" not in slide["t2"]
+    assert slide["t2"]["header"] is True and slide["t2"]["fontSize"] == 10
+    assert slide["e3"]["y"] == 44 and slide["e3"]["fontSize"] == 12 and slide["e3"]["x"] == 5
+    assert after["slides"][0] == before["data"]["slides"][0]
+    assert after["page"] == {"widthIn": 8.27, "heightIn": 11.69}
+    assert after["slides"][1]["background"] == "#FFFFFF"
+
+
+def test_edit_slide_elements_takes_json_text_and_keeps_cells_when_only_rows_grow() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _deck_with_a_table())
+    reply = tools["edit_slide_elements"].func(
+        path="d.slides.json", slide=2, description="rows", revision=revision,
+        rows=('{"t2": [["연도", "산식", "목표", "실적"], ["2024", "가", "1", "2"], '
+              '["2025", "나", "3", "4"]]}'),
+        remove="[]",
+        runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith("Edited slide 2 of d.slides.json: replaced rows of t2 (3x4)")
+    table = {e["id"]: e for e in json.loads(store.read("t1", "d.slides.json").content)
+             ["data"]["slides"][1]["elements"]}["t2"]
+    assert table["colWidths"] == [20, 40, 20, 20]  # same column count: widths stay
+    assert table["cells"] == [{"r": 0, "c": 0, "bold": True}, {"r": 1, "c": 3, "fill": "#EEEEEE"}]
+    assert "rowHeights" not in table
+
+
+def test_edit_slide_elements_refuses_bad_ids_and_values_and_writes_nothing() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _deck_with_a_table())
+    run = tools["edit_slide_elements"].func
+    base = dict(path="d.slides.json", slide=2, description="d", revision=revision,
+                runtime=_runtime(thread_id="t1"))
+    assert run(**base, remove=["nope"]).startswith(
+        "Error: slide 2 has no element 'nope'. It has: e0 (text)"
+    )
+    assert run(**base, add=[{"id": "e0", "type": "text", "x": 1, "y": 1, "w": 1, "h": 1}]) == (
+        "Error: slide 2 already has an element 'e0' — give the new one a fresh id."
+    )
+    assert run(**base, remove=["e0"], add=[{"id": "e0", "type": "text", "x": 1, "y": 1, "w": 5,
+                                             "h": 5, "text": "x"}]).startswith("Edited slide 2")
+    revision = store.read("t1", "d.slides.json").revision
+    base["revision"] = revision
+    assert run(**base, rows={"e3": [["a"]]}).endswith("is a text, not a table.")
+    assert run(**base, rows={"t2": [["a", "b"], ["c"]]}).startswith("Error: rows for 't2' must be")
+    assert run(**base, boxes={"t2": {"z": 1}}).startswith("Error: box key 'z'")
+    assert run(**base, boxes={"t2": {"x": "left"}}).startswith(
+        "Error: box x for 't2' must be a number"
+    )
+    assert run(**base, texts={"t2": "x"}).startswith("Error: 't2' on slide 2 is a table")
+    assert run(**base).startswith("Error: nothing to change")
+    assert run(**base, texts="{not json").startswith("Error: `texts` is not valid JSON")
+    assert run(**{**base, "slide": 1, "revision": "v0"}, remove=["e0"]).startswith("Error:")
+    assert store.read("t1", "d.slides.json").revision == revision
+    # a removed id and a box for the same id: the box check sees it gone
+    assert run(**base, remove=["e3"], boxes={"e3": {"y": 1}}).startswith(
+        "Error: slide 2 has no element 'e3'"
+    )
+
+
+def test_set_slide_elements_replaces_one_slide_and_nothing_else() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _deck_with_a_table())
+    before = json.loads(store.read("t1", "d.slides.json").content)
+    fresh = [
+        {"id": "e0", "type": "text", "x": 5, "y": 4, "w": 80, "h": 6, "fontSize": 20,
+         "text": "3. 향후 추진계획"},
+        {"id": "t1", "type": "table", "x": 5, "y": 14, "w": 80, "h": 18, "fontSize": 10,
+         "rows": [["과제", "담당부서", "일정"], ["모델 고도화", "데이터사업팀", "2026.03~"]],
+         "header": True},
+    ]
+    reply = tools["set_slide_elements"].func(
+        path="d.slides.json", slide=2, elements=fresh, description="new page",
+        revision=revision, runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith(
+        "Replaced the elements of slide 2 of d.slides.json with 2 element(s); the other "
+        "slides, the page and the template are as they were (revision v2)."
+    )
+    after = json.loads(store.read("t1", "d.slides.json").content)["data"]
+    assert after["slides"][1]["elements"] == fresh
+    assert after["slides"][1]["background"] == "#FFFFFF"
+    assert after["slides"][0] == before["data"]["slides"][0]
+    assert after["page"] == {"widthIn": 8.27, "heightIn": 11.69}
+    # JSON text is accepted; a broken element is refused by the schema, nothing saved
+    as_text = tools["set_slide_elements"].func(
+        path="d.slides.json", slide=1, elements=json.dumps(fresh), description="t",
+        revision="v2", runtime=_runtime(thread_id="t1"),
+    )
+    assert (as_text if isinstance(as_text, str) else as_text[0]["text"]).startswith("Replaced")
+    bad = tools["set_slide_elements"].func(
+        path="d.slides.json", slide=1, elements=[{"id": "x", "type": "blob", "x": 1, "y": 1,
+                                                   "w": 1, "h": 1}],
+        description="t", revision="v3", runtime=_runtime(thread_id="t1"),
+    )
+    assert bad.startswith("Error: d.slides.json was not saved")
+    dupes = tools["set_slide_elements"].func(
+        path="d.slides.json", slide=1, elements=[fresh[0], fresh[0]], description="t",
+        revision="v3", runtime=_runtime(thread_id="t1"),
+    )
+    assert dupes == "Error: duplicate element id(s) on the slide: e0."
+    assert store.read("t1", "d.slides.json").revision == "v3"
 
 
 # --- the export gate and the review ----------------------------------------------------
