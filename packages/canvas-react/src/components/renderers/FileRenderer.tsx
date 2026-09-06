@@ -23,8 +23,9 @@
 import { Suspense, lazy } from "react";
 
 import type { FileData } from "../../protocol/artifacts";
-import { resolveCanvasFileUrl } from "../../io/canvasAssets";
+import { resolveCanvasFileUrl, resolveCanvasPageUrl } from "../../io/canvasAssets";
 import { PageViewer } from "./PageViewer";
+import { TableRenderer } from "./TableRenderer";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import { useChrome, useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
@@ -52,7 +53,8 @@ function iconFor(mediaType: string | undefined, name: string): string {
 }
 
 export function FileRenderer({ artifact }: RendererProps<FileData>) {
-  const { path, name, mediaType, size, cover, grids, pageCount, excerpt, detail } = artifact.data;
+  const { path, name, mediaType, size, cover, grids, pageCount, workbook, chartPages, excerpt, detail } =
+    artifact.data;
   const assetBaseUrl = useCanvasStore((s) => s.assetBaseUrl);
   const pageBaseUrl = useCanvasStore((s) => s.pageBaseUrl);
   const labels = useLabels();
@@ -68,8 +70,14 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const previewHref = href ? `${href}&v=${encodeURIComponent(String(stamp))}` : null;
   const isImage = Boolean(mediaType?.startsWith("image/"));
   const isWord = `${path} ${name}`.toLowerCase().includes(".docx");
+  const isWorkbook = Boolean(workbook);
   const paged =
-    !isImage && !isWord && Boolean(pageBaseUrl) && typeof pageCount === "number" && pageCount > 0;
+    !isImage &&
+    !isWord &&
+    !isWorkbook &&
+    Boolean(pageBaseUrl) &&
+    typeof pageCount === "number" &&
+    pageCount > 0;
 
   const facts = [mediaType, formatSize(size), detail]
     .filter(Boolean)
@@ -78,6 +86,28 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const preview =
     isImage && href ? (
       <img className="cv-file__image" src={previewHref ?? undefined} alt={name} />
+    ) : isWorkbook && workbook ? (
+      // A workbook reads as a spreadsheet: the sheets in a read-only grid,
+      // and the rendered pages that carry charts underneath.
+      <div className="cv-file__workbook">
+        <TableRenderer
+          artifact={{ ...artifact, type: "table", data: workbook } as never}
+          readOnly
+        />
+        {pageBaseUrl && chartPages && chartPages.length > 0 && (
+          <div className="cv-file__charts">
+            {chartPages.map((n) => (
+              <img
+                key={n}
+                className="cv-file__chart"
+                src={resolveCanvasPageUrl(path, n, 1200, pageBaseUrl, stamp)}
+                alt={`${name} chart ${n}`}
+                loading="lazy"
+              />
+            ))}
+          </div>
+        )}
+      </div>
     ) : paged && pageBaseUrl ? (
       <PageViewer
         path={path}
@@ -104,7 +134,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
     ) : null;
 
   return (
-    <div className={"cv-file" + (paged ? " cv-file--pages" : "")}>
+    <div className={"cv-file" + (paged || isWorkbook ? " cv-file--pages" : "")}>
       {isWord && previewHref ? (
         <Suspense fallback={preview}>
           <DocxPreview
@@ -117,7 +147,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
       ) : (
         preview
       )}
-      {(!paged || (chrome.fileDownload && href)) && (
+      {(!(paged || isWorkbook) || (chrome.fileDownload && href)) && (
       <div className="cv-file__card">
         <span className="cv-file__icon" aria-hidden>
           {iconFor(mediaType, name)}

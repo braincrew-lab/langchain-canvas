@@ -524,7 +524,8 @@ def _table_preview_events(
 
 
 _FILE_DATA_KEYS = (
-    "path", "name", "mediaType", "size", "cover", "grids", "pageCount", "excerpt", "detail"
+    "path", "name", "mediaType", "size", "cover", "grids", "pageCount",
+    "workbook", "chartPages", "excerpt", "detail",
 )
 
 # Derived previews only — the stored file stays the truth. Bounded so a canvas
@@ -613,6 +614,8 @@ def _file_preview_data(
         "cover": None,
         "grids": None,
         "pageCount": None,
+        "workbook": None,
+        "chartPages": None,
         "excerpt": None,
         "detail": None,
     }
@@ -623,10 +626,16 @@ def _file_preview_data(
         data["cover"] = cover
         data["detail"] = detail
         data["pageCount"] = pages
-        # A workbook reads best as sheets at a glance; a paged document is
-        # read one page at a time through the host's page endpoint instead.
-        if cover is not None and path.lower().endswith(".xlsx"):
-            data["grids"] = _derive_grids(path, got.data, active)
+        # A workbook is read as a spreadsheet: its sheets go on the wire for
+        # a read-only grid, and the rendered pages that carry charts are named
+        # so the viewer can show them under the grid. Without a parsable
+        # workbook the grid sheets stay as the fallback.
+        if path.lower().endswith(".xlsx"):
+            data["workbook"] = _derive_workbook(got.data)
+            if data["workbook"] is not None:
+                data["chartPages"] = _derive_chart_pages(path, got.data, active)
+            elif cover is not None:
+                data["grids"] = _derive_grids(path, got.data, active)
         if cover is None:
             excerpt, fallback_detail = _derive_excerpt(path, got.data)
             data["excerpt"] = excerpt
@@ -667,6 +676,40 @@ def _derive_cover(
     if not isinstance(pages, int):
         return cover, None, None
     return cover, f"{pages} pages", pages
+
+
+def _derive_workbook(data: bytes) -> dict[str, Any] | None:
+    """The workbook's sheets in the table wire shape, or None when unreadable."""
+    from .xlsx_import import xlsx_to_sheets
+
+    try:
+        parsed = xlsx_to_sheets(data)
+    except Exception:  # noqa: BLE001 — an unreadable workbook keeps the file card
+        return None
+    return {
+        "columns": parsed.get("columns", []),
+        "rows": parsed.get("rows", []),
+        "sheet": parsed.get("sheets", []),
+    }
+
+
+def _derive_chart_pages(
+    path: str, data: bytes, converters: list[SourceConverter]
+) -> list[int] | None:
+    """Rendered page numbers that carry charts, via a converter's ``chart_pages``.
+
+    An optional converter extension: the host that renders office pages knows
+    which pages draw charts (vector shapes, not text). Absent, None.
+    """
+    converter = converter_for(path, converters)
+    finder = getattr(converter, "chart_pages", None)
+    if converter is None or finder is None:
+        return None
+    try:
+        pages = finder(data, path=path)
+    except Exception:  # noqa: BLE001 — charts are a bonus on the grid
+        return None
+    return [int(p) for p in pages] or None
 
 
 def _derive_grids(

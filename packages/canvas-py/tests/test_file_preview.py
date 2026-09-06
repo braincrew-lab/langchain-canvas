@@ -148,7 +148,8 @@ def test_reupload_patches_every_file_data_key() -> None:
     patch = next(e for e in events if e["type"] == "canvas.patch")["patch"]
     assert patch["size"] == len(PNG_BYTES) + 1
     assert set(patch) == {
-        "path", "name", "mediaType", "size", "cover", "grids", "pageCount", "excerpt", "detail"
+        "path", "name", "mediaType", "size", "cover", "grids", "pageCount",
+        "workbook", "chartPages", "excerpt", "detail",
     }
 
 
@@ -295,6 +296,9 @@ class _XlsxPages(_PptxPages):
 
     suffixes: tuple[str, ...] = (".xlsx",)
 
+    def chart_pages(self, data: bytes, *, path: str) -> list[int]:
+        return [2]
+
 
 def test_a_root_workbook_is_a_file_tab_not_an_editable_grid(tmp_path) -> None:
     """A workbook code published at the root is a finished deliverable: a
@@ -317,5 +321,8 @@ def test_a_root_workbook_is_a_file_tab_not_an_editable_grid(tmp_path) -> None:
     events = hydrate_events(store, "t", converters=[_XlsxPages()])
     created = {e["artifact"]["id"]: e["artifact"] for e in events if e["type"] == "canvas.create"}
     assert created["report.xlsx"]["type"] == "file"
-    assert created["report.xlsx"]["data"]["grids"]
+    workbook = created["report.xlsx"]["data"]["workbook"]
+    assert workbook["columns"] and workbook["rows"] == [{"total": 42}] or workbook["sheet"]
+    assert created["report.xlsx"]["data"]["chartPages"] == [2]
+    assert created["report.xlsx"]["data"]["grids"] is None
     assert created["sources/upload.xlsx"]["type"] == "table"
