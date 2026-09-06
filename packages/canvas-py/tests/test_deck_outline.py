@@ -22,10 +22,7 @@ def test_the_outline_names_every_element_with_its_id_size_and_text() -> None:
     })
     out = deck_outline(deck)
     assert out is not None
-    assert out.startswith(
-        "deck: 05_Connect — 2 slide(s), page 10 x 5.625 in (landscape, default), "
-        "template sources/x.pptx"
-    )
+    assert out.startswith("deck: 05_Connect — 2 slide(s), template sources/x.pptx")
     assert '[s1] 3 elements: e0 text 88px 54x12 "왜 지금 브레인크루 X 신한은행인가 — 아주' in out
     assert "…\"" in out  # the head is cut, never the whole title
     assert "e1 image 100x100 assets/x/a.jpg" in out
@@ -129,34 +126,3 @@ def test_a_projection_shows_only_the_asked_keys_and_teaches_unknown_ones() -> No
     taught = deck_projection(deck, "colour")
     assert taught.startswith("unknown field(s) colour")
     assert "color" in taught and "masterImage" in taught
-
-
-def test_the_outline_head_names_the_page_and_its_orientation() -> None:
-    from langchain_canvas.deck_outline import page_line
-
-    portrait = encode_slides("d", {
-        "page": {"widthIn": 8.27, "heightIn": 11.69},
-        "template": "sources/report.pptx",
-        "slides": [{"elements": [
-            {"id": "e0", "type": "text", "x": 5, "y": 5, "w": 90, "h": 6, "fontSize": 20,
-             "text": "제목"},
-        ]}],
-    })
-    out = deck_outline(portrait)
-    assert out is not None
-    assert out.startswith(
-        "deck: d — 1 slide(s), page 8.27 x 11.69 in (portrait), template sources/report.pptx"
-    )
-    landscape = encode_slides("d", {"page": {"widthIn": 13.333, "heightIn": 7.5}, "slides": []})
-    out = deck_outline(landscape)
-    assert out is not None
-    assert out.startswith("deck: d — 0 slide(s), page 13.333 x 7.5 in (landscape)")
-    assert "default" not in out.splitlines()[0]
-    # No page: the classic canvas, and the head says it is the default.
-    classic = encode_slides("d", {"slides": []})
-    out = deck_outline(classic)
-    assert out is not None
-    assert out.startswith("deck: d — 0 slide(s), page 10 x 5.625 in (landscape, default)")
-    assert page_line({"page": {"widthIn": 7.5, "heightIn": 7.5}}) == "page 7.5 x 7.5 in (square)"
-    # A malformed page falls back to the default rather than failing the outline.
-    assert page_line({"page": {"widthIn": "wide"}}) == "page 10 x 5.625 in (landscape, default)"

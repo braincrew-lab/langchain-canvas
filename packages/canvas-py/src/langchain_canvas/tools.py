@@ -56,7 +56,7 @@ from .converters import (
     default_converters,
     ensure_archive_within_limits,
 )
-from .deck_outline import deck_outline, deck_projection, page_line
+from .deck_outline import deck_outline, deck_projection
 from .document_lint import (
     format_document_warnings,
     is_document_path,
@@ -3114,14 +3114,11 @@ def create_deck_tools(
             extras.append(f"{charts_dropped} chart(s) dropped — no page renderer to draw them")
         carried = f" Also: {'; '.join(extras)}." if extras else ""
         return (
-            f"Copied {source} to {target} ({count} slide(s), {page_line(deck)}, "
-            f"{pictures} picture(s) under {ASSETS_PREFIX}{_deck_stem(target)}/, "
-            f"revision {commit.revision})."
+            f"Copied {source} to {target} ({count} slide(s), {pictures} picture(s) "
+            f"under {ASSETS_PREFIX}{_deck_stem(target)}/, revision {commit.revision})."
             f"{carried} Read {target}, then change its words with set_slide_texts, one slide "
             "per call — the fonts, colours and positions came from the original, so "
-            "changing the words keeps the look. New elements and new slides use this "
-            "page's percent coordinates; keep `page` as it is when you write the deck. "
-            "A box that grows takes the height "
+            "changing the words keeps the look. A box that grows takes the height "
             "its words need (mind "
             "the page bottom and what sits below it); a fixed box does not — when "
             "new words run longer than its placeholder, shorten them, set `autofit`, "

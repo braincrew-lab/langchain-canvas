@@ -16,7 +16,6 @@ from typing import Any
 
 from langchain_canvas.protocol.artifacts import Slide, SlideElement
 
-from .exporters import DEFAULT_SLIDE_PAGE_IN
 from .replay import display_title
 
 #: Elements named per slide before the line folds the rest into a count.
@@ -73,36 +72,6 @@ def _style_lines(slides: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def page_line(data: dict[str, Any]) -> str:
-    """The deck's page in one phrase: ``page 8.27 x 11.69 in (portrait)``.
-
-    A deck that carries no ``page`` is the classic 16:9 canvas, and the
-    phrase says so (``landscape, default``) — a model that reads the head of
-    the outline then knows which page its percent coordinates and font sizes
-    refer to before it places anything, and does not take 16:9 for granted
-    on a portrait upload.
-    """
-    width, height = DEFAULT_SLIDE_PAGE_IN
-    given = False
-    page = data.get("page")
-    if isinstance(page, dict):
-        got_w = page.get("widthIn", page.get("width_in"))
-        got_h = page.get("heightIn", page.get("height_in"))
-        if (
-            isinstance(got_w, (int, float))
-            and isinstance(got_h, (int, float))
-            and not isinstance(got_w, bool)
-            and not isinstance(got_h, bool)
-            and got_w > 0
-            and got_h > 0
-        ):
-            width, height, given = float(got_w), float(got_h), True
-    shape = "portrait" if height > width else "square" if height == width else "landscape"
-    if not given:
-        shape += ", default"
-    return f"page {width:g} x {height:g} in ({shape})"
-
-
 def _head(text: str) -> str:
     flat = " ".join(text.split())
     return flat if len(flat) <= _TEXT_HEAD else flat[: _TEXT_HEAD - 1] + "…"
@@ -150,7 +119,7 @@ def deck_outline(content: str) -> str | None:
     slides = [s for s in (data.get("slides") or []) if isinstance(s, dict)]
     title = envelope.get("title")
     name = title if isinstance(title, str) and title else display_title("deck")
-    head = f"deck: {name} — {len(slides)} slide(s), {page_line(data)}"
+    head = f"deck: {name} — {len(slides)} slide(s)"
     template = data.get("template")
     if isinstance(template, str):
         head += f", template {template}"
