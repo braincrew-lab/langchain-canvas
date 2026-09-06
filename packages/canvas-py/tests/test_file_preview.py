@@ -326,3 +326,27 @@ def test_a_root_workbook_is_a_file_tab_not_an_editable_grid(tmp_path) -> None:
     assert created["report.xlsx"]["data"]["chartPages"] == [2]
     assert created["report.xlsx"]["data"]["grids"] is None
     assert created["sources/upload.xlsx"]["type"] == "table"
+
+
+def test_a_host_can_open_uploaded_workbooks_read_only(tmp_path) -> None:
+    """``editable_workbooks=False``: an upload under ``sources/`` is a file tab
+    with its sheets on the wire, never an editable grid."""
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    book.active["A1"] = "x"
+    out = tmp_path / "u.xlsx"
+    book.save(out)
+    store = InMemoryCanvasStore()
+    commit = store.write_bytes("t", "sources/u.xlsx", out.read_bytes(), "upload", actor="human")
+
+    live = source_preview_events(
+        store, "t", "sources/u.xlsx", is_new=True, revision=commit.revision,
+        description="upload", editable_workbooks=False,
+    )
+    assert _create_event(live)["type"] == "file"
+    assert _create_event(live)["data"]["workbook"]["sheet"]
+
+    _PREVIEW_CACHE.clear()
+    replayed = hydrate_events(store, "t", editable_workbooks=False)
+    assert _create_event(replayed)["type"] == "file"

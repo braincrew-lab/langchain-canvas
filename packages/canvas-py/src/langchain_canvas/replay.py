@@ -348,6 +348,7 @@ def source_preview_events(
     revision: str,
     description: str,
     converters: list[SourceConverter] | None = None,
+    editable_workbooks: bool = True,
 ) -> list[dict]:
     """Wire events showing one stored file at a revision.
 
@@ -364,6 +365,8 @@ def source_preview_events(
     write at the canvas root. ``converters`` lets a host put its own page
     renderer (an office-to-PDF service, say) ahead of the defaults so a deck
     or document gets a cover and a page grid; absent, the defaults apply.
+    ``editable_workbooks=False`` opens an uploaded ``.xlsx`` as a read-only
+    file tab (its sheets on the wire) instead of an editable grid.
     """
     # An uploaded workbook opens as an editable spreadsheet, not a file card:
     # `xlsx_to_sheets` is the twin of the browser's reader, so the grid a person
@@ -376,8 +379,11 @@ def source_preview_events(
     # Only uploads: a workbook code published at the canvas root is a finished
     # deliverable, shown as itself (its own charts and formatting through the
     # host's page renderer) and never as an editable grid.
+    # A host that keeps workbooks read-only (``editable_workbooks=False``)
+    # shows an upload as a file tab too: the same grid, with editing off.
     if (
-        path.startswith(SOURCES_PREFIX)
+        editable_workbooks
+        and path.startswith(SOURCES_PREFIX)
         and path.lower().endswith(".xlsx")
         and not _has_working_copy(store, canvas_id, path)
     ):
@@ -771,6 +777,7 @@ def hydrate_events(
     title_for: Callable[[str], str] | None = None,
     meta_for: Callable[[str], dict[str, Any] | None] | None = None,
     converters: list[SourceConverter] | None = None,
+    editable_workbooks: bool = True,
 ) -> list[dict]:
     """Wire events reconstructing a canvas from its history, oldest commit first.
 
@@ -806,6 +813,7 @@ def hydrate_events(
                     revision=commit.revision,
                     description=commit.description,
                     converters=converters,
+                    editable_workbooks=editable_workbooks,
                 )
             else:
                 try:
