@@ -365,7 +365,8 @@ def _vector_pdf(pages: list[str]) -> bytes:
         objs.append(
             (
                 f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents {content_id} 0 R "
-                "/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+                "/Resources << /Font << /F1 "
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
             ).encode()
         )
         data = stream.encode()
