@@ -418,6 +418,9 @@ export interface CanvasChrome {
   /** The Download link on a file card — off when the host's own export
    *  control is the one download door. */
   fileDownload: boolean;
+  /** The version rail on a stored file's tab — off when the file is viewed
+   *  only and the host keeps version history elsewhere. */
+  fileVersions: boolean;
 }
 
 export const DEFAULT_CHROME: CanvasChrome = {
@@ -430,6 +433,7 @@ export const DEFAULT_CHROME: CanvasChrome = {
   docxStatus: true,
   fileFacts: true,
   fileDownload: true,
+  fileVersions: true,
 };
 
 const ChromeContext = createContext<{ labels: CanvasLabels; chrome: CanvasChrome }>({

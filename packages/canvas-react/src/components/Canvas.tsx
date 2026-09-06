@@ -322,6 +322,9 @@ function ArtifactView({
   const setRenderedHtml = useCanvasStore((s) => s.setRenderedHtml);
   const labels = useLabels();
   const chrome = useChrome();
+  // A stored file is viewed, not edited; a host that keeps version history
+  // elsewhere can leave the rail off for those tabs.
+  const showVersions = versions.length > 1 && (chrome.fileVersions || artifact.type !== "file");
   const [viewIndex, setViewIndex] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const shown = viewIndex === null ? artifact : versions[viewIndex];
@@ -360,7 +363,7 @@ function ArtifactView({
           </div>
           <div className="cv-header__actions">
             {chrome.undoRedo && <UndoRedo />}
-            {chrome.versions && versions.length > 1 && (
+            {chrome.versions && showVersions && (
               <VersionHistory
                 versions={versions}
                 index={viewIndex ?? versions.length - 1}
