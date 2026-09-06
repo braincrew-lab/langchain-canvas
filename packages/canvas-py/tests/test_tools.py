@@ -1737,6 +1737,175 @@ def test_set_slide_texts_overflow_arrives_with_the_check_and_the_eye() -> None:
     assert eye.calls[-1] == ("d.pptx", [2])
 
 
+# --- add_slide: one slide copied, nothing else touched ---------------------------------
+
+
+def _deck_tools(store: InMemoryCanvasStore, converters: list | None = None) -> dict[str, Any]:
+    from langchain_canvas.tools import create_deck_tools
+
+    tools = {t.name: t for t in create_canvas_tools(store, converters=converters)}
+    for t in create_deck_tools(store, converters=converters):
+        tools[t.name] = t
+    return tools
+
+
+def _portrait_two_slide_deck() -> str:
+    deck = json.loads(_two_slide_deck())
+    deck["data"]["page"] = {"widthIn": 8.27, "heightIn": 11.69}
+    return json.dumps(deck, ensure_ascii=False)
+
+
+def _written(store: InMemoryCanvasStore, tools: dict[str, Any], content: str) -> str:
+    tools["write_canvas"].func(path="d.slides.json", content=content, description="c",
+                               runtime=_runtime(thread_id="t1"))
+    return store.read("t1", "d.slides.json").revision
+
+
+def test_add_slide_copies_the_last_slide_to_the_end_by_default() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _two_slide_deck())
+    before = json.loads(store.read("t1", "d.slides.json").content)
+    reply = tools["add_slide"].func(
+        path="d.slides.json", description="one more", revision=revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith("Added slide 3 to d.slides.json, copied from slide 2 (3 slide(s) now")
+    assert "revision v2" in text and "set_slide_texts and edit_canvas" in text
+    after = json.loads(store.read("t1", "d.slides.json").content)
+    slides = after["data"]["slides"]
+    assert len(slides) == 3
+    assert slides[2] == before["data"]["slides"][1]
+    # The original slides are byte for byte what they were.
+    assert slides[:2] == before["data"]["slides"]
+    assert store.read("t1", "d.slides.json").revision == "v2"
+
+
+def test_add_slide_puts_the_copy_after_the_slide_asked_for() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _two_slide_deck())
+    reply = tools["add_slide"].func(
+        path="d.slides.json", description="cover twice", revision=revision, from_slide=1,
+        after=1, runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith("Added slide 2 to d.slides.json, copied from slide 1")
+    slides = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
+    original = json.loads(_two_slide_deck())["data"]["slides"]
+    assert [s["elements"][0]["text"] for s in slides] == ["표지 제목", "표지 제목", "본문 제목"]
+    assert slides[0] == original[0] and slides[2] == original[1]
+    # after=0 puts the copy first
+    first = tools["add_slide"].func(
+        path="d.slides.json", description="first", revision="v2", from_slide=3, after=0,
+        runtime=_runtime(thread_id="t1"),
+    )
+    assert (first if isinstance(first, str) else first[0]["text"]).startswith("Added slide 1 ")
+    slides = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
+    assert slides[0]["elements"][0]["text"] == "본문 제목" and len(slides) == 4
+
+
+def test_add_slide_gives_the_copy_its_words_and_leaves_the_source_alone() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _two_slide_deck())
+    reply = tools["add_slide"].func(
+        path="d.slides.json", description="plan page", revision=revision, from_slide=2,
+        texts={"e0": "향후 추진계획", "e2": "본문 한 줄"}, runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith(
+        "Added slide 3 to d.slides.json, copied from slide 2 with 2 text(s) set"
+    )
+    slides = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
+    new = {e["id"]: e for e in slides[2]["elements"]}
+    assert new["e0"]["text"] == "향후 추진계획" and new["e2"]["text"] == "본문 한 줄"
+    assert new["e0"]["fontSize"] == 32  # the look came along
+    old = {e["id"]: e for e in slides[1]["elements"]}
+    assert old["e0"]["text"] == "본문 제목" and old["e2"]["text"] == "자리표시자"
+    # Ids are per slide: the copy answers to the same ids, one slide further on.
+    tools["set_slide_texts"].func(
+        path="d.slides.json", slide=3, texts={"e2": "다시 쓴 본문"}, description="w",
+        revision="v2", runtime=_runtime(thread_id="t1"),
+    )
+    slides = json.loads(store.read("t1", "d.slides.json").content)["data"]["slides"]
+    assert slides[2]["elements"][1]["text"] == "다시 쓴 본문"
+    assert slides[1]["elements"][1]["text"] == "자리표시자"
+
+
+def test_add_slide_keeps_a_portrait_page_and_the_template() -> None:
+    pytest.importorskip("pptx")
+    store = _skin_store(8.27, 11.69)
+    tools = _deck_tools(store)
+    deck = json.loads(_portrait_two_slide_deck())
+    deck["data"]["template"] = "sources/brand.pptx"
+    revision = _written(store, tools, json.dumps(deck, ensure_ascii=False))
+    saved = json.loads(store.read("t1", "d.slides.json").content)["data"]
+    assert saved["page"] == {"widthIn": 8.27, "heightIn": 11.69}
+    reply = tools["add_slide"].func(
+        path="d.slides.json", description="one more", revision=revision,
+        runtime=_runtime(thread_id="t1"),
+    )
+    text = reply if isinstance(reply, str) else reply[0]["text"]
+    assert text.startswith("Added slide 3")
+    assert "page changed" not in text
+    after = json.loads(store.read("t1", "d.slides.json").content)["data"]
+    assert after["page"] == {"widthIn": 8.27, "heightIn": 11.69}
+    assert after["template"] == "sources/brand.pptx"
+    assert after["slides"][:2] == saved["slides"]
+    assert after["slides"][2]["elements"][0]["x"] == 5  # no re-fit, the same page
+
+
+def test_add_slide_refuses_a_wrong_slide_or_id_and_writes_nothing() -> None:
+    pytest.importorskip("pptx")
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store)
+    revision = _written(store, tools, _two_slide_deck())
+    run = tools["add_slide"].func
+    out_of_range = run(path="d.slides.json", description="d", revision=revision, from_slide=9,
+                       runtime=_runtime(thread_id="t1"))
+    assert out_of_range == (
+        "Error: from_slide 9 is out of range — the deck has 2 slide(s)."
+    )
+    bad_place = run(path="d.slides.json", description="d", revision=revision, after=5,
+                    runtime=_runtime(thread_id="t1"))
+    assert bad_place.startswith("Error: after 5 is out of range — 0 puts the copy first")
+    wrong_id = run(path="d.slides.json", description="d", revision=revision,
+                   texts={"nope": "x"}, runtime=_runtime(thread_id="t1"))
+    assert "slide 2 has no element 'nope'" in wrong_id and "e2 (text)" in wrong_id
+    a_shape = run(path="d.slides.json", description="d", revision=revision, from_slide=1,
+                  texts={"e1": "x"}, runtime=_runtime(thread_id="t1"))
+    assert "is a shape, not text" in a_shape
+    stale = run(path="d.slides.json", description="d", revision="v0",
+                runtime=_runtime(thread_id="t1"))
+    assert stale.startswith("Error:")
+    not_a_deck = run(path="a.md", description="d", revision=revision,
+                     runtime=_runtime(thread_id="t1"))
+    assert not_a_deck.startswith("Error: add_slide edits .slides.json decks")
+    assert store.read("t1", "d.slides.json").revision == revision
+    assert json.loads(store.read("t1", "d.slides.json").content) == json.loads(_two_slide_deck())
+
+
+def test_add_slide_arrives_with_the_deck_check_and_the_eye_like_any_save() -> None:
+    pytest.importorskip("pptx")
+    eye = _PptxEye()
+    store = InMemoryCanvasStore()
+    tools = _deck_tools(store, converters=[eye])
+    revision = _written(store, tools, _two_slide_deck())
+    reply = tools["add_slide"].func(
+        path="d.slides.json", description="overflow", revision=revision,
+        texts={"e2": "자리표시자보다 훨씬 긴 본문 " * 8}, runtime=_runtime(thread_id="t1"),
+    )
+    assert isinstance(reply, list)
+    assert reply[0]["text"].startswith("Added slide 3")
+    assert "Deck check" in reply[0]["text"] and "slide 3" in reply[0]["text"]
+    assert eye.calls[-1] == ("d.pptx", [3])
+
+
 # --- the export gate and the review ----------------------------------------------------
 
 
