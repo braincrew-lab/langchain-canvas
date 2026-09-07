@@ -290,25 +290,56 @@ def _parse_merge(merged: Any) -> tuple[str, dict[str, int]]:
     )
 
 
+def _anchor_box(
+    anchor: Any, columnlen: dict[int, int], rowlen: dict[int, int], *, border: int = 0
+) -> dict[str, int] | None:
+    """A drawing anchor as a Fortune px box (left/top/width/height), or None.
+
+    Columns and rows the sheet did not size use Fortune's defaults, the same
+    geometry the grid draws with, so a picture or chart lands where its
+    anchor cell is on screen. Fortune lays each row out as its height plus a
+    1px border, and each column as its width plus 1px (core:
+    ``rh_height += rowlen + 1``); ``border=1`` counts that. Pictures keep
+    ``border=0`` because the TypeScript twin and its golden still do — the
+    two readers move together when that drift is fixed.
+    """
+    start = getattr(anchor, "_from", None)
+    if start is None:
+        return None
+
+    def col_left(column: int) -> int:
+        return sum(columnlen.get(i, _DEFAULT_COL_PX) + border for i in range(column))
+
+    def row_top(row: int) -> int:
+        return sum(rowlen.get(i, _DEFAULT_ROW_PX) + border for i in range(row))
+
+    left = col_left(start.col) + _round((start.colOff or 0) / _EMU_PER_PX)
+    top = row_top(start.row) + _round((start.rowOff or 0) / _EMU_PER_PX)
+    extent = getattr(anchor, "ext", None)
+    width = _round(extent.cx / _EMU_PER_PX) if extent else 0
+    height = _round(extent.cy / _EMU_PER_PX) if extent else 0
+    end = getattr(anchor, "to", None)
+    if (not width or not height) and end is not None:
+        # A two-cell anchor sizes the drawing by the span from start to end.
+        width = col_left(end.col) - left
+        height = row_top(end.row) - top
+    return {
+        "left": max(0, _round(left)),
+        "top": max(0, _round(top)),
+        "width": max(16, _round(width or 100)),
+        "height": max(16, _round(height or 100)),
+    }
+
+
 def _sheet_images(
     worksheet: Any, columnlen: dict[int, int], rowlen: dict[int, int]
 ) -> list[dict[str, Any]]:
     """A worksheet's floating images as Fortune images (px position + data URL)."""
     placed = list(getattr(worksheet, "_images", []) or [])
-    if not placed:
-        return []
-
-    def col_left(column: int) -> int:
-        return sum(columnlen.get(i, _DEFAULT_COL_PX) for i in range(column))
-
-    def row_top(row: int) -> int:
-        return sum(rowlen.get(i, _DEFAULT_ROW_PX) for i in range(row))
-
     images: list[dict[str, Any]] = []
     for index, image in enumerate(placed):
-        anchor = getattr(image, "anchor", None)
-        start = getattr(anchor, "_from", None)
-        if start is None:
+        box = _anchor_box(getattr(image, "anchor", None), columnlen, rowlen)
+        if box is None:
             continue
         try:
             blob = image._data()
@@ -316,25 +347,66 @@ def _sheet_images(
             continue
         kind = (getattr(image, "format", None) or "png").lower()
         src = f"data:image/{kind};base64,{base64.b64encode(blob).decode('ascii')}"
-        left = col_left(start.col) + _round((start.colOff or 0) / _EMU_PER_PX)
-        top = row_top(start.row) + _round((start.rowOff or 0) / _EMU_PER_PX)
-        extent = getattr(anchor, "ext", None)
-        width = _round(extent.cx / _EMU_PER_PX) if extent else 0
-        height = _round(extent.cy / _EMU_PER_PX) if extent else 0
-        end = getattr(anchor, "to", None)
-        if (not width or not height) and end is not None:
-            # A two-cell anchor sizes the image by the span from start to end.
-            width = col_left(end.col) - left
-            height = row_top(end.row) - top
-        images.append({
-            "id": f"img_{index}",
-            "src": src,
-            "left": max(0, _round(left)),
-            "top": max(0, _round(top)),
-            "width": max(16, _round(width or 100)),
-            "height": max(16, _round(height or 100)),
-        })
+        images.append({"id": f"img_{index}", "src": src, **box})
     return images
+
+
+def xlsx_fit_to_one_page(data: bytes) -> bytes:
+    """A copy of the workbook whose every sheet prints on a single page.
+
+    LibreOffice prints a wide or tall sheet across several pages and draws
+    a chart on every page its cells touch — partly, and with the same chart
+    repeated — so no single page may carry the whole picture. Fit-to-page
+    (``fitToWidth=1``, ``fitToHeight=1``) makes each sheet one page, where
+    every chart is whole; the renderer scales the crop back up. The bytes
+    are deterministic for the same input (fixed document dates and zip
+    timestamps) so a host's content-hash render cache holds.
+    """
+    import io
+    import zipfile
+    from datetime import datetime
+
+    import openpyxl  # type: ignore[import-untyped]
+    from openpyxl.worksheet.properties import (  # type: ignore[import-untyped]
+        PageSetupProperties,
+    )
+
+    workbook = openpyxl.load_workbook(io.BytesIO(data))
+    for worksheet in workbook.worksheets:
+        worksheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        worksheet.page_setup.fitToWidth = 1
+        worksheet.page_setup.fitToHeight = 1
+    fixed = datetime(2000, 1, 1)
+    workbook.properties.created = fixed
+    workbook.properties.modified = fixed
+    saved = io.BytesIO()
+    workbook.save(saved)
+    source = zipfile.ZipFile(io.BytesIO(saved.getvalue()))
+    out = io.BytesIO()
+    with source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            stamped = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            stamped.compress_type = zipfile.ZIP_DEFLATED
+            target.writestr(stamped, source.read(info))
+    return out.getvalue()
+
+
+def _sheet_chart_boxes(
+    worksheet: Any, columnlen: dict[int, int], rowlen: dict[int, int]
+) -> list[dict[str, int]]:
+    """Where a worksheet's charts sit, as Fortune px boxes in anchor order.
+
+    The grid cannot draw a chart, so the host renders each one to a picture
+    and places it here (see ``replay``); the boxes are ordered top to bottom,
+    left to right — the order a printed sheet shows them in.
+    """
+    boxes: list[dict[str, int]] = []
+    for chart in list(getattr(worksheet, "_charts", []) or []):
+        box = _anchor_box(getattr(chart, "anchor", None), columnlen, rowlen, border=1)
+        if box is not None:
+            boxes.append(box)
+    boxes.sort(key=lambda box: (box["top"], box["left"]))
+    return boxes
 
 
 def _column_letter(index: int) -> str:
@@ -401,13 +473,11 @@ def _flatten(
     return columns, rows
 
 
-def xlsx_to_sheets(data: bytes) -> dict[str, Any]:
-    """An .xlsx workbook as Fortune sheets (rich) plus a flat first-sheet view.
+def xlsx_sheets_and_charts(data: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """``xlsx_to_sheets`` plus where the charts sit (px boxes, sheet by sheet).
 
-    Returns ``{"sheets": [...], "columns": [...], "rows": [...]}`` — the same
-    shape ``xlsxToSheets`` returns in the browser. Raises
-    :class:`~langchain_canvas.converters.MissingConverterDependencyError` when
-    ``openpyxl`` is absent.
+    The sheets dict is the wire shape the TypeScript twin also produces;
+    the chart boxes travel beside it so that shape stays untouched.
     """
     try:
         from openpyxl import load_workbook  # type: ignore[import-untyped]
@@ -426,6 +496,7 @@ def xlsx_to_sheets(data: bytes) -> dict[str, Any]:
     default_style = workbook._cell_styles[0] if workbook._cell_styles else None
 
     sheets: list[dict[str, Any]] = []
+    charts: list[dict[str, Any]] = []
     for index, worksheet in enumerate(workbook.worksheets):
         cached = values.worksheets[index]
         height, width = worksheet.max_row, worksheet.max_column
@@ -523,6 +594,8 @@ def xlsx_to_sheets(data: bytes) -> dict[str, Any]:
                        "rowlen": rowlen, "borderInfo": border_info},
             "images": _sheet_images(worksheet, columnlen, rowlen),
         })
+        for box in _sheet_chart_boxes(worksheet, columnlen, rowlen):
+            charts.append({"sheet": index, **box})
 
     first = workbook.worksheets[0] if workbook.worksheets else None
     first_covered: dict[tuple[int, int], tuple[int, int]] = {}
@@ -535,4 +608,16 @@ def xlsx_to_sheets(data: bytes) -> dict[str, Any]:
                         first_covered[(row, column)] = (entry["r"], entry["c"])
     first_values = values.worksheets[0] if first is not None else None
     columns, rows = _flatten(first, first_values, first_covered)
-    return {"sheets": sheets, "columns": columns, "rows": rows}
+    return {"sheets": sheets, "columns": columns, "rows": rows}, charts
+
+
+def xlsx_to_sheets(data: bytes) -> dict[str, Any]:
+    """An .xlsx workbook as Fortune sheets (rich) plus a flat first-sheet view.
+
+    Returns ``{"sheets": [...], "columns": [...], "rows": [...]}`` — the same
+    shape ``xlsxToSheets`` returns in the browser. Raises
+    :class:`~langchain_canvas.converters.MissingConverterDependencyError` when
+    ``openpyxl`` is absent.
+    """
+    parsed, _charts = xlsx_sheets_and_charts(data)
+    return parsed

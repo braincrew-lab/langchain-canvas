@@ -4,6 +4,16 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.46] — 2026-09-07
+
+### Added
+
+- A workbook's charts show inside the read-only grid, as pictures placed at their anchor cells. `PdfSourceConverter.chart_images` crops each chart area out of the rendered pages (the box LibreOffice draws around a chart, with colored marks inside), `xlsx_sheets_and_charts` reports where each chart sits in Fortune pixels, and the replay pairs the two in order. When the counts disagree the previous behavior stays: the pages that carry charts are listed under the grid. Python only; no npm change.
+
+### Fixed
+
+- Chart pictures count Fortune's 1px row and column borders, so a chart anchored fourteen rows down lands fourteen pixels lower — exactly where the cell is. Floating pictures keep the earlier geometry until the TypeScript reader and its golden move with them.
+
 ## [0.7.45] — 2026-09-07
 
 ### Added

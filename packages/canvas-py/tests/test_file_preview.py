@@ -404,3 +404,178 @@ def test_pdf_chart_pages_are_shape_pages_with_little_text() -> None:
 
     pages = PdfSourceConverter().chart_pages(_vector_pdf([empty, chart, table]), path="x.pdf")
     assert pages == [2]
+
+
+def _chart_page(x: int, y: int, w: int = 300, h: int = 200) -> str:
+    """A chart the way LibreOffice draws one: a stroked border, a white
+    chart area, and colored bars inside it (PDF y grows upward)."""
+    return (
+        f"0 0 0 RG {x} {y} {w} {h} re S "
+        f"1 1 1 rg {x + 1} {y + 1} {w - 2} {h - 2} re f "
+        f"0 0 1 rg {x + 30} {y + 20} 30 100 re f {x + 80} {y + 20} 30 150 re f"
+    )
+
+
+def test_pdf_chart_images_crop_each_chart_box() -> None:
+    """One chart box per chart, in reading order; a printed table yields none."""
+    from langchain_canvas.converters import PdfSourceConverter
+
+    header_fills = " ".join(f"0.84 0.89 0.94 rg 50 {y} 178 15 re f" for y in range(600, 800, 30))
+    two_charts = _chart_page(50, 500) + " " + _chart_page(50, 100, 250, 150)
+    table_only = header_fills + " 0 0 0 RG 50 300 200 2 re S"
+    crops = PdfSourceConverter().chart_images(
+        _vector_pdf([two_charts + " " + header_fills, table_only]), path="x.pdf"
+    )
+    assert [c["page"] for c in crops] == [1, 1]
+    # top to bottom: the chart at y=500 (top 842-700=142) comes first
+    first, second = (c["box"] for c in crops)
+    # a stroke's bounds reach half a line width past the rectangle
+    assert abs(first[0] - 50) <= 2 and abs(first[1] - 142) <= 2
+    assert abs(first[2] - 300) <= 2 and abs(first[3] - 200) <= 2
+    assert abs(second[0] - 50) <= 2 and abs(second[1] - 592) <= 2 and abs(second[2] - 250) <= 2
+    assert all(c["png"].startswith(b"\x89PNG") for c in crops)
+
+
+def test_pdf_chart_images_ignore_a_box_without_marks() -> None:
+    """A big white or bordered box with nothing colored inside is not a chart."""
+    from langchain_canvas.converters import PdfSourceConverter
+
+    empty_box = "0 0 0 RG 50 400 300 200 re S 1 1 1 rg 51 401 298 198 re f"
+    assert PdfSourceConverter().chart_images(_vector_pdf([empty_box]), path="x.pdf") == []
+
+
+def _chart_workbook() -> bytes:
+    import io
+
+    import openpyxl
+    from openpyxl.chart import BarChart, Reference
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "피벗"
+    ws.append(["구분", "문서 수"])
+    ws.append(["운영", 3])
+    ws.append(["개발", 1])
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=3))
+    ws.add_chart(chart, "A15")
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def test_workbook_chart_boxes_follow_the_anchor_cell() -> None:
+    from langchain_canvas.xlsx_import import xlsx_sheets_and_charts, xlsx_to_sheets
+
+    parsed, charts = xlsx_sheets_and_charts(_chart_workbook())
+    assert charts == [
+        # A15 with no sized rows: 14 default rows of 19px plus a 1px border
+        # each; openpyxl's default chart is 15cm x 7.5cm = 5400000 x 2700000 EMU.
+        {"sheet": 0, "left": 0, "top": 14 * 20, "width": 567, "height": 283}
+    ]
+    assert "charts" not in parsed["sheets"][0]
+    assert set(xlsx_to_sheets(_chart_workbook())) == {"sheets", "columns", "rows"}
+
+
+class _ChartCropper:
+    """A host converter that renders pages: crops for the charts it is told about."""
+
+    suffixes = (".xlsx",)
+
+    def __init__(self, crops: int) -> None:
+        self.crops = crops
+
+    def convert(self, data: bytes, *, path: str):  # pragma: no cover - not used here
+        raise AssertionError("text conversion is not part of this test")
+
+    def chart_images(self, data: bytes, *, path: str) -> list[dict]:
+        crop = {"page": 2, "box": [50, 100, 300, 200], "png": b"\x89PNG-crop"}
+        return [dict(crop) for _ in range(self.crops)]
+
+    def chart_pages(self, data: bytes, *, path: str) -> list[int]:
+        return [2]
+
+
+def test_workbook_charts_land_in_the_grid_as_pictures(tmp_path) -> None:
+    """One crop per chart: the sheet gets an image at the chart's anchor and
+    no chart pages are listed under the grid."""
+    from langchain_canvas.replay import _file_preview_data
+    from langchain_canvas.store import InMemoryCanvasStore
+
+    store = InMemoryCanvasStore()
+    commit = store.write_bytes("c1", "report.xlsx", _chart_workbook(), "chart")
+    data = _file_preview_data(store, "c1", "report.xlsx", commit.revision, [_ChartCropper(1)])
+    assert data is not None
+    images = data["workbook"]["sheet"][0]["images"]
+    assert [i["id"] for i in images] == ["chart_0"]
+    assert images[0]["src"].startswith("data:image/png;base64,")
+    box = (images[0]["left"], images[0]["top"], images[0]["width"], images[0]["height"])
+    assert box == (0, 280, 567, 283)
+    assert data["chartPages"] is None
+    assert "_charts" not in data["workbook"]
+
+
+def test_workbook_chart_count_mismatch_falls_back_to_chart_pages(tmp_path) -> None:
+    from langchain_canvas.replay import _file_preview_data
+    from langchain_canvas.store import InMemoryCanvasStore
+
+    store = InMemoryCanvasStore()
+    commit = store.write_bytes("c1", "report.xlsx", _chart_workbook(), "chart")
+    data = _file_preview_data(store, "c1", "report.xlsx", commit.revision, [_ChartCropper(2)])
+    assert data is not None
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert data["chartPages"] == [2]
+
+
+def test_pdf_chart_images_keep_side_by_side_charts_apart() -> None:
+    """Two charts on one row: the border and fill of each collapse into one
+    box per chart, not into each other's."""
+    from langchain_canvas.converters import PdfSourceConverter
+
+    pair = _chart_page(30, 400, 250, 180) + " " + _chart_page(310, 400, 250, 180)
+    crops = PdfSourceConverter().chart_images(_vector_pdf([pair]), path="x.pdf")
+    boxes = [c["box"] for c in crops]
+    assert len(boxes) == 2
+    assert abs(boxes[0][0] - 30) <= 2 and abs(boxes[1][0] - 310) <= 2
+    assert all(abs(b[2] - 250) <= 2 and abs(b[3] - 180) <= 2 for b in boxes)
+
+
+def test_pdf_chart_images_skip_a_chart_cut_by_the_page_edge() -> None:
+    """A box that leaves the page is a chart split across pages: not a crop."""
+    from langchain_canvas.converters import PdfSourceConverter
+
+    whole = _chart_page(30, 400, 250, 180)
+    cut = _chart_page(450, 100, 300, 180)  # runs past x=595
+    crops = PdfSourceConverter().chart_images(_vector_pdf([whole + " " + cut]), path="x.pdf")
+    assert len(crops) == 1 and abs(crops[0]["box"][0] - 30) <= 2
+
+
+def test_pdf_chart_crop_is_rendered_at_reading_size() -> None:
+    """A crop is about ``chart_crop_width`` px wide whatever the page scale."""
+    import io
+
+    from PIL import Image
+
+    from langchain_canvas.converters import PdfSourceConverter
+
+    crops = PdfSourceConverter().chart_images(_vector_pdf([_chart_page(50, 300)]), path="x.pdf")
+    width, height = Image.open(io.BytesIO(crops[0]["png"])).size
+    assert 900 <= width <= 1000
+    assert 560 <= height <= 700
+
+
+def test_fit_to_one_page_copy_is_deterministic_and_sets_the_flags() -> None:
+    import io
+
+    import openpyxl
+
+    from langchain_canvas.xlsx_import import xlsx_fit_to_one_page
+
+    first = xlsx_fit_to_one_page(_chart_workbook())
+    second = xlsx_fit_to_one_page(_chart_workbook())
+    assert first == second
+    sheet = openpyxl.load_workbook(io.BytesIO(first)).active
+    assert sheet.sheet_properties.pageSetUpPr.fitToPage is True
+    assert (sheet.page_setup.fitToWidth, sheet.page_setup.fitToHeight) == (1, 1)
+    assert len(sheet._charts) == 1
