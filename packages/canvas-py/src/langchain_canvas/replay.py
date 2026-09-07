@@ -639,7 +639,13 @@ def _file_preview_data(
         if path.lower().endswith(".xlsx"):
             data["workbook"] = _derive_workbook(got.data)
             if data["workbook"] is not None:
-                data["chartPages"] = _derive_chart_pages(path, got.data, active)
+                # Charts go into the grid as pictures at their anchors when the
+                # host can crop each one from the rendered pages; otherwise
+                # the pages that carry charts show under the grid.
+                boxes = data["workbook"].pop("_charts", [])
+                crops = _derive_chart_images(path, got.data, active) if boxes else None
+                if not _place_chart_images(data["workbook"], boxes, crops):
+                    data["chartPages"] = _derive_chart_pages(path, got.data, active)
             elif cover is not None:
                 data["grids"] = _derive_grids(path, got.data, active)
         if cover is None:
@@ -686,16 +692,18 @@ def _derive_cover(
 
 def _derive_workbook(data: bytes) -> dict[str, Any] | None:
     """The workbook's sheets in the table wire shape, or None when unreadable."""
-    from .xlsx_import import xlsx_to_sheets
+    from .xlsx_import import xlsx_sheets_and_charts
 
     try:
-        parsed = xlsx_to_sheets(data)
+        parsed, charts = xlsx_sheets_and_charts(data)
     except Exception:  # noqa: BLE001 — an unreadable workbook keeps the file card
         return None
     return {
         "columns": parsed.get("columns", []),
         "rows": parsed.get("rows", []),
         "sheet": parsed.get("sheets", []),
+        # Where the charts sit (px boxes per sheet); popped before the wire.
+        "_charts": charts,
     }
 
 
@@ -716,6 +724,63 @@ def _derive_chart_pages(
     except Exception:  # noqa: BLE001 — charts are a bonus on the grid
         return None
     return [int(p) for p in pages] or None
+
+
+def _derive_chart_images(
+    path: str, data: bytes, converters: list[SourceConverter]
+) -> list[dict[str, Any]] | None:
+    """Each chart as a PNG crop, via a converter's ``chart_images``; else None.
+
+    The same optional extension family as ``chart_pages``: the host that
+    renders office files to PDF crops the chart areas out of those pages.
+    """
+    converter = converter_for(path, converters)
+    cropper = getattr(converter, "chart_images", None)
+    if converter is None or cropper is None:
+        return None
+    try:
+        # A print copy with every sheet on one page: no chart is cut by a
+        # page break, and none is drawn twice.
+        from .xlsx_import import xlsx_fit_to_one_page
+
+        return list(cropper(xlsx_fit_to_one_page(data), path=path))
+    except Exception:  # noqa: BLE001 — charts are a bonus on the grid
+        return None
+
+
+def _place_chart_images(
+    workbook: dict[str, Any], boxes: list[dict[str, Any]], crops: list[dict[str, Any]] | None
+) -> bool:
+    """Put one crop per chart box into the sheets' ``images``; True when done.
+
+    Boxes come from the workbook (sheet by sheet, top to bottom) and crops
+    from the rendered pages in the same order, so they pair by position. A
+    count mismatch means the pairing cannot be trusted: nothing is placed and
+    the caller falls back to whole chart pages under the grid.
+    """
+    if not boxes or not crops or len(boxes) != len(crops):
+        return False
+    sheets = workbook.get("sheet") or []
+    for number, (box, crop) in enumerate(zip(boxes, crops, strict=True)):
+        try:
+            sheet = sheets[int(box["sheet"])]
+        except (IndexError, KeyError, TypeError, ValueError):
+            return False
+        png = crop.get("png") or b""
+        if not png:
+            return False
+        images = sheet.setdefault("images", [])
+        images.append(
+            {
+                "id": f"chart_{number}",
+                "src": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+                "left": box["left"],
+                "top": box["top"],
+                "width": box["width"],
+                "height": box["height"],
+            }
+        )
+    return True
 
 
 def _derive_grids(
