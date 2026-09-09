@@ -1,0 +1,421 @@
+[
+  [
+    "heading",
+    1,
+    [
+      {
+        "text": "협업 제안서",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "para",
+    [
+      {
+        "text": "본 문서는 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "브레인크루",
+        "bold": true,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "와 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "신한은행",
+        "bold": false,
+        "italic": true,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "의 협업 범위를 정리한다. 이어지는 줄은 같은 문단이다.",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "para",
+    [
+      {
+        "text": "첫 줄\n둘째 줄은 줄바꿈 뒤에 온다.",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "para",
+    [
+      {
+        "text": "굵게 기울임",
+        "bold": true,
+        "italic": true,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": " 그리고 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "취소선",
+        "bold": false,
+        "italic": false,
+        "strike": true,
+        "code": false
+      },
+      {
+        "text": " 그리고 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "코드",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": true
+      },
+      {
+        "text": " 그리고 [링크](https://x) 그리고 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "밑줄 굵게",
+        "bold": true,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": " 와 ",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": "밑줄 기울임",
+        "bold": false,
+        "italic": true,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": ".",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "heading",
+    2,
+    [
+      {
+        "text": "일정",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "table",
+    [
+      [
+        {
+          "runs": [
+            {
+              "text": "단계",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "center"
+        },
+        {
+          "runs": [
+            {
+              "text": "기간",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "right"
+        },
+        {
+          "runs": [
+            {
+              "text": "담당",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": null
+        }
+      ],
+      [
+        {
+          "runs": [
+            {
+              "text": "기획",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "center"
+        },
+        {
+          "runs": [
+            {
+              "text": "2주",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "right"
+        },
+        {
+          "runs": [
+            {
+              "text": "브레인크루",
+              "bold": true,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": null
+        }
+      ],
+      [
+        {
+          "runs": [
+            {
+              "text": "개발",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "center"
+        },
+        {
+          "runs": [
+            {
+              "text": "6주",
+              "bold": false,
+              "italic": false,
+              "strike": false,
+              "code": false
+            }
+          ],
+          "align": "right"
+        },
+        {
+          "runs": [
+            {
+              "text": "미정",
+              "bold": false,
+              "italic": false,
+              "strike": true,
+              "code": false
+            }
+          ],
+          "align": null
+        }
+      ]
+    ],
+    true
+  ],
+  [
+    "heading",
+    3,
+    [
+      {
+        "text": "항목",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "numbered",
+    [
+      {
+        "text": "첫째 항목",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    0
+  ],
+  [
+    "numbered",
+    [
+      {
+        "text": "둘째 항목",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    0
+  ],
+  [
+    "numbered",
+    [
+      {
+        "text": "하위 번호",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    1
+  ],
+  [
+    "bullet",
+    [
+      {
+        "text": "항목 A",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    0
+  ],
+  [
+    "bullet",
+    [
+      {
+        "text": "하위 항목",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    1
+  ],
+  [
+    "bullet",
+    [
+      {
+        "text": "더 깊은 항목",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ],
+    2
+  ],
+  [
+    "heading",
+    4,
+    [
+      {
+        "text": "인용",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "quote",
+    [
+      {
+        "text": "인용문",
+        "bold": true,
+        "italic": false,
+        "strike": false,
+        "code": false
+      },
+      {
+        "text": " 둘째 줄",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ],
+  [
+    "code",
+    "def f():\n    return 1"
+  ],
+  [
+    "rule"
+  ],
+  [
+    "image",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  ],
+  [
+    "para",
+    [
+      {
+        "text": "끝.",
+        "bold": false,
+        "italic": false,
+        "strike": false,
+        "code": false
+      }
+    ]
+  ]
+]

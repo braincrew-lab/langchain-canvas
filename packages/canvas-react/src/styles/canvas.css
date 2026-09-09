@@ -411,13 +411,17 @@
 .cv-word { background: #edeef1; padding: 28px 16px; min-height: 100%; }
 .cv-word .cv-edit-toolbar { max-width: 816px; margin: 0 auto 12px; }
 .cv-word__page {
+  /* The page the Word doors declare (U6): Letter at 96 dpi, 1 in on every
+     side, on a border-box so the text column is 816 - 2 x 96 = 624 px =
+     6.5 in — the 9360-twip grid the file's tables are sized to. */
+  box-sizing: border-box;
   width: 816px;
   max-width: 100%;
   margin: 0 auto;
   background: #fff;
   color: #1f2328;
-  padding: 76px 88px;
-  min-height: 1040px;
+  padding: 96px;
+  min-height: 1056px;
   border-radius: 2px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14), 0 8px 30px rgba(0, 0, 0, 0.1);
 }
@@ -677,7 +681,7 @@
 .cv-free__guide--v { top: 0; bottom: 0; width: 1px; }
 .cv-free__guide--h { left: 0; right: 0; height: 1px; }
 .cv-free__el.is-selected { outline: 1.5px solid var(--cv-accent); outline-offset: 1px; }
-.cv-free__text { width: 100%; height: 100%; outline: none; overflow: hidden; line-height: 1.3; }
+.cv-free__text { width: 100%; height: 100%; outline: none; overflow: hidden; }
 .cv-free__img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .cv-free__table td { position: relative; }
 .cv-free__table td[contenteditable="true"] { outline: 1.5px solid var(--cv-accent); outline-offset: -1px; cursor: text; }

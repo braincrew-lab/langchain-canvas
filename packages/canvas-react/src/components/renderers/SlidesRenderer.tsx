@@ -14,8 +14,7 @@ import { defaultTextColor, resolveElements } from "../../client/slideElements";
 import { useArtifactPatch } from "../../hooks/useArtifactPatch";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import type { RendererProps } from "../../registry/registry";
-import { boxHeightPct } from "../../client/slideText";
-import { FittedText, FreeSlide, rotationStyle, shapeStyle, SlideTable, textStyle } from "./FreeSlide";
+import { FittedText, FreeSlide, rotationStyle, shapeStyle, SlideTable, textBoxStyle, textStyle } from "./FreeSlide";
 import { deckPage, fontScaleFor, pageAspect } from "../../client/slidePage";
 import { useLabels } from "../chrome";
 
@@ -222,12 +221,14 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
                 <div style={{ position: "absolute", inset: `${s.padding ?? 0}%` }}>
                 {resolveElements(s, page).map((el) =>
                   el.type === "text" ? (
-                    <FittedText
+                    // The same box + body shape as the main stage (`.cv-free__el` > `.cv-free__text`),
+                    // so the box carries the ink guard and the body its leading on both surfaces.
+                    <div
                       key={el.id}
-                      el={el}
-                      scale={thumbBox.scale}
-                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, overflow: "hidden", ...textStyle(el, thumbBox.scale, page), ...rotationStyle(el), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }), height: `${boxHeightPct(el, page)}%` }}
-                    />
+                      style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, overflow: "hidden", ...textBoxStyle(el, thumbBox.scale, page), ...rotationStyle(el), ...(el.color ? null : { color: s.textColor ?? defaultTextColor(s.background) }) }}
+                    >
+                      <FittedText el={el} scale={thumbBox.scale} className="cv-free__text" style={textStyle(el, thumbBox.scale, page)} />
+                    </div>
                   ) : el.type === "shape" ? (
                     <div key={el.id} style={{ position: "absolute", left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, color: s.textColor ?? defaultTextColor(s.background), ...shapeStyle(el, thumbBox.scale), ...rotationStyle(el), height: `${el.h}%` }} />
                   ) : el.type === "table" ? (
@@ -325,7 +326,7 @@ export function SlidesRenderer({ artifact }: RendererProps<SlidesData>) {
             <div className="cv-free" style={slide.padding ? { inset: `${slide.padding}%` } : undefined}>
               {resolveElements(slide, page).map((el) =>
                 el.type === "text" ? (
-                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, ...rotationStyle(el) }}>
+                  <div key={el.id} className="cv-free__el" style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, ...textBoxStyle(el, presentBox.scale, page), ...rotationStyle(el) }}>
                     <FittedText el={el} scale={presentBox.scale} className="cv-free__text" style={textStyle(el, presentBox.scale, page)} />
                   </div>
                 ) : el.type === "shape" ? (

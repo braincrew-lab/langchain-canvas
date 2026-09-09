@@ -37,13 +37,15 @@ import math
 from dataclasses import dataclass
 
 from .protocol.artifacts import Slide, SlideElement, SlidePage
+from .slide_text import BULLET_PREFIX as _BULLET_PREFIX
+from .slide_text import METRIC_DPI as _DPI
 
 # The classic deck page: 16:9 at 96 dpi (10 x 5.625 in). Geometry is percent
 # of the page and ``fontSize`` is px inside it, so a line box converts to
 # percent through the page's own pixel size — which is why the page travels
-# with the slide instead of being assumed here.
+# with the slide instead of being assumed here. The density is the one
+# source ``slide_text`` defines, so layout and text metric never diverge.
 DEFAULT_PAGE_IN = (10.0, 5.625)
-_DPI = 96.0
 
 FONT_DISPLAY = 48.0
 FONT_TITLE = 38.0
@@ -54,8 +56,10 @@ TITLE_RAMP = (FONT_TITLE, 30.0, 24.0)
 #: A cover line shrinks the same way.
 DISPLAY_RAMP = (FONT_DISPLAY, FONT_TITLE, 30.0)
 
-#: Line box over font size. The renderer, the print sheet, and PowerPoint all
-#: sit near this, so a box this tall holds its text at every destination.
+#: Line box over font size — the derived layout's per-line budget, held above
+#: ``slide_text.DEFAULT_LINE_HEIGHT`` (the leading the surfaces draw) so a
+#: derived box has room for its lines. A layout budget only: no surface draws
+#: this value as its leading.
 LINE_HEIGHT = 1.35
 #: Space between bullets, as a multiple of the line box. The floor is what
 #: makes a body step count as comfortable; the ceiling stops a two-bullet
@@ -88,9 +92,11 @@ _COVER_SUBTITLE_SHARE = 0.22
 _COLUMN_WIDTH = 42.0
 _COLUMN_RIGHT_LEFT = 52.0
 
-#: What a derived bullet line starts with. The pptx export reads it back
-#: off the line to draw a real list bullet instead of a literal glyph.
-BULLET_PREFIX = "• "
+#: What a derived bullet line starts with. The pptx export reads it back off
+#: the line to draw a real list bullet instead of a literal glyph. One source:
+#: ``slide_text`` (the estimator hangs a bullet body by it too); re-exported
+#: here for the writer and the deck check.
+BULLET_PREFIX = _BULLET_PREFIX
 #: Above this code point a glyph is about an em wide (Hangul, CJK, kana,
 #: fullwidth forms, emoji); below it, about half. Crude next to a real font
 #: metric, but it only has to decide *how many lines*, and both twins have to

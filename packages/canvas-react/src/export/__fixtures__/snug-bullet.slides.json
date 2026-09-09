@@ -1,0 +1,28 @@
+{
+  "type": "slides",
+  "title": "snug-bullet-repro",
+  "data": {
+    "slides": [
+      {
+        "elements": [
+          {
+            "id": "snug",
+            "type": "text",
+            "x": 5, "y": 5, "w": 12.5, "h": 6,
+            "text": "• 가나다라마",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR"
+          },
+          {
+            "id": "plain_snug",
+            "type": "text",
+            "x": 5, "y": 20, "w": 12.5, "h": 6,
+            "text": "가나다라마바",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -18,6 +18,8 @@
  * the frame; `allow-modals` permits the print dialog. `srcdoc` is used instead of
  * `document.write` so the content is parsed inertly.
  */
+import { snugLineWidth } from "../client/slideText";
+
 /** How much wider than its box a one-line text may run before fitting gives
  *  up and lets it wrap — the print twin of the renderer's snug fit. */
 const SNUG_MAX_OVERFLOW = 1.22;
@@ -31,15 +33,29 @@ const SNUG_MAX_OVERFLOW = 1.22;
  * the sandboxed frame's document — the frame itself executes no scripts,
  * which is the point of the sandbox.
  */
-function fitSnugLines(doc: Document): void {
-  const context = document.createElement("canvas").getContext("2d");
+export function fitSnugLines(doc: Document): void {
+  // The measuring canvas is the sheet's own document's: the faces a sheet
+  // draws with belong to its document, and a host canvas would measure with
+  // the host's faces or a fallback the frame never draws.
+  const context = doc.createElement("canvas").getContext("2d");
   if (!context) return;
   doc.querySelectorAll<HTMLElement>("[data-snug]").forEach((node) => {
     const computed = doc.defaultView?.getComputedStyle(node);
     if (!computed) return;
     context.font = `${computed.fontWeight} ${computed.fontSize} ${computed.fontFamily}`;
-    const needed = context.measureText(node.textContent ?? "").width;
-    const box = node.clientWidth;
+    // A bullet one-liner is drawn as the sheet's fixed `.p-bullet__marker`
+    // plus its body (`slidesToPrintHtml`), so that is what is measured — not
+    // the marker glyph's own advance, which is narrower than the marker and
+    // left the drawn line wider than the box.
+    const marker = node.querySelector<HTMLElement>(".p-bullet__marker");
+    const paragraph = marker
+      ? { bullet: true, text: (marker.parentElement?.textContent ?? "").slice((marker.textContent ?? "").length) }
+      : { bullet: false, text: node.textContent ?? "" };
+    const needed = snugLineWidth(paragraph, parseFloat(computed.fontSize), (piece) => context.measureText(piece).width);
+    // The box's used width, fractional: `clientWidth` rounds to whole px, and
+    // a fit computed on a rounded-up width draws up to half a pixel past the box.
+    const used = parseFloat(computed.width);
+    const box = Number.isFinite(used) && used > 0 ? used : node.clientWidth;
     if (box > 0 && needed > box && needed <= box * SNUG_MAX_OVERFLOW) {
       node.style.whiteSpace = "nowrap";
       node.style.fontSize = `${parseFloat(computed.fontSize) * (box / needed)}px`;
@@ -47,31 +63,56 @@ function fitSnugLines(doc: Document): void {
   });
 }
 
-export function printToPdf(html: string): void {
+/**
+ * Build the sandboxed print frame for `html` and get it ready to print: the
+ * frame is appended, its sheet loads, the sheet's own faces finish loading
+ * (`document.fonts.ready` of the FRAME, after a forced layout so the faces
+ * the sheet uses have been asked for), and the snug one-liners are fitted
+ * with the frame's canvas. A fixed beat used to stand in for the font wait
+ * and fitted a sheet whose face had not arrived with a fallback's advances.
+ * Resolves with the frame once that is done — `printToPdf` prints it; the
+ * print gate measures it. Rejects when the frame yields no window.
+ */
+export function preparePrintFrame(html: string): Promise<HTMLIFrameElement> {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
   Object.assign(iframe.style, { position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0" });
+  return new Promise((resolve, reject) => {
+    iframe.onload = () => {
+      const win = iframe.contentWindow;
+      if (!win) {
+        iframe.remove();
+        reject(new Error("the print frame has no window"));
+        return;
+      }
+      const sheet = win.document;
+      void sheet.body?.offsetHeight; // lay the sheet out so its faces start loading
+      void sheet.fonts.ready.then(() => {
+        fitSnugLines(sheet);
+        resolve(iframe);
+      });
+    };
+    iframe.srcdoc = html;
+    document.body.appendChild(iframe);
+  });
+}
 
-  const cleanup = () => setTimeout(() => iframe.remove(), 1000);
-  iframe.onload = () => {
-    const win = iframe.contentWindow;
-    if (!win) {
-      iframe.remove();
-      return;
-    }
-    win.addEventListener("afterprint", cleanup);
-    // A beat to lay out fonts/images before printing.
-    setTimeout(() => {
+export function printToPdf(html: string): void {
+  void preparePrintFrame(html)
+    .then((iframe) => {
+      const win = iframe.contentWindow;
+      if (!win) {
+        iframe.remove();
+        return;
+      }
+      win.addEventListener("afterprint", () => setTimeout(() => iframe.remove(), 1000));
       try {
-        fitSnugLines(win.document);
         win.focus();
         win.print();
       } catch {
         iframe.remove();
       }
-    }, 200);
-  };
-  iframe.srcdoc = html;
-  document.body.appendChild(iframe);
+    })
+    .catch(() => undefined);
 }

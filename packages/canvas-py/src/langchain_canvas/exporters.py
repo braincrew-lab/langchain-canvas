@@ -30,7 +30,7 @@ from .converters import ensure_archive_within_limits
 from .protocol.artifacts import Slide, SlideElement, SlidePage, SlidesData
 from .slide_layout import BULLET_PREFIX, resolve_elements
 from .slide_table import table_grid
-from .slide_text import fit_scale, grown_height_pct
+from .slide_text import BULLET_HANG_EM, fit_scale, grown_height_pct
 from .table_merge import merge_rows_into_sheet
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -622,6 +622,14 @@ def _blocks_to_docx(
         ) from exc
 
     document = Document()
+    # The page, declared in the file (U6): Letter with 1 in on every side.
+    # python-docx's default template leaves the side margins at 1.25 in and
+    # unstated; the reader derives the text column from the section
+    # (document_ops.section_text_width_emu), the table grid below is sized
+    # from it, and the screen's Word page draws the same 6.5 in column.
+    section = document.sections[0]
+    section.left_margin = section.right_margin = Inches(1)
+    section.top_margin = section.bottom_margin = Inches(1)
     for block in blocks:
         kind = block[0]
         if kind == "heading":
@@ -651,8 +659,8 @@ def _blocks_to_docx(
         elif kind == "image":
             try:
                 document.add_picture(io.BytesIO(block[1]), width=Inches(6))
-            except Exception:  # noqa: BLE001 — corrupt image data; keep the document
-                continue
+            except Exception as exc:  # noqa: BLE001 — reader libraries raise varied errors
+                raise ValueError("DOCX image: unsupported or invalid image data") from exc
 
     out = io.BytesIO()
     document.save(out)
@@ -797,6 +805,8 @@ def _markdown_blocks(text: str) -> list[tuple[Any, ...]]:
                 blocks.append(("image", data))
             elif image.group(1):
                 blocks.append(("para", [_Run(image.group(1), False, False)]))
+            elif image.group(2).lower().startswith("data:image/"):
+                raise ValueError("DOCX image: unsupported or invalid data URI")
             index += 1
             continue
         if (
@@ -963,9 +973,8 @@ def _lay_out_cells(
     return placed, max(n_rows, len(rows)), n_cols
 
 
-#: The width Word gives a table on its default page (letter, 1in margins),
-#: in twips — what a cell's percent width is a percent *of*.
-_PAGE_GRID_TWIPS = 9360
+#: EMU per twip — the grid is written in twips, the section measured in EMU.
+_EMU_PER_TWIP = 635
 
 
 def _add_table(document: Any, rows: list[list[Any]], has_header: bool) -> None:
@@ -1020,20 +1029,115 @@ def _add_table(document: Any, rows: list[list[Any]], has_header: bool) -> None:
     # survive merges. Only when the source stated any — an unstated table
     # keeps Word's own autofit.
     if column_pct:
+        # A percent is a percent of the text column the file's own section
+        # declares (U6) — not of a page the file never stated. A viewer that
+        # draws the grid as written (LibreOffice does) then keeps the table
+        # inside the column.
+        from .document_ops import section_text_width_emu
+
+        text_width_twips = section_text_width_emu(document.sections[0]) // _EMU_PER_TWIP
         grid_columns = table._tbl.tblGrid.findall(qn("w:gridCol"))
         stated = sum(column_pct.values())
         remainder = max(0.0, 100.0 - stated) / max(1, n_cols - len(column_pct))
         for index, grid_column in enumerate(grid_columns[:n_cols]):
             pct = column_pct.get(index, remainder)
-            grid_column.set(qn("w:w"), str(int(_PAGE_GRID_TWIPS * pct / 100.0)))
+            grid_column.set(qn("w:w"), str(int(text_width_twips * pct / 100.0)))
         table.autofit = False
+        _square_cells_to_grid(table)
+    _indent_table_to_the_column_edge(table)
+
+
+# Word's own left/right cell margin when a table style states none (twips).
+_WORD_DEFAULT_CELL_MARGIN_TWIPS = 108
+# ECMA-376 CT_TblPr child order (python-docx keeps no public copy of it).
+_TBL_PR_SEQUENCE = (
+    "w:tblStyle",
+    "w:tblpPr",
+    "w:tblOverlap",
+    "w:bidiVisual",
+    "w:tblStyleRowBandSize",
+    "w:tblStyleColBandSize",
+    "w:tblW",
+    "w:jc",
+    "w:tblCellSpacing",
+    "w:tblInd",
+    "w:tblBorders",
+    "w:shd",
+    "w:tblLayout",
+    "w:tblCellMar",
+    "w:tblLook",
+    "w:tblCaption",
+    "w:tblDescription",
+    "w:tblPrChange",
+)
+
+
+def _tbl_pr_child(tbl_pr: Any, tag: str, **attrs: str) -> None:
+    """Set ``tag`` (``w:tblW``, ``w:tblInd``…) on a ``tblPr``, inserting it in
+    schema order when the table has none yet."""
+    from docx.oxml import OxmlElement  # type: ignore[import-untyped]
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    element = tbl_pr.find(qn(tag))
+    if element is None:
+        element = OxmlElement(tag)
+        tbl_pr.insert_element_before(element, *_TBL_PR_SEQUENCE[_TBL_PR_SEQUENCE.index(tag) + 1 :])
+    for name, value in attrs.items():
+        element.set(qn(f"w:{name}"), value)
+
+
+def _square_cells_to_grid(table: Any) -> None:
+    """One width, three ways: every cell's ``tcW`` is the sum of its grid
+    columns and ``tblW`` is their total. Word lays a fixed table out from the
+    cells, not the grid — python-docx's default ``tcW`` (equal shares) would
+    have overruled a 25/25/50 grid there (docx-final D2)."""
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+    from docx.shared import Twips  # type: ignore[import-untyped]
+
+    tbl = table._tbl
+    grid = [int(column.get(qn("w:w"))) for column in tbl.tblGrid.findall(qn("w:gridCol"))]
+    for row in tbl.tr_lst:
+        start = 0
+        for cell in row.tc_lst:
+            cell.width = Twips(sum(grid[start : start + cell.grid_span]))
+            start += cell.grid_span
+    _tbl_pr_child(tbl.tblPr, "w:tblW", w=str(sum(grid)), type="dxa")
+
+
+def _left_cell_margin_twips(table: Any) -> int:
+    """The table style's left cell margin (``tblCellMar/left``, inherited),
+    Word's default when no style states one."""
+    from docx.oxml.ns import qn  # type: ignore[import-untyped]
+
+    style = table.style
+    while style is not None:
+        left = style.element.find(f"{qn('w:tblPr')}/{qn('w:tblCellMar')}/{qn('w:left')}")
+        if left is not None and left.get(qn("w:type"), "dxa") == "dxa":
+            return int(left.get(qn("w:w")))
+        style = style.base_style
+    return _WORD_DEFAULT_CELL_MARGIN_TWIPS
+
+
+def _indent_table_to_the_column_edge(table: Any) -> None:
+    """``tblInd`` = the style's left cell margin, so the table's border sits
+    on the text column's edge (where the screen's and the browser door's
+    tables sit) rather than one cell margin outside it.
+
+    python-docx's template declares ``compatibilityMode`` 14 (settings.xml);
+    a viewer in that mode measures the indent to the first cell's TEXT and
+    hangs the border a cell margin further left — LibreOffice 25.2.3 drew it
+    at 72 − 5.4 pt for ``tblInd`` 0 (docx-final D2). A mode-15 file measures
+    to the border itself and would not want this; the unit test locks the
+    mode with the value.
+    """
+    _tbl_pr_child(table._tbl.tblPr, "w:tblInd", w=str(_left_cell_margin_twips(table)), type="dxa")
 
 
 # --- slides -> pptx --------------------------------------------------------
 
-# The editor's slide canvas is 1280x720 px; the exported deck is 10 x 5.625
-# inches (16:9) — the same page the browser-side pptx export uses, so the two
-# doors produce the same-looking deck. Element geometry is percent-based.
+# The editor's slide canvas is the 10 x 5.625 in (16:9) page at 96 dpi —
+# 960 x 540 px — and the exported deck is that same page, so the editor and
+# the file produce the same-looking deck. Element geometry is percent-based.
 _SLIDE_WIDTH_IN = 10.0
 _SLIDE_HEIGHT_IN = 5.625
 # The classic canvas page — what percent geometry means when a deck carries
@@ -1041,11 +1145,12 @@ _SLIDE_HEIGHT_IN = 5.625
 DEFAULT_SLIDE_PAGE_IN = (_SLIDE_WIDTH_IN, _SLIDE_HEIGHT_IN)
 # python-pptx page dimensions are Emu integers (914400 per inch).
 _EMU_PER_INCH = 914400
-# Element font sizes are px on the 1280px-wide slide; PowerPoint wants points.
+# Element font sizes are px at the page's 96 dpi; PowerPoint wants points.
 _PX_TO_PT = 0.75
 _EMU_PER_POINT = 12700
-# The hanging indent a bulleted line gets, as a multiple of its own type size.
-_BULLET_HANG = 1.2
+# The hanging indent a bulleted line gets, as a multiple of its own type size —
+# the estimator's and the browser's hanging column (``slide_text``), one source.
+_BULLET_HANG = BULLET_HANG_EM
 _DEFAULT_FONT_PX = 24.0
 _DEFAULT_SHAPE_FILL = "5B5BD6"
 
@@ -1132,7 +1237,8 @@ def _add_slide_table(
         table.cell(r, c).merge(table.cell(r + row_span - 1, c + col_span - 1))
 
     stroke = _hex_rgb(element.stroke)
-    line_width = str(int((element.stroke_width or 1) * _PX_TO_PT * _EMU_PER_POINT))
+    # The grid line rides the same scale as the type and the geometry (U4).
+    line_width = str(round((element.stroke_width or 1) * _PX_TO_PT * scale * _EMU_PER_POINT))
     for r in range(grid.n_rows):
         for c in range(grid.n_cols):
             if (r, c) in grid.covered:
@@ -1382,10 +1488,11 @@ class SlidesPptxExporter:
                         paragraph.alignment = alignment
                         if element.line_height:
                             paragraph.line_spacing = element.line_height
+                        # Spacing rides the same scale as the type (U4).
                         if element.space_before is not None:
-                            paragraph.space_before = Pt(element.space_before * _PX_TO_PT)
+                            paragraph.space_before = Pt(element.space_before * _PX_TO_PT * scale)
                         if element.space_after is not None:
-                            paragraph.space_after = Pt(element.space_after * _PX_TO_PT)
+                            paragraph.space_after = Pt(element.space_after * _PX_TO_PT * scale)
                         if line.startswith(BULLET_PREFIX):
                             line = line[len(BULLET_PREFIX):]
                             # A literal bullet inside the run is drawn by
@@ -1414,10 +1521,12 @@ class SlidesPptxExporter:
                             # accessor, and the schema wants `a:ln` first
                             # among the run properties' children.
                             properties = run.font._rPr
-                            line = properties.makeelement(
-                                qn("a:ln"),
-                                {"w": str(int((element.stroke_width or 1) * _PX_TO_PT * 12700))},
+                            # Rounded, not truncated: the scale's float residue
+                            # must not shave an EMU off an exact width.
+                            outline_w = round(
+                                (element.stroke_width or 1) * _PX_TO_PT * scale * _EMU_PER_POINT
                             )
+                            line = properties.makeelement(qn("a:ln"), {"w": str(outline_w)})
                             fill = line.makeelement(qn("a:solidFill"), {})
                             fill.append(fill.makeelement(qn("a:srgbClr"), {"val": edge}))
                             line.append(fill)
@@ -1458,17 +1567,27 @@ class SlidesPptxExporter:
                         else _hex_rgb(element.fill) or (None if outline else _DEFAULT_SHAPE_FILL)
                     )
                     if element.shape == "line":
-                        connector = slide.shapes.add_connector(
-                            MSO_CONNECTOR.STRAIGHT,
-                            left,
-                            top,
-                            Emu(int(left) + int(width)),
-                            Emu(int(top) + int(height)),
-                        )
+                        # A line element is its box's centre line, drawn as
+                        # thick as the box — what the browser surfaces draw
+                        # (a bar the box's height) — or as the stroke when that
+                        # is thicker (U4). A connector from the box's top-left
+                        # to its bottom-right was a diagonal the screen never
+                        # showed. `width` / `height` already carry the scale.
+                        horizontal = element.h <= element.w
+                        if horizontal:
+                            mid = Emu(int(top) + int(height) // 2)
+                            begin, end = (left, mid), (Emu(int(left) + int(width)), mid)
+                            thickness_pt = int(height) / _EMU_PER_POINT
+                        else:
+                            mid = Emu(int(left) + int(width) // 2)
+                            begin, end = (mid, top), (mid, Emu(int(top) + int(height)))
+                            thickness_pt = int(width) / _EMU_PER_POINT
+                        connector = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, *begin, *end)
                         connector.line.color.rgb = RGBColor.from_string(
                             outline or fill_color or _DEFAULT_SHAPE_FILL
                         )
-                        connector.line.width = Pt((element.stroke_width or 2) * _PX_TO_PT)
+                        stroke_pt = (element.stroke_width or 2) * _PX_TO_PT * scale
+                        connector.line.width = Pt(max(thickness_pt, stroke_pt))
                     else:
                         shape_type = (
                             MSO_SHAPE.OVAL if element.shape == "ellipse" else MSO_SHAPE.RECTANGLE
@@ -1483,7 +1602,7 @@ class SlidesPptxExporter:
                             shape.fill.background()
                         if outline:
                             shape.line.color.rgb = RGBColor.from_string(outline)
-                            shape.line.width = Pt((element.stroke_width or 1) * _PX_TO_PT)
+                            shape.line.width = Pt((element.stroke_width or 1) * _PX_TO_PT * scale)
                         else:
                             shape.line.fill.background()
                 elif element.src:

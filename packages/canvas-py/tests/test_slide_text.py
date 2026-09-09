@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from langchain_canvas.slide_text import (
+    METRIC_DPI,
     MIN_FIT_SCALE,
     PAGE_H_PX,
     PAGE_W_PX,
@@ -63,7 +64,10 @@ def test_a_portrait_page_measures_on_a_taller_narrower_canvas() -> None:
     whole point of the metric being page-aware."""
     width_px, height_px = metrics_page_px((7.5, 10.0))
     assert height_px > width_px
-    assert (width_px, height_px) == (7.5 * 128, 10.0 * 128)
+    # U1: the density is the one ``fontSize`` is stored at — 96 dpi, the
+    # editor's page (``slidePage.ts``) — not the old 1280 px print sheet.
+    assert METRIC_DPI == 96.0
+    assert (width_px, height_px) == (7.5 * METRIC_DPI, 10.0 * METRIC_DPI)
 
 
 def test_a_box_grows_differently_on_a_portrait_page() -> None:

@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import math
 
-# Px per inch the deck model measures type on — 1280px across a 10in page.
-# Type sizes are px at this density; a taller or narrower page measures on a
-# proportionally taller or narrower canvas, so autofit follows the page shape
-# instead of a fixed 16:9.
-METRIC_DPI = 128.0
+# Px per inch the deck page is stored at — 96 dpi, the density ``fontSize``
+# is px in (``canvas-react/src/client/slidePage.ts::PAGE_DPI``; the exporters
+# emit pt = px * 0.75). The estimator measures at that same density, so a w% x
+# h% box is measured on the page the editor draws and the exporters write.
+PAGE_DPI = 96.0
+# A taller or narrower page measures on a proportionally taller or narrower
+# canvas, so autofit follows the page shape instead of a fixed 16:9.
+METRIC_DPI = PAGE_DPI
 # The px canvas for the classic 16:9 page (10 x 5.625 in) — the default when a
-# caller passes no page, so a box of w% x h% is (w * 12.8) by (h * 7.2) px and
-# every page-less measurement is unchanged.
-PAGE_W_PX, PAGE_H_PX = 1280.0, 720.0
+# caller passes no page: 960 x 540, so a box of w% x h% is (w * 9.6) by
+# (h * 5.4) px.
+PAGE_W_PX, PAGE_H_PX = 10.0 * METRIC_DPI, 5.625 * METRIC_DPI
 # Rough glyph widths as a fraction of the font size.
 WIDE_GLYPH = 1.0  # CJK, full-width
 NARROW_GLYPH = 0.55  # Latin, digits, punctuation
@@ -29,6 +32,13 @@ SPACE_GLYPH = 0.3
 DEFAULT_LINE_HEIGHT = 1.2
 # PowerPoint stops shrinking at a quarter of the set size; so does this.
 MIN_FIT_SCALE = 0.25
+# What a bulleted paragraph starts with — the prefix the derived layout writes
+# and the pptx writer strips exactly once to draw a real list bullet.
+BULLET_PREFIX = "• "
+# The hanging indent of a bulleted paragraph in em of its own type size — the
+# file's ``marL`` / ``indent`` (``exporters.py``) and the browser's hanging
+# column (``slideText.ts::BULLET_HANG_EM``).
+BULLET_HANG_EM = 1.2
 
 
 def metrics_page_px(page: tuple[float, float] | None = None) -> tuple[float, float]:
@@ -62,11 +72,19 @@ def widest_line_px(text: str, size: float) -> float:
 
 
 def wrapped_lines(text: str, size: float, box_w: float) -> int:
-    """How many lines ``text`` takes at ``size`` px in a box ``box_w`` px wide."""
+    """How many lines ``text`` takes at ``size`` px in a box ``box_w`` px wide.
+
+    A bullet paragraph's body wraps in the hanging column — the box less the
+    marker's ``BULLET_HANG_EM`` (never narrower than one glyph), the way the
+    file and every browser surface draw it.
+    """
     lines = 0
     for paragraph in text.split("\n"):
-        width = sum(glyph_width(ch) for ch in paragraph) * size
-        lines += max(1, math.ceil(width / box_w)) if paragraph else 1
+        bullet = paragraph.startswith(BULLET_PREFIX)
+        body = paragraph[len(BULLET_PREFIX):] if bullet else paragraph
+        column = max(size, box_w - BULLET_HANG_EM * size) if bullet else box_w
+        width = sum(glyph_width(ch) for ch in body) * size
+        lines += max(1, math.ceil(width / column)) if body else 1
     return lines
 
 

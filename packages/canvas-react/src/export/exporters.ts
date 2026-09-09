@@ -21,9 +21,11 @@ import type { Artifact, DocumentData, SlideElement, SlidesData, TableData } from
 import { defaultTextColor, resolveElements } from "../client/slideElements";
 import { deckPage, PAGE_DPI } from "../client/slidePage";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../client/slideTable";
-import { boxHeightPct, textFitScale } from "../client/slideText";
+import { boxHeightPct, BULLET_HANG_EM, BULLET_PREFIX, bulletParagraphs, DEFAULT_LINE_HEIGHT, inkGuardCss, textFitScale } from "../client/slideText";
 import { projectSheetIntoRows } from "../io/tableMerge";
 import { loadOptional } from "../optionalImport";
+import { readDocxImage } from "./docxImage";
+import { markdownBlocks, type MdRun } from "./markdownBlocks";
 
 export interface FileExport {
   /** Menu label, e.g. "Excel". */
@@ -100,22 +102,159 @@ function tableToCsv(data: TableData): string {
   return `${header}\n${body}`;
 }
 
-async function documentToDocx(data: DocumentData): Promise<BlobPart> {
-  const { Document, Packer, Paragraph, HeadingLevel } = await loadOptional("docx", () => import("docx"));
+/** The monospace face the Python door names for code (`exporters.py::_CODE_FACE`). */
+const DOCX_CODE_FACE = "Consolas";
+/** The numbering definition numbered items reference (three levels). */
+const DOCX_NUMBERING = "cv-numbered";
+/** A picture is placed no wider than 6 in at 96 dpi, like the Python door's `Inches(6)`. */
+const DOCX_IMAGE_MAX_PX = 576;
+/** A quote is set in by half an inch (twips), in italics — the Python door's
+ *  "Intense Quote" style has no docx.js twin; a documented deviation (plan §U5). */
+const DOCX_QUOTE_INDENT = 720;
+/** The page the Word doors declare (U6): Letter, 1 in on every side, in
+ *  twips — the same sheet the Python door writes and the screen's Word page
+ *  draws, not the writer library's default (A4). */
+const DOCX_PAGE = {
+  size: { width: 12240, height: 15840 },
+  margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+};
+/** The text column that page declares, in twips (9360) — what a table's
+ *  grid, its cells and its `tblW` all sum to, as in the Python door's
+ *  `_add_table` (U6). */
+const DOCX_TEXT_COLUMN_TWIPS = DOCX_PAGE.size.width - DOCX_PAGE.margin.left - DOCX_PAGE.margin.right;
 
-  const paragraphs = data.content.split("\n").map((line) => {
-    const heading = line.match(/^(#{1,3})\s+(.*)$/);
-    if (heading) {
-      const level = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3][heading[1].length - 1];
-      return new Paragraph({ text: heading[2], heading: level });
+/** An unstated (markdown) table's grid: the column split evenly, the last
+ *  column taking the remainder so the sum is exactly the column. docx.js
+ *  would otherwise leave `gridCol` at a 100-twip placeholder and write no
+ *  `tcW`, so a viewer laying out from the cells saw no widths at all. */
+function docxColumnWidths(columns: number): number[] {
+  const count = Math.max(1, columns);
+  const each = Math.floor(DOCX_TEXT_COLUMN_TWIPS / count);
+  return Array.from({ length: count }, (_, i) => (i === count - 1 ? DOCX_TEXT_COLUMN_TWIPS - each * (count - 1) : each));
+}
+
+type Docx = typeof import("docx");
+
+/** Header dimensions preserve valid image bytes even in runtimes without a
+ * bitmap decoder. No ImageBitmap is allocated, so none needs closing. */
+async function docxImage(docx: Docx, base64: string): Promise<InstanceType<Docx["Paragraph"]>> {
+  const image = readDocxImage(base64);
+  const scale = Math.min(1, DOCX_IMAGE_MAX_PX / image.width);
+  const transformation = { width: Math.max(1, Math.round(image.width * scale)), height: Math.max(1, Math.round(image.height * scale)) };
+  return new docx.Paragraph({ children: [new docx.ImageRun({ type: image.type, data: image.bytes, transformation })] });
+}
+
+/**
+ * The browser's Word file as a `docx` Document — the same block set the
+ * Python door writes (`exporters.py::_blocks_to_docx`, U5): headings h1–h4,
+ * soft-joined paragraphs with inline bold / italic / strike / code, bullet and
+ * numbered items three levels deep, quotes, fenced code, pipe tables with
+ * their column alignment, rules and `data:` pictures. Exported so a test can
+ * pack it to bytes; `documentToDocx` packs it to the download Blob.
+ */
+export async function documentToDocxDocument(data: DocumentData): Promise<InstanceType<Docx["Document"]>> {
+  const docx = await loadOptional("docx", () => import("docx"));
+  const { Document, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, LevelFormat } = docx;
+  const headings = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4];
+  // A run's "\n" (a two-space line end) is a line break inside the paragraph,
+  // as python-docx writes it for the same text.
+  const runs = (mdRuns: MdRun[], extra: { bold?: boolean; italics?: boolean } = {}) =>
+    mdRuns.flatMap((mdRun) =>
+      mdRun.text.split("\n").map(
+        (text, index) =>
+          new TextRun({
+            text,
+            bold: mdRun.bold || extra.bold,
+            italics: mdRun.italic || extra.italics,
+            strike: mdRun.strike,
+            ...(mdRun.code ? { font: DOCX_CODE_FACE } : {}),
+            ...(index ? { break: 1 } : {}),
+          }),
+      ),
+    );
+
+  const children: (InstanceType<Docx["Paragraph"]> | InstanceType<Docx["Table"]>)[] = [];
+  for (const block of markdownBlocks(data.content)) {
+    switch (block[0]) {
+      case "heading":
+        children.push(new Paragraph({ heading: headings[Math.min(block[1], 4) - 1], children: runs(block[2]) }));
+        break;
+      case "para":
+        children.push(new Paragraph({ children: runs(block[1]) }));
+        break;
+      case "bullet":
+        children.push(new Paragraph({ children: runs(block[1]), bullet: { level: block[2] } }));
+        break;
+      case "numbered":
+        children.push(new Paragraph({ children: runs(block[1]), numbering: { reference: DOCX_NUMBERING, level: block[2] } }));
+        break;
+      case "quote":
+        children.push(new Paragraph({ children: runs(block[1], { italics: true }), indent: { left: DOCX_QUOTE_INDENT } }));
+        break;
+      case "code":
+        for (const line of block[1].split("\n")) {
+          children.push(new Paragraph({ children: [new TextRun({ text: line, font: DOCX_CODE_FACE, size: 18 })] }));
+        }
+        break;
+      case "table": {
+        const widths = docxColumnWidths(Math.max(...block[1].map((row) => row.length)));
+        children.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths: widths,
+            rows: block[1].map(
+              (row, r) =>
+                new TableRow({
+                  children: row.map(
+                    (cell, c) =>
+                      new TableCell({
+                        width: { size: widths[c], type: WidthType.DXA },
+                        children: [
+                          new Paragraph({
+                            children: runs(cell.runs, { bold: block[2] && r === 0 }),
+                            ...(cell.align ? { alignment: cell.align === "center" ? AlignmentType.CENTER : AlignmentType.RIGHT } : {}),
+                          }),
+                        ],
+                      }),
+                  ),
+                }),
+            ),
+          }),
+        );
+        break;
+      }
+      case "rule":
+        children.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "999999" } } }));
+        break;
+      case "image": {
+        const picture = await docxImage(docx, block[1]);
+        children.push(picture);
+        break;
+      }
     }
-    const bullet = line.match(/^[-*]\s+(.*)$/);
-    if (bullet) return new Paragraph({ text: bullet[1], bullet: { level: 0 } });
-    return new Paragraph({ text: line });
+  }
+  return new Document({
+    numbering: {
+      config: [
+        {
+          reference: DOCX_NUMBERING,
+          levels: [0, 1, 2].map((level) => ({
+            level,
+            format: LevelFormat.DECIMAL,
+            text: `%${level + 1}.`,
+            alignment: AlignmentType.START,
+            style: { paragraph: { indent: { left: DOCX_QUOTE_INDENT * (level + 1), hanging: 360 } } },
+          })),
+        },
+      ],
+    },
+    sections: [{ properties: { page: DOCX_PAGE }, children }],
   });
+}
 
-  const doc = new Document({ sections: [{ children: paragraphs }] });
-  return Packer.toBlob(doc);
+async function documentToDocx(data: DocumentData): Promise<BlobPart> {
+  const { Packer } = await loadOptional("docx", () => import("docx"));
+  return Packer.toBlob(await documentToDocxDocument(data));
 }
 
 /**
@@ -146,7 +285,15 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
           // Rotation rides the shared box string so every element type (text,
           // shape, table, image) turns about its centre in the printed page,
           // matching the editor and the .pptx export. `rotation` is numeric.
-          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${boxHeightPct(el, page)}%${el.rotation ? `;transform:rotate(${el.rotation}deg)` : ""}`;
+          // A box that grows with its text carries the ink guard (U1): the
+          // estimator's height plus the face's own bottom overhang, resolved
+          // by the browser on a `line-height: normal` box whose text child
+          // keeps the leading — the same rule `textBoxStyle` draws on screen.
+          const grown = el.type === "text" && el.autofit === "shape";
+          const height = grown
+            ? `calc(${boxHeightPct(el, page)}% + ${inkGuardCss(el.lineHeight)})`
+            : `${boxHeightPct(el, page)}%`;
+          const box = `left:${el.x}%;top:${el.y}%;width:${el.w}%;height:${height}${el.rotation ? `;transform:rotate(${el.rotation}deg)` : ""}`;
           if (el.type === "text") {
             // box is numeric; colours and the face are escaped individually — the
             // composed style string is then safe to place in the attribute as-is.
@@ -159,7 +306,7 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
               `text-align:${escapeAttr(el.align ?? "left")}`,
               el.wrap === false ? "white-space:pre" : "white-space:pre-wrap",
               el.fontFamily ? `font-family:${escapeAttr(el.fontFamily)},Inter,Arial,sans-serif` : "",
-              el.lineHeight ? `line-height:${el.lineHeight}` : "",
+              grown ? "line-height:normal" : el.lineHeight ? `line-height:${el.lineHeight}` : "",
               el.highlight ? `background:${escapeAttr(el.highlight)}` : "",
               el.spaceBefore ? `padding-top:${el.spaceBefore}px` : "",
               el.spaceAfter ? `padding-bottom:${el.spaceAfter}px` : "",
@@ -180,7 +327,23 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
               el.text && !el.text.includes("\n") && el.wrap !== false && el.autofit !== "text"
                 ? ' data-snug="1"'
                 : "";
-            return `<div class="el"${snug} style="${style}">${escapeXml(el.text ?? "")}</div>`;
+            // A bulleted body prints as the file draws it (U3): one block per
+            // paragraph, a bullet paragraph hanging under one fixed-width marker
+            // (`.p-bullet`, the same rule `FittedText` draws on screen); each
+            // paragraph's body is escaped on its own, the marker is a literal.
+            const paragraphs = bulletParagraphs(el.text ?? "");
+            const body = paragraphs
+              ? paragraphs
+                  .map((p) =>
+                    p.bullet
+                      ? `<div class="p-bullet"><span class="p-bullet__marker">${BULLET_PREFIX.trim()}</span>${escapeXml(p.text)}</div>`
+                      : `<div>${escapeXml(p.text) || "&#160;"}</div>`,
+                  )
+                  .join("")
+              : escapeXml(el.text ?? "");
+            // The grown box's text child keeps the leading the box gave up to the guard.
+            const inner = grown ? `<div class="el__text" style="line-height:${el.lineHeight ?? DEFAULT_LINE_HEIGHT}">${body}</div>` : body;
+            return `<div class="el"${snug} style="${style}">${inner}</div>`;
           }
           if (el.type === "shape") {
             // A box drawn by its outline alone carries no fill — painting one
@@ -191,7 +354,8 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
             const fill = escapeAttr(
               isLine ? (bodyFill ?? el.stroke ?? fg) : (bodyFill ?? "transparent"),
             );
-            const radius = el.shape === "ellipse" ? "50%" : isLine ? "2px" : "8px";
+            // Square like the file's `prst="rect"` and its straight connector (U4).
+            const radius = el.shape === "ellipse" ? "50%" : "0";
             const outline =
               el.stroke && !isLine
                 ? `;border:${Math.max(1, el.strokeWidth ?? 1)}px solid ${escapeAttr(el.stroke)}`
@@ -217,7 +381,9 @@ export function slidesToPrintHtml(data: SlidesData, title: string): string {
     ${PRINT_COLOR_CSS}
     body { font-family: Inter, Arial, sans-serif; }
     .slide { position: relative; width: ${pw}px; height: ${ph}px; overflow: hidden; page-break-after: always; }
-    .el { position: absolute; overflow: hidden; line-height: 1.25; }
+    .el { position: absolute; overflow: hidden; line-height: ${DEFAULT_LINE_HEIGHT}; }
+    .p-bullet { padding-left: ${BULLET_HANG_EM}em; text-indent: -${BULLET_HANG_EM}em; }
+    .p-bullet__marker { display: inline-block; width: ${BULLET_HANG_EM}em; text-indent: 0; }
     img.el { object-fit: contain; }
   </style></head><body>${pages}</body></html>`;
 }

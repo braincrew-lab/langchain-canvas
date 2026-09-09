@@ -731,7 +731,7 @@ def test_a_title_that_wraps_past_its_box_is_called_out() -> None:
          "text": "왜 지금 브레인크루 X 신한은행인가", "fontSize": 88}
     ]}]}
     found = [w for w in lint_slides_data(data) if "run past the box" in w]
-    assert len(found) == 1 and "line(s)" in found[0] and "86.4px tall" in found[0]
+    assert len(found) == 1 and "line(s)" in found[0] and "64.8px tall" in found[0]
 
 
 def test_one_line_in_a_snug_box_stays_silent() -> None:
@@ -766,7 +766,7 @@ def test_a_table_whose_rows_outgrow_its_box_is_reported() -> None:
     }
     (warning,) = [w for w in lint_slides_data({"slides": [{"elements": [tall]}]}) if "table" in w]
     assert warning.startswith('slide 1, element "t": the table\'s 8 row(s) need about')
-    assert "the box is 72px tall" in warning
+    assert "the box is 54px tall" in warning
 
     roomy = {**tall, "h": 90}
     assert [w for w in lint_slides_data({"slides": [{"elements": [roomy]}]}) if "table" in w] == []
@@ -866,11 +866,24 @@ def test_an_inherited_overflow_folds_into_one_closing_line() -> None:
     plain = lint_slides_data(data)
     assert [w for w in plain if "run past" in w], "sanity: it does overflow"
     from langchain_canvas.pptx_import import overflow_key
+    from langchain_canvas.slide_text import metrics_page_px, needed_height
 
-    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): 2.2}
+    # The original's own ratio, derived the way the importer derives it
+    # (pptx_import.deck_baseline): the CURRENT metric on the same text in the
+    # same box — not a literal tied to an older page density (U1, plan R3).
+    page_w, page_h = metrics_page_px()
+    box_w, box_h = box["w"] / 100.0 * page_w, box["h"] / 100.0 * page_h
+    baseline = round(needed_height(box["text"], box["fontSize"], box_w) / box_h, 3)
+    assert baseline > 1.0, "sanity: the original itself overflows"
+    known = {overflow_key(box["x"], box["y"], box["w"], box["h"]): baseline}
     folded = lint_slides_data(data, known_overflow=known)
     assert not [w for w in folded if "run past" in w]
     assert any("inherited, not yours to fix" in w and "1 of these" in w for w in folded)
+    # The same baseline does not excuse a copy that made it worse.
+    worse = {**box, "text": "상세 내용을 작성해 주세요 " * 6}
+    found = lint_slides_data({"slides": [{"elements": [worse]}]}, known_overflow=known)
+    assert [w for w in found if "run past" in w]
+    assert not [w for w in found if "inherited" in w]
 
 
 def test_an_inherited_overflow_made_worse_is_reported_again() -> None:
@@ -912,3 +925,20 @@ def test_a_no_wrap_box_is_measured_sideways_not_by_wrapped_height() -> None:
                      text="아주 긴 한 줄 라벨 " * 10, fontSize=24, wrap=False))
     (warning,) = lint_slides_data(wide)
     assert "run past the box" in warning and "no-wrap" in warning
+
+
+def test_the_text_fit_check_measures_with_the_shared_default_leading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U2 (task 5): a box that names no ``lineHeight`` is measured at the
+    estimator's ``DEFAULT_LINE_HEIGHT`` — one source, not a literal — so the
+    finding's numbers follow that constant."""
+    from langchain_canvas import layout_lint
+    from langchain_canvas.slide_text import DEFAULT_LINE_HEIGHT
+
+    box = _el("t", "text", 5, 5, 40, 6, text="가" * 40, fontSize=24)  # 3 lines in 384px
+    (warning,) = [w for w in lint_slides_data(_deck(box)) if "run past" in w]
+    assert f"(~{3 * 24 * DEFAULT_LINE_HEIGHT:g}px)" in warning
+    monkeypatch.setattr(layout_lint, "DEFAULT_LINE_HEIGHT", 2.0, raising=True)
+    (doubled,) = [w for w in lint_slides_data(_deck(box)) if "run past" in w]
+    assert "(~144px)" in doubled

@@ -31,6 +31,7 @@
 
 import type { Slide, SlideElement, SlidePage } from "../protocol/artifacts";
 import { DEFAULT_SLIDE_PAGE_IN, PAGE_DPI } from "./slidePage";
+import { BULLET_PREFIX } from "./slideText";
 
 export const FONT_DISPLAY = 48;
 export const FONT_TITLE = 38;
@@ -41,8 +42,10 @@ export const TITLE_RAMP = [FONT_TITLE, 30, 24];
 /** A cover line shrinks the same way. */
 export const DISPLAY_RAMP = [FONT_DISPLAY, FONT_TITLE, 30];
 
-/** Line box over font size. The renderer, the print sheet, and PowerPoint all
- *  sit near this, so a box this tall holds its text at every destination. */
+/** Line box over font size — the derived layout's per-line budget, held
+ *  above `DEFAULT_LINE_HEIGHT` (`slideText.ts`, the leading the surfaces draw)
+ *  so a derived box has room for its lines. A layout budget only: no surface
+ *  draws this value as its leading. */
 const LINE_HEIGHT = 1.35;
 /** Space between bullets, as a multiple of the line box. The floor is what
  *  makes a body step count as comfortable; the ceiling stops a two-bullet
@@ -74,7 +77,8 @@ const COVER_SUBTITLE_SHARE = 0.22;
 const COLUMN_WIDTH = 42;
 const COLUMN_RIGHT_LEFT = 52;
 
-const BULLET = "• ";
+/** The shared prefix (`slideText.ts`): the writer and the surfaces read the list off it. */
+const BULLET = BULLET_PREFIX;
 /** Above this code point a glyph is about an em wide (Hangul, CJK, kana,
  *  fullwidth forms, emoji); below it, about half. Crude next to a real font
  *  metric, but it only has to decide *how many lines*, and both twins have to

@@ -12,7 +12,17 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { SlideElement, SlidePage } from "../../protocol/artifacts";
 import { useAssetUrl } from "../../hooks/useAssetUrl";
 import { CELL_PAD_X, CELL_PAD_Y, cellKey, cellLook, tableGrid } from "../../client/slideTable";
-import { boxHeightPct, textFitScale } from "../../client/slideText";
+import {
+  boxHeightPct,
+  BULLET_HANG_EM,
+  BULLET_PREFIX,
+  bulletParagraphs,
+  DEFAULT_FONT_PX,
+  DEFAULT_LINE_HEIGHT,
+  inkGuardCss,
+  snugLineWidth,
+  textFitScale,
+} from "../../client/slideText";
 import { useLabels } from "../chrome";
 
 /** How much wider than its box a one-line text may run before fitting gives
@@ -51,13 +61,22 @@ export function useSnugFit(
       setFit(1);
       return;
     }
+    // A one-liner is one paragraph. A bullet paragraph is drawn as the fixed
+    // marker plus its body (`FittedText`), so that is what is measured —
+    // the width the box is compared to is the width that is drawn.
+    const paragraph = bulletParagraphs(text)?.[0] ?? { text, bullet: false };
     const measure = () => {
       if (!measureContext) measureContext = document.createElement("canvas").getContext("2d");
-      if (!measureContext) return;
+      const context = measureContext;
+      if (!context) return;
       const family = el.fontFamily || getComputedStyle(node).fontFamily || "sans-serif";
-      measureContext.font = `${el.bold ? 700 : 400} ${fontPx}px ${family}`;
-      const needed = measureContext.measureText(text).width;
-      const box = node.clientWidth;
+      context.font = `${el.bold ? 700 : 400} ${fontPx}px ${family}`;
+      const needed = snugLineWidth(paragraph, fontPx, (piece) => context.measureText(piece).width);
+      // The box's used width, fractional: `clientWidth` rounds to whole px,
+      // and a fit computed on a rounded-up width draws up to half a pixel
+      // past the box (a rounded-down one shrinks the type for nothing).
+      const used = parseFloat(getComputedStyle(node).width);
+      const box = Number.isFinite(used) && used > 0 ? used : node.clientWidth;
       if (box > 0 && needed > box && needed <= box * SNUG_MAX_OVERFLOW) {
         setFit(box / needed);
       } else {
@@ -67,7 +86,15 @@ export function useSnugFit(
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
-    return () => observer.disconnect();
+    // The element's face may arrive after the first measure (a web font):
+    // measure again when it has loaded, so the fit is the loaded face's
+    // advances, not the fallback's.
+    const fonts: FontFaceSet | undefined = node.ownerDocument.fonts;
+    fonts?.addEventListener("loadingdone", measure);
+    return () => {
+      observer.disconnect();
+      fonts?.removeEventListener("loadingdone", measure);
+    };
   }, [eligible, node, text, fontPx, el.fontFamily, el.bold]);
   if (!eligible || fit >= 1) return { ref: setNode, style: {} };
   return { ref: setNode, style: { whiteSpace: "nowrap", fontSize: fontPx * fit } };
@@ -91,9 +118,30 @@ export function FittedText({
   active?: boolean;
 }) {
   const snug = useSnugFit(el, scale, active);
+  // A bulleted body is drawn as the file draws it (U3): one block per
+  // paragraph, a bullet paragraph hanging its wrapped lines under the first
+  // body character. The marker is one visible glyph in an inline block as wide
+  // as the hanging indent, so the first line's body starts exactly where the
+  // wrapped lines do (the file's marL) instead of after the glyph's own
+  // advance; `text-indent: 0` on it stops the block's negative indent from
+  // applying inside. Text with no bullet paragraph stays one text node.
+  const paragraphs = bulletParagraphs(el.text ?? "");
   return (
     <div ref={snug.ref} className={className} style={{ ...style, ...snug.style }}>
-      {el.text}
+      {paragraphs
+        ? paragraphs.map((paragraph, index) =>
+            paragraph.bullet ? (
+              <div key={index} className="cv-bullet" style={{ paddingLeft: `${BULLET_HANG_EM}em`, textIndent: `-${BULLET_HANG_EM}em` }}>
+                <span className="cv-bullet__marker" style={{ display: "inline-block", width: `${BULLET_HANG_EM}em`, textIndent: 0 }}>
+                  {BULLET_PREFIX.trim()}
+                </span>
+                {paragraph.text}
+              </div>
+            ) : (
+              <div key={index}>{paragraph.text || " "}</div>
+            ),
+          )
+        : el.text}
     </div>
   );
 }
@@ -127,10 +175,31 @@ export function shapeStyle(el: SlideElement, scale = 1): CSSProperties {
       height: "100%",
       minHeight: `${Math.max(1, (el.strokeWidth ?? 1) * scale)}px`,
       background: colour,
-      borderRadius: 2,
     };
   }
-  return { width: "100%", height: "100%", background: fill, borderRadius: 8, ...border };
+  // Square, like the file's `prst="rect"` (U4): no corner radius on a
+  // rectangle or a line — the browser must not round what the file draws square.
+  return { width: "100%", height: "100%", background: fill, ...border };
+}
+
+/** CSS for an element's box — the frame the body fills. A fixed box and a
+ *  shrink-to-fit box are exactly as stored; a box that grows with its text
+ *  (`autofit: "shape"`) is the estimator's grown height plus the ink guard
+ *  (`inkGuardCss`): the box carries the text's drawn size and face with
+ *  `line-height: normal`, which is what the guard's `lh` resolves against,
+ *  while the body inside (`textStyle`) keeps its leading. One `scale` for the
+ *  box and the body, so a thumbnail scales the guard exactly once. Shared by
+ *  the editor, the present view and the thumbnails; the print sheet writes the
+ *  same string. */
+export function textBoxStyle(el: SlideElement, scale = 1, page?: SlidePage): CSSProperties {
+  const height = boxHeightPct(el, page);
+  if (el.type !== "text" || el.autofit !== "shape") return { height: `${height}%` };
+  return {
+    height: `calc(${height}% + ${inkGuardCss(el.lineHeight)})`,
+    fontSize: (el.fontSize ?? DEFAULT_FONT_PX) * scale,
+    lineHeight: "normal",
+    ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
+  };
 }
 
 /** CSS for a text element's body — shared by the editor, thumbnails and the
@@ -150,7 +219,10 @@ export function textStyle(el: SlideElement, scale = 1, page?: SlidePage): CSSPro
     // typed \n); everything else wraps like PowerPoint's default square wrap.
     whiteSpace: el.wrap === false ? "pre" : "pre-wrap",
     ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
-    ...(el.lineHeight ? { lineHeight: el.lineHeight } : {}),
+    // One default leading for the editor, the thumbnails, the present view
+    // and the print sheet — the estimator's — so a box that names none is
+    // drawn the same height everywhere instead of inheriting its host's.
+    lineHeight: el.lineHeight ?? DEFAULT_LINE_HEIGHT,
     ...(el.highlight
       ? {
           background: el.highlight,
@@ -311,8 +383,8 @@ export function SlideTable({ el, scale = 1, editable = false, onChange, editingK
                     ...(el.fontFamily ? { fontFamily: el.fontFamily } : {}),
                     // The host page's own leading (1.5 in a Tailwind app) made
                     // every row taller than the file says; the exporter and the
-                    // deck check both assume 1.2.
-                    lineHeight: el.lineHeight ?? 1.2,
+                    // deck check both assume the shared default.
+                    lineHeight: el.lineHeight ?? DEFAULT_LINE_HEIGHT,
                   }}
                   onPointerDown={(e) => {
                     if (editing === key) e.stopPropagation(); // let the caret move
@@ -568,7 +640,7 @@ export function FreeSlide({ elements, onChange, padding, fontScale = 1, page }: 
           key={el.id}
           data-el-id={el.id}
           className={`cv-free__el ${selected === el.id ? "is-selected" : ""}`}
-          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, height: `${boxHeightPct(el, page)}%`, ...rotationStyle(el) }}
+          style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.w}%`, ...textBoxStyle(el, fontScale, page), ...rotationStyle(el) }}
           onPointerDown={(e) => onDown(e, el, "move")}
           onDoubleClick={(e) => {
             if (el.type === "text") {
