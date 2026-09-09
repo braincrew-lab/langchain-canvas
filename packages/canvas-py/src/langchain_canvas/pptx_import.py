@@ -946,7 +946,13 @@ def _text(shape: Any, scheme: dict[str, str]) -> dict[str, Any] | None:
     if font_scale < 1.0 and out.get("fontSize"):
         out["fontSize"] = round(out["fontSize"] * font_scale, 1)
     if spacing_reduction > 0.0:
-        out["lineHeight"] = round((out.get("lineHeight") or 1.2) * (1.0 - spacing_reduction), 3)
+        # A reduction on the default leading starts from the shared default
+        # every surface draws (U2), not a literal of its own.
+        from .slide_text import DEFAULT_LINE_HEIGHT
+
+        out["lineHeight"] = round(
+            (out.get("lineHeight") or DEFAULT_LINE_HEIGHT) * (1.0 - spacing_reduction), 3
+        )
     anchor = _vertical_align(shape.text_frame)
     if anchor:
         out["verticalAlign"] = anchor

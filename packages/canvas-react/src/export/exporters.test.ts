@@ -65,7 +65,8 @@ describe("slidesToPrintHtml (safe export)", () => {
       }],
     };
     const html = slidesToPrintHtml(deck, "Deck");
-    const heights = [...html.matchAll(/height:([\d.]+)%/g)].map((m) => Number(m[1]));
+    // A grown box's height is `calc(<pct>% + <ink guard>)` (U1), a fixed one's `<pct>%`.
+    const heights = [...html.matchAll(/height:(?:calc\()?([\d.]+)%/g)].map((m) => Number(m[1]));
     expect(heights[0]).toBeGreaterThan(20);
     expect(heights[1]).toBe(5);
     expect(heights[2]).toBe(5);
@@ -107,6 +108,37 @@ describe("slidesToPrintHtml (safe export)", () => {
     };
     const html = slidesToPrintHtml(deck, "x");
     expect(html).not.toContain("<script>evil()</script>");
+  });
+});
+
+describe("the browser Word file (U5)", () => {
+  // U5 test 3: the browser's `.docx` carries the same block set as the
+  // Python door — a real table, soft-joined lines in one paragraph, numbered
+  // items — proven by rendering the bytes with docx-preview in jsdom. When
+  // CANVAS_PARITY_EVIDENCE_DIR is set the bytes are also saved for the
+  // LibreOffice render gate (D1 / D4), a by-product the assertions never use.
+  it("keeps tables, numbered items and joined lines", async () => {
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const fixture = readFileSync(path.join(here, "__fixtures__", "parity-document.md"), "utf8");
+    const { Packer } = await import("docx");
+    const { documentToDocxDocument } = await import("./exporters");
+    const document = await documentToDocxDocument({ format: "markdown", content: fixture });
+    const bytes = new Uint8Array(await Packer.toBuffer(document));
+    const evidenceDir = process.env.CANVAS_PARITY_EVIDENCE_DIR;
+    if (evidenceDir) writeFileSync(path.join(evidenceDir, "parity-document.browser.docx"), bytes);
+    URL.createObjectURL ??= () => "blob:test";
+    const { renderAsync } = await import("docx-preview");
+    const host = window.document.createElement("div");
+    window.document.body.appendChild(host);
+    await renderAsync(bytes, host, undefined, { inWrapper: true, breakPages: true, useBase64URL: true });
+    expect(host.querySelectorAll("table")).toHaveLength(1);
+    const paragraphs = Array.from(host.querySelectorAll("p")).map((p) => p.textContent ?? "");
+    expect(paragraphs.some((t) => t.includes("협업 범위를 정리한다.") && t.includes("이어지는 줄은 같은 문단이다."))).toBe(true);
+    expect(paragraphs.some((t) => t.includes("첫째 항목"))).toBe(true);
+    host.remove();
   });
 });
 
@@ -240,3 +272,161 @@ describe("slidesToPrintHtml (tables)", () => {
     expect(html).not.toContain("currentColor");
   });
 });
+
+describe("slidesToPrintHtml (grown box ink guard, U1)", () => {
+  // Plan R3 addendum: a box that grows with its text is printed at the
+  // estimator's height plus the face-derived ink guard, evaluated on a
+  // `line-height: normal` box whose text child keeps the leading. Fixed boxes
+  // are printed exactly as before.
+  const grown = {
+    id: "g", type: "text" as const, x: 5, y: 5, w: 40, h: 6, fontSize: 24, fontFamily: "Noto Sans CJK KR",
+    text: "• " + "가".repeat(40), autofit: "shape" as const,
+  };
+
+  it("prints a growing box on a line-height: normal box with the guard, and its text in a child that keeps the leading", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [grown] }] }, "Deck");
+    const box = html.match(/<div class="el"[^>]*>/)?.[0] ?? "";
+    expect(box).toContain("height:calc(16% + max(0px, (1lh - 1.2em) / 2))");
+    expect(box).toContain("line-height:normal");
+    expect(box).toContain("font-size:24px");
+    // The child holds the body — here a bullet paragraph (U3), so a hanging block.
+    expect(html).toContain('<div class="el__text" style="line-height:1.2"><div class="p-bullet">');
+    expect(html).toContain(`•</span>${grown.text.slice(2)}</div></div></div>`);
+  });
+
+  it("keeps an explicit leading on the text child and in the guard", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [{ ...grown, lineHeight: 1.5 }] }] }, "Deck");
+    expect(html).toContain("height:calc(20% + max(0px, (1lh - 1.5em) / 2))");
+    expect(html).toContain('<div class="el__text" style="line-height:1.5">');
+  });
+
+  it("prints a fixed box and a shrink-to-fit box exactly as stored, with no guard and no child", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [{ ...grown, autofit: undefined }, { ...grown, id: "s", autofit: "text" }] }] }, "Deck");
+    expect(html.match(/height:6%/g)).toHaveLength(2);
+    expect(html).not.toContain("1lh");
+    expect(html).not.toContain("el__text");
+    expect(html).not.toContain("line-height:normal");
+  });
+});
+
+describe("slidesToPrintHtml (square corners, U4)", () => {
+  it("the print sheet draws square rectangles and flat lines, and keeps the ellipse round", () => {
+    const deck: SlidesData = {
+      slides: [{
+        elements: [
+          { id: "r", type: "shape", shape: "rect", x: 5, y: 48, w: 30, h: 10, fill: "#00aa00" },
+          { id: "l", type: "shape", shape: "line", x: 5, y: 62, w: 40, h: 2, fill: "#0000ff", strokeWidth: 2 },
+          { id: "e", type: "shape", shape: "ellipse", x: 50, y: 50, w: 10, h: 10, fill: "#000" },
+        ],
+      }],
+    };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html.match(/border-radius:0[;"]/g)).toHaveLength(2);
+    expect(html).not.toContain("border-radius:8px");
+    expect(html).not.toContain("border-radius:2px");
+    expect(html).toContain("border-radius:50%");
+  });
+});
+
+describe("slidesToPrintHtml (bullet hang, U3)", () => {
+  const box = { id: "b", type: "text" as const, x: 0, y: 0, w: 50, h: 10, fontSize: 24 };
+
+  it("a bulleted box prints one hanging paragraph per line", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [{ ...box, text: "• 하나\n• <b>둘" }] }] }, "Deck");
+    expect(html.match(/class="p-bullet"/g)).toHaveLength(2);
+    expect(html.match(/<span class="p-bullet__marker">•<\/span>/g)).toHaveLength(2);
+    expect(html).toContain("•</span>하나");
+    expect(html).not.toContain("• 하나");
+    expect(html).toContain("&lt;b&gt;둘");
+    expect(html).toContain(".p-bullet { padding-left: 1.2em; text-indent: -1.2em; }");
+    expect(html).toContain(".p-bullet__marker { display: inline-block; width: 1.2em; text-indent: 0; }");
+  });
+
+  it("keeps plain paragraphs as blocks beside bullets and holds an empty line open", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [{ ...box, text: "• a\n\nb" }] }] }, "Deck");
+    expect(html).toContain("•</span>a</div><div>&#160;</div><div>b</div>");
+  });
+
+  it("prints a box with no bullet paragraph exactly as before", () => {
+    const html = slidesToPrintHtml({ slides: [{ elements: [{ ...box, text: "plain\ntext" }] }] }, "Deck");
+    expect(html).not.toContain('class="p-bullet');
+    expect(html).toContain(">plain\ntext</div>");
+  });
+});
+
+describe("slidesToPrintHtml (default leading, U2)", () => {
+  it("the print sheet's default leading is the estimator's", () => {
+    // A box that names no `lineHeight` falls to the sheet's `.el` rule, which
+    // must be the estimator's `DEFAULT_LINE_HEIGHT` (1.2) — not a print-only 1.25.
+    const deck = { slides: [{ elements: [{ id: "t", type: "text" as const, x: 0, y: 0, w: 50, h: 10, text: "no lineHeight set" }] }] };
+    const html = slidesToPrintHtml(deck, "Deck");
+    expect(html).toMatch(/\.el \{[^}]*line-height: 1\.2;[^}]*\}/);
+    expect(html).not.toContain("line-height: 1.25");
+  });
+});
+
+describe("the browser Word table's widths (U6 / docx-final)", () => {
+  // The Python door writes one width three ways — gridCol, tcW on every cell,
+  // tblW — all summing to the section's text column (9360 twips on Letter with
+  // 1 in margins). docx.js left gridCol at its 100-twip placeholder and no
+  // tcW, so a viewer that lays out from the cells saw no widths at all. The
+  // markdown table states no widths, so the grid is the equal split.
+  it("writes gridCol, tcW and tblW that agree with the section column", async () => {
+    const { Packer } = await import("docx");
+    const { documentToDocxDocument } = await import("./exporters");
+    const content = "| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |\n";
+    const document = await documentToDocxDocument({ format: "markdown", content });
+    const xml = await zipEntryText(new Uint8Array(await Packer.toBuffer(document)), "word/document.xml");
+    const table = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/)?.[0] ?? "";
+    const gridCols = Array.from(table.matchAll(/<w:gridCol w:w="(\d+)"\/>/g), (m) => Number(m[1]));
+    expect(gridCols).toEqual([3120, 3120, 3120]);
+    expect(gridCols.reduce((a, b) => a + b, 0)).toBe(9360);
+    const tableWidth = table.match(/<w:tblW [^>]*\/>/)?.[0] ?? "";
+    expect(tableWidth).toContain('w:type="pct"');
+    expect(tableWidth).toMatch(/w:w="(100%|5000)"/);
+    const cellWidths = Array.from(table.matchAll(/<w:tcW w:type="dxa" w:w="(\d+)"\/>/g), (m) => Number(m[1]));
+    expect(cellWidths).toEqual([3120, 3120, 3120, 3120, 3120, 3120]);
+  });
+
+  it("gives the last column the remainder when the column does not split evenly", async () => {
+    const { Packer } = await import("docx");
+    const { documentToDocxDocument } = await import("./exporters");
+    const content = "| a | b | c | d | e | f | g |\n|---|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 | 7 |\n";
+    const document = await documentToDocxDocument({ format: "markdown", content });
+    const xml = await zipEntryText(new Uint8Array(await Packer.toBuffer(document)), "word/document.xml");
+    const gridCols = Array.from(xml.matchAll(/<w:gridCol w:w="(\d+)"\/>/g), (m) => Number(m[1]));
+    expect(gridCols).toEqual([1337, 1337, 1337, 1337, 1337, 1337, 1338]);
+  });
+});
+
+/** One stored/deflated entry of a zip (the .docx package) as text — a minimal
+ *  central-directory walk on node:zlib, so the test needs no zip dependency. */
+async function zipEntryText(bytes: Uint8Array, name: string): Promise<string> {
+  const { inflateRawSync } = await import("node:zlib");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+  let eocd = bytes.length - 22;
+  while (eocd >= 0 && view.getUint32(eocd, true) !== 0x06054b50) eocd -= 1;
+  if (eocd < 0) throw new Error("no end-of-central-directory record");
+  let offset = view.getUint32(eocd + 16, true);
+  const entries = view.getUint16(eocd + 10, true);
+  for (let i = 0; i < entries; i += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) throw new Error("bad central directory entry");
+    const method = view.getUint16(offset + 10, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const entryName = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLength));
+    if (entryName === name) {
+      const localNameLength = view.getUint16(localOffset + 26, true);
+      const localExtraLength = view.getUint16(localOffset + 28, true);
+      const start = localOffset + 30 + localNameLength + localExtraLength;
+      const data = bytes.subarray(start, start + compressedSize);
+      return decoder.decode(method === 8 ? inflateRawSync(data) : data);
+    }
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  throw new Error(`${name} is not in the package`);
+}

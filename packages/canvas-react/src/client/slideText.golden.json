@@ -15,9 +15,9 @@
     "size": 24,
     "w": 40,
     "h": 5,
-    "lines": 2,
-    "grownHeightPct": 8.0,
-    "fitScale": 0.625
+    "lines": 3,
+    "grownHeightPct": 16.0,
+    "fitScale": 0.313
   },
   {
     "name": "korean body in a placeholder box",
@@ -25,9 +25,9 @@
     "size": 26.7,
     "w": 59.245,
     "h": 5.834,
-    "lines": 3,
-    "grownHeightPct": 13.35,
-    "fitScale": 0.437
+    "lines": 4,
+    "grownHeightPct": 23.733,
+    "fitScale": 0.25
   },
   {
     "name": "explicit line breaks",
@@ -37,7 +37,7 @@
     "h": 4,
     "lineHeight": 1.5,
     "lines": 4,
-    "grownHeightPct": 16.667,
+    "grownHeightPct": 22.222,
     "fitScale": 0.25
   },
   {
@@ -56,8 +56,18 @@
     "size": 40,
     "w": 20,
     "h": 4,
-    "lines": 63,
-    "grownHeightPct": 420.0,
+    "lines": 84,
+    "grownHeightPct": 746.667,
     "fitScale": 0.25
+  },
+  {
+    "name": "bullet hang narrows the column",
+    "text": "• 가가가가가가가가가가가가가가가",
+    "size": 24,
+    "w": 40,
+    "h": 7,
+    "lines": 2,
+    "grownHeightPct": 10.667,
+    "fitScale": 0.656
   }
 ]

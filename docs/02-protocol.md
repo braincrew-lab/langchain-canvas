@@ -136,6 +136,22 @@ type SlideElement = {
   // text: text, fontSize, bold, color, align, fontFamily, lineHeight, ...,
   //       autofit ("shape" grows the box with its text · "text" shrinks the
   //       type to the box · "none", the default, leaves overflow to the check)
+  //       · fontSize is px on the 96 dpi page (`slidePage.ts::PAGE_DPI`): the
+  //         960 × 540 px 16:9 sheet the editor, the print sheet and the
+  //         estimator share; exporters write pt = px × 0.75 and the importer
+  //         reads pt × 4/3. (The estimator's former 128 dpi was a remnant of
+  //         the old 1280 px print sheet, not a Latin correction.)
+  //       · lineHeight is a CSS multiple of the font size on the canvas
+  //         (1.2 when unset). The PPTX round trip writes it 1:1 as
+  //         `a:spcPct`, a percentage of the FACE's own single line spacing,
+  //         so one value can look taller or shorter per font. Both readings
+  //         are documented, not reconciled: no native Office reference
+  //         render exists to pick a conversion factor.
+  //       · autofit "text" writes `normAutofit fontScale` = the shrink the
+  //         canvas computed. A viewer may re-fit on its own. Observed run
+  //         (LibreOffice 25.2.3, parity deck): two boxes with fontSize 24 px
+  //         (18 pt in the file) and fontScale 50000 both rendered at 14.99 pt,
+  //         not at the written 9 pt. Native PowerPoint behaviour is UNVERIFIED.
   // image: src   ·   shape: shape ("rect" | "ellipse" | "line"), fill ("#hex",
   //        or "none" for an explicitly unfilled shape), stroke, strokeWidth
   // table: rows (string[][]), header, colWidths, rowHeights, cells (per-cell
@@ -178,6 +194,37 @@ example below is a complete `canvas.create` envelope (one `data:` SSE line).
 
 Stream the body token-by-token with `canvas.append` at path `content`:
 `{ "type": "canvas.append", "id": "doc-1", "path": "content", "text": " more…" }`.
+
+**Page and table boundaries in the exported `.docx`.** Both Word doors — the
+Python `MarkdownDocxExporter` / `HtmlDocxExporter` and the browser `documentToDocx`
+(docx.js) — declare Letter with 1 in margins: a 6.5 in (9360 twips) text column,
+the same column the screen's `.cv-word__page` draws (816 − 2 × 96 px). Table
+widths are written against that column, per door and input:
+- Python, HTML table with stated `width="N%"` cells: each `gridCol` is N % of the
+  column; a column with no stated width takes an equal share of what the stated
+  ones leave. Every cell's `tcW` is the sum of the grid columns it spans, and
+  `tblW` is the grid sum in twips (`dxa`, fixed layout). Percentages are taken as
+  written — the writer does not normalise them — so 25/25/50 fills the column
+  exactly, while stated widths summing past 100 % produce a grid wider than it.
+- Python, table with no stated widths (markdown, plain HTML): python-docx's
+  default — an equal grid whose sum is the column, matching `tcW`, `tblW auto`,
+  autofit left to the viewer.
+- Browser (docx.js): `tblW` 100 % (`pct`), an equal grid (`gridCol`) and matching
+  cell widths (`tcW`) whose sum is the column; the last column takes the
+  division remainder. Markdown states no widths, so no other case exists there.
+So a full-width table's grid sums to the section column on both doors, and no
+viewer has to reconcile a grid with a page it was not written for. The
+table's border centre-line sits on the column edges, not one cell margin outside
+them: the Python file (python-docx template, `compatibilityMode` 14, where
+`tblInd` positions the first cell's text) writes `tblInd` = the style's left cell
+margin (108 twips); the browser file (`compatibilityMode` 15, where the indent
+positions the border itself) needs none. Consequences a reader should expect:
+the 0.5 pt border's ink reaches 0.25 pt outside the column on either side, a
+mode-15 viewer shifts the table a further half border to the right (LibreOffice
+25.2.3: centre-line at 72.3 pt for a 72 pt column), and cell text is inset from
+the border by the cell margin (5.4 pt) rather than aligned with body text. These
+numbers are LibreOffice 25.2.3 (Docker arm64) measurements; native Word rendering
+is UNVERIFIED.
 
 ### `slides` — a PowerPoint deck
 

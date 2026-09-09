@@ -686,8 +686,11 @@ def _section_of(document: Any, element: Any) -> Any:
     return sections[min(index, len(sections) - 1)]
 
 
-def _text_width(section: Any) -> int:
-    """How wide the text column is in this section, in EMU."""
+def section_text_width_emu(section: Any) -> int:
+    """How wide the text column is in this section, in EMU — the page less
+    its side margins. The one derivation the reader (``insert_image``) and the
+    writer's table grid (``exporters._add_table``) share, so a table sized to
+    the column is sized to the column the file declares (U6)."""
     page = section.page_width
     left = section.left_margin
     right = section.right_margin
@@ -747,7 +750,7 @@ def insert_image(
         if position == "after":
             spot.paragraph._p.addnext(paragraph._p)
         part = spot.part
-    room = _text_width(_section_of(document, paragraph._p))
+    room = section_text_width_emu(_section_of(document, paragraph._p))
     natural = int(picture.width)
     if width_inches is None:
         width = min(natural, room) if room else natural

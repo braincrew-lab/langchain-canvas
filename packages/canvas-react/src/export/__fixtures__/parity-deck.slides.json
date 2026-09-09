@@ -1,0 +1,107 @@
+{
+  "type": "slides",
+  "title": "parity-repro",
+  "data": {
+    "slides": [
+      {
+        "elements": [
+          {
+            "id": "grow",
+            "type": "text",
+            "x": 5, "y": 5, "w": 40, "h": 6,
+            "text": "• 가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "autofit": "shape"
+          },
+          {
+            "id": "lh10",
+            "type": "text",
+            "x": 72, "y": 5, "w": 18, "h": 10,
+            "text": "line one\nline two",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "lineHeight": 1.0
+          },
+          {
+            "id": "lh12",
+            "type": "text",
+            "x": 72, "y": 17, "w": 18, "h": 12,
+            "text": "line one\nline two",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "lineHeight": 1.2
+          },
+          {
+            "id": "lh15",
+            "type": "text",
+            "x": 72, "y": 29, "w": 18, "h": 14,
+            "text": "line one\nline two",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "lineHeight": 1.5
+          },
+          {
+            "id": "plain",
+            "type": "text",
+            "x": 5, "y": 25, "w": 40, "h": 8,
+            "text": "no lineHeight set",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "spaceBefore": 8
+          },
+          {
+            "id": "rect",
+            "type": "shape",
+            "shape": "rect",
+            "x": 5, "y": 48, "w": 30, "h": 10,
+            "fill": "#00aa00"
+          },
+          {
+            "id": "line",
+            "type": "shape",
+            "shape": "line",
+            "x": 5, "y": 62, "w": 40, "h": 2,
+            "fill": "#0000ff",
+            "strokeWidth": 2
+          },
+          {
+            "id": "fit_latin",
+            "type": "text",
+            "x": 50, "y": 50, "w": 40, "h": 8,
+            "text": "a bullet long enough that it has to wrap onto a second line inside its box",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "autofit": "text"
+          },
+          {
+            "id": "fit_ko",
+            "type": "text",
+            "x": 5, "y": 36, "w": 40, "h": 8,
+            "text": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR",
+            "autofit": "text"
+          },
+          {
+            "id": "overflow",
+            "type": "text",
+            "x": 50, "y": 5, "w": 20, "h": 4,
+            "text": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+            "fontSize": 24,
+            "fontFamily": "Noto Sans CJK KR"
+          },
+          {
+            "id": "korean_body",
+            "type": "text",
+            "x": 5, "y": 68, "w": 59.245, "h": 5.834,
+            "text": "디지털 금융 고객 경험 고도화와 실무 적용 가능한 AI 협업 모델 구축을 목표로 합니다. 브레인크루의 기획 역량과 신한은행의 금융 서비스 노하우를 결합합니다.",
+            "fontSize": 26.7,
+            "fontFamily": "Noto Sans CJK KR",
+            "autofit": "shape"
+          }
+        ]
+      }
+    ]
+  }
+}

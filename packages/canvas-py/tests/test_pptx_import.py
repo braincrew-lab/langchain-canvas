@@ -1208,6 +1208,28 @@ def test_the_stored_autofit_shrink_is_applied_to_the_size() -> None:
     assert element["lineHeight"] == pytest.approx(1.2 * 0.9, abs=0.01)
 
 
+def test_the_autofit_leading_reduction_starts_from_the_shared_default_leading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U2 (task 5): a reduced leading with no explicit spacing starts from the
+    estimator's ``DEFAULT_LINE_HEIGHT`` — one source, not a literal 1.2."""
+    from pptx.oxml.ns import qn
+
+    from langchain_canvas import slide_text
+
+    def build(slide: Any) -> None:
+        box = _textbox(slide, "shrunk")
+        box.text_frame.paragraphs[0].runs[0].font.size = Pt(30)
+        body = box.text_frame._bodyPr
+        body.append(body.makeelement(
+            qn("a:normAutofit"), {"fontScale": "62500", "lnSpcReduction": "10000"}
+        ))
+
+    monkeypatch.setattr(slide_text, "DEFAULT_LINE_HEIGHT", 2.0, raising=True)
+    element = _elements(pptx_to_slides(_deck(build)))[0]
+    assert element["lineHeight"] == pytest.approx(2.0 * 0.9, abs=0.01)
+
+
 def test_text_geometry_is_the_inset_text_area() -> None:
     """The frame shrinks by the box's text insets (PowerPoint's default
     0.1in sides), so line breaks measure against the width the original

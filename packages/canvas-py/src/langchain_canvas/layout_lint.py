@@ -67,6 +67,7 @@ from langchain_canvas.protocol.artifacts import (
 from langchain_canvas.slide_layout import BULLET_PREFIX, DerivedLayout, derive_layout
 from langchain_canvas.slide_table import table_grid
 from langchain_canvas.slide_text import (
+    DEFAULT_LINE_HEIGHT,
     PAGE_H_PX,
     PAGE_W_PX,
     fit_scale,
@@ -672,10 +673,11 @@ def _check_text_fit(
     if box_w <= 0 or box_h <= 0:
         return
     line_height = element.get("lineHeight")
+    # No explicit leading: the shared default every surface draws (U2).
     leading = (
         float(line_height)
         if isinstance(line_height, (int, float)) and line_height > 0
-        else 1.2
+        else DEFAULT_LINE_HEIGHT
     )
     lines = _wrapped_lines(text, float(size), box_w)
     needed = lines * float(size) * leading

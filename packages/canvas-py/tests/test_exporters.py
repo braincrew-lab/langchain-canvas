@@ -13,6 +13,7 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -449,6 +450,75 @@ def test_slides_pptx_template_skin_keeps_master_and_page_size():
     ((run,),) = [p.runs for p in texts[0].text_frame.paragraphs]
     assert run.text == "Hello"
     assert run.font.size.pt == 40.5
+
+
+def _narrow_skin_uri() -> str:
+    """A blank 7.5 x 5.625 in skin: the writer's projection scale is
+    ``min(7.5 / 10, 5.625 / 5.625) = 0.75``."""
+    skin = Presentation()
+    skin.slide_width = Inches(7.5)
+    skin.slide_height = Inches(5.625)
+    buf = io.BytesIO()
+    skin.save(buf)
+    return f"data:{PPTX_MIME};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+def test_slides_pptx_skin_scale_projects_spacing_and_strokes():
+    """U4 test 5 — on a skin the projection ``scale`` (0.75 here) is applied
+    to paragraph spacing, text outlines, shape outlines and table grid lines,
+    not only to the type size: ``px x 0.75 pt/px x scale``."""
+    content = json.dumps({
+        "type": "slides",
+        "title": "Skinned",
+        "data": {
+            "template": _narrow_skin_uri(),
+            "slides": [{"elements": [
+                {"id": "t", "type": "text", "x": 5, "y": 5, "w": 60, "h": 20, "text": "spaced",
+                 "fontSize": 24, "spaceBefore": 8, "stroke": "#ff0000", "strokeWidth": 4},
+                {"id": "r", "type": "shape", "shape": "rect", "x": 5, "y": 30, "w": 30, "h": 10,
+                 "fill": "#00aa00", "stroke": "#000000", "strokeWidth": 4},
+                {"id": "g", "type": "table", "x": 5, "y": 50, "w": 60, "h": 20,
+                 "rows": [["a", "b"]], "stroke": "#9e9e9e", "strokeWidth": 4},
+            ]}],
+        },
+    })
+    result = SlidesPptxExporter().export(content, path="deck.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    text, rect, table = list(list(deck.slides)[0].shapes)
+    (paragraph,) = text.text_frame.paragraphs
+    assert paragraph.space_before.pt == 8 * 0.75 * 0.75  # 4.5 pt
+    (run,) = paragraph.runs
+    assert run.font.size.pt == 24 * 0.75 * 0.75
+    outline = run.font._rPr.find(qn("a:ln"))
+    assert outline is not None and outline.get("w") == str(int(4 * 0.75 * 0.75 * 12700))  # 28575
+    assert rect.line.width.pt == 4 * 0.75 * 0.75  # 2.25 pt
+    cell = table.table.cell(0, 0)._tc.tcPr.find(qn("a:lnL"))
+    assert cell is not None and cell.get("w") == str(int(4 * 0.75 * 0.75 * 12700))
+
+
+def _connector(slides: list[dict[str, Any]]) -> Any:
+    result = SlidesPptxExporter().export(_deck(slides), path="deck.slides.json")
+    deck = Presentation(io.BytesIO(result.data))
+    (shape,) = list(list(deck.slides)[0].shapes)
+    return shape
+
+
+def test_slides_pptx_a_line_box_exports_flat_with_its_box_thickness():
+    """U4 test 3 — a ``line`` element is its box's centre line, drawn as thick
+    as the box (or the stroke when that is thicker), never a diagonal from the
+    box's top-left to its bottom-right."""
+    flat = _connector([{"elements": [{"id": "l", "type": "shape", "shape": "line", "x": 5, "y": 62,
+                                       "w": 40, "h": 2, "fill": "#0000ff", "strokeWidth": 2}]}])
+    assert int(flat.begin_y) == int(flat.end_y)
+    assert round(flat.line.width.pt, 2) == 8.1  # 0.02 x 5.625 in x 72
+    thin = _connector([{"elements": [{"id": "l", "type": "shape", "shape": "line", "x": 5, "y": 62,
+                                       "w": 40, "h": 0.2, "fill": "#0000ff", "strokeWidth": 2}]}])
+    assert int(thin.begin_y) == int(thin.end_y)
+    assert round(thin.line.width.pt, 2) == 1.5  # the stroke wins over a 0.81 pt box
+    tall = _connector([{"elements": [{"id": "l", "type": "shape", "shape": "line", "x": 5, "y": 5,
+                                       "w": 1, "h": 40, "fill": "#0000ff"}]}])
+    assert int(tall.begin_x) == int(tall.end_x)
+    assert int(tall.end_y) > int(tall.begin_y)
 
 
 def test_slides_pptx_unusable_skin_degrades_to_blank_export():
@@ -976,6 +1046,84 @@ def test_markdown_docx_keeps_inline_marks_in_cells_code_quotes_and_nesting():
     assert "**" not in xml and "~~" not in xml and "`" not in xml
 
 
+_REACT_EXPORT = Path(__file__).resolve().parents[2] / "canvas-react" / "src" / "export"
+DOCUMENT_FIXTURE = _REACT_EXPORT / "__fixtures__" / "parity-document.md"
+MARKDOWN_BLOCKS_GOLDEN = _REACT_EXPORT / "markdownBlocks.golden.json"
+
+
+def _run_to_json(run: Any) -> dict[str, Any]:
+    return {"text": run.text, "bold": run.bold, "italic": run.italic, "strike": run.strike,
+            "code": run.code}
+
+
+def _block_to_json(block: tuple[Any, ...]) -> list[Any]:
+    """An export block as the JSON the TypeScript twin (`markdownBlocks.ts`)
+    produces — the shared golden's shape (plan §U5)."""
+    kind = block[0]
+    if kind == "heading":
+        return ["heading", int(block[1]), [_run_to_json(r) for r in block[2]]]
+    if kind in ("para", "quote"):
+        return [kind, [_run_to_json(r) for r in block[1]]]
+    if kind in ("bullet", "numbered"):
+        return [kind, [_run_to_json(r) for r in block[1]], int(block[2])]
+    if kind == "code":
+        return ["code", block[1]]
+    if kind == "table":
+        rows = [[{"runs": [_run_to_json(r) for r in cell.content], "align": cell.align}
+                 for cell in row] for row in block[1]]
+        return ["table", rows, bool(block[2])]
+    if kind == "rule":
+        return ["rule"]
+    if kind == "image":
+        return ["image", base64.b64encode(block[1]).decode()]
+    raise AssertionError(f"unexpected block kind {kind!r}")
+
+
+def test_markdown_blocks_match_the_shared_golden():
+    """U5 test 1 — the markdown door's blocks for the shared fixture are the
+    golden the TypeScript twin reproduces (`markdownBlocks.test.ts`). The
+    golden is Python-authored (same precedent as `slideText.golden.json`);
+    a missing golden or any drift is a failure, never a rewrite."""
+    from langchain_canvas.exporters import _markdown_blocks
+
+    fixture = DOCUMENT_FIXTURE.read_text(encoding="utf-8")
+    blocks = [_block_to_json(block) for block in _markdown_blocks(fixture)]
+    kinds = set(block[0] for block in blocks)
+    every_kind = {
+        "heading", "para", "bullet", "numbered", "quote", "code", "table", "rule", "image",
+    }
+    assert every_kind <= kinds, kinds
+    golden = json.loads(MARKDOWN_BLOCKS_GOLDEN.read_text(encoding="utf-8"))
+    assert blocks == golden
+
+
+def test_html_docx_table_grid_fits_the_section_text_column():
+    """U6 test 1 — a table with stated column widths is gridded to the text
+    column the file's own section declares (Letter, 1 in margins: 9360 twips),
+    so a viewer that honours the grid as written draws it inside the column."""
+    from docx.oxml.ns import qn
+
+    html = ('<table><tr><td width="25%">a</td><td width="25%">b</td>'
+            '<td width="50%">c</td></tr></table>')
+    document = Document(io.BytesIO(HtmlDocxExporter().export(html, path="grid.html").data))
+    section = document.sections[0]
+    column = (int(section.page_width) - int(section.left_margin) - int(section.right_margin)) // 635
+    grid = [int(c.get(qn("w:w"))) for c in document.tables[0]._tbl.tblGrid.findall(qn("w:gridCol"))]
+    assert section.left_margin.inches == 1.0
+    assert column == 9360
+    assert sum(grid) == column, (grid, column)
+
+
+def test_markdown_docx_declares_one_inch_margins_on_letter():
+    """U6 test 2 — the markdown door writes its page explicitly: Letter with
+    1 in on every side, the column the screen's Word page draws too."""
+    document = Document(io.BytesIO(MarkdownDocxExporter().export("# t\n\nbody", path="m.md").data))
+    section = document.sections[0]
+    assert (section.page_width.inches, section.page_height.inches) == (8.5, 11.0)
+    margins = (section.left_margin, section.right_margin, section.top_margin, section.bottom_margin)
+    assert [m.inches for m in margins] == [1.0, 1.0, 1.0, 1.0]
+
+
 def test_markdown_docx_registered_for_md_canvas_files():
     from langchain_canvas.exporters import default_exporters, exporter_for
 
@@ -1190,3 +1338,117 @@ def test_slides_pptx_wrap_false_survives_the_round_trip():
     by_text = {e["text"]: e for e in back}
     assert by_text["One long single line"]["wrap"] is False
     assert "wrap" not in by_text["wrapping body text"]
+
+
+def _table_pr(document, index: int = 0):
+    from docx.oxml.ns import qn
+
+    return document.tables[index]._tbl.find(qn("w:tblPr"))
+
+
+def _style_left_cell_margin_twips(document, style_name: str) -> int:
+    from docx.oxml.ns import qn
+
+    element = document.styles[style_name].element
+    left = element.find(f"{qn('w:tblPr')}/{qn('w:tblCellMar')}/{qn('w:left')}")
+    return int(left.get(qn("w:w")))
+
+
+def test_docx_table_border_sits_on_the_text_column_edge():
+    """D2 (docx-final) — python-docx's template declares compatibilityMode 14
+    (settings.xml), under which a viewer measures ``tblInd`` to the first
+    cell's TEXT and hangs the border one cell margin further left (LibreOffice
+    25.2.3 drew the border centre at 66.6 pt = 72 − 5.4 for ``tblInd`` 0). The
+    writer therefore indents every table by its style's left cell margin so
+    the border lands on the column edge — for the HTML door and the markdown
+    door alike. The compat mode is locked because the indent value depends on it."""
+    from docx.oxml.ns import qn
+
+    html = ('<table><tr><td width="25%">a</td><td width="25%">b</td>'
+            '<td width="50%">c</td></tr></table>')
+    documents = [
+        Document(io.BytesIO(HtmlDocxExporter().export(html, path="grid.html").data)),
+        Document(
+            io.BytesIO(
+                MarkdownDocxExporter().export("| a | b |\n|---|---|\n| 1 | 2 |", path="t.md").data
+            )
+        ),
+    ]
+    for document in documents:
+        compat = document.settings.element.find(f"{qn('w:compat')}/{qn('w:compatSetting')}")
+        assert compat.get(qn("w:name")) == "compatibilityMode"
+        assert compat.get(qn("w:val")) == "14"
+        cell_margin = _style_left_cell_margin_twips(document, "Table Grid")
+        assert cell_margin == 108
+        indent = _table_pr(document).find(qn("w:tblInd"))
+        assert indent is not None, "no w:tblInd on the table"
+        assert (indent.get(qn("w:type")), int(indent.get(qn("w:w")))) == ("dxa", cell_margin)
+
+
+def test_html_docx_table_cell_widths_agree_with_its_grid():
+    """D2 (docx-final) — a stated-width table writes one width, three ways:
+    ``gridCol`` (the grid), ``tcW`` on every cell (what Word lays out from —
+    python-docx's default would leave equal thirds here, contradicting the
+    25/25/50 grid) and ``tblW`` (their sum), all summing to the section's text
+    column. A cell merged across columns takes the sum of its grid columns."""
+    from docx.oxml.ns import qn
+
+    html = (
+        '<table>'
+        '<tr><td width="25%">a</td><td width="25%">b</td><td width="50%">c</td></tr>'
+        '<tr><td colspan="2">ab</td><td>c</td></tr>'
+        '</table>'
+    )
+    document = Document(io.BytesIO(HtmlDocxExporter().export(html, path="grid.html").data))
+    tbl = document.tables[0]._tbl
+    grid = [int(c.get(qn("w:w"))) for c in tbl.tblGrid.findall(qn("w:gridCol"))]
+    assert grid == [2340, 2340, 4680]
+    width = _table_pr(document).find(qn("w:tblW"))
+    assert (width.get(qn("w:type")), int(width.get(qn("w:w")))) == ("dxa", sum(grid))
+    rows = []
+    for tr in tbl.findall(qn("w:tr")):
+        widths, column = [], 0
+        for tc in tr.findall(qn("w:tc")):
+            grid_span = tc.find(f"{qn('w:tcPr')}/{qn('w:gridSpan')}")
+            span = int(grid_span.get(qn("w:val"))) if grid_span is not None else 1
+            tc_w = tc.find(f"{qn('w:tcPr')}/{qn('w:tcW')}")
+            assert tc_w.get(qn("w:type")) == "dxa"
+            widths.append((int(tc_w.get(qn("w:w"))), sum(grid[column:column + span])))
+            column += span
+        rows.append(widths)
+    assert rows == [
+        [(2340, 2340), (2340, 2340), (4680, 4680)],
+        [(4680, 4680), (4680, 4680)],
+    ], rows
+    assert all(sum(w for w, _ in row) == 9360 for row in rows), rows
+
+
+@pytest.mark.parametrize("format", ["png", "jpeg", "gif"])
+def test_docx_data_image_bytes_and_relationships(format: str):
+    fixtures = json.loads((_REACT_EXPORT / "__fixtures__" / "docx-images.json").read_text())
+    raw = base64.b64decode(fixtures[format])
+    result = MarkdownDocxExporter().export(
+        f"![sample](data:image/{format};base64,{fixtures[format]})", path="images.md"
+    )
+    with zipfile.ZipFile(io.BytesIO(result.data)) as archive:
+        media = [name for name in archive.namelist() if name.startswith("word/media/")]
+        assert len(media) == 1
+        assert archive.read(media[0]) == raw
+        rels = archive.read("word/_rels/document.xml.rels").decode()
+        assert f'Target="{media[0].removeprefix("word/")}"' in rels
+        assert "/relationships/image" in rels
+    document = Document(io.BytesIO(result.data))
+    assert len(document.inline_shapes) == 1
+    # Python retains its existing 6-inch width; aspect ratio is 12:7.
+    shape = document.inline_shapes[0]
+    assert shape.width == Inches(6)
+    assert shape.height / shape.width == pytest.approx(7 / 12)
+
+
+@pytest.mark.parametrize("content", [
+    "![broken](data:image/png;base64,AA==)",
+    "![](data:image/png;base64,%%%)",
+])
+def test_docx_invalid_data_images_raise_explicit_error(content: str):
+    with pytest.raises(ValueError, match="DOCX image"):
+        MarkdownDocxExporter().export(content, path="images.md")
