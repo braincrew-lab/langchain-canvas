@@ -4,6 +4,14 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.47] — 2026-09-10
+
+### Fixed
+
+- The slide estimator, the editor, the thumbnails, the print sheet and the PPTX writer share one 96 dpi page, one default leading (1.2) and one bullet hanging column, so a box wraps the same way on screen and in the file. Boxes that grow with their text get a font-derived ink guard on screen only. Rectangles are square and a line element is its box's center line, as the file draws them; stroke widths and paragraph spacing scale with the type.
+- Both Word doors declare Letter with 1 in margins and size tables from that text column; the browser Word exporter keeps every markdown block and embeds PNG/JPEG/GIF data images with their original bytes, raising a clear error for invalid image data instead of dropping the picture.
+- Native Microsoft Word and PowerPoint rendering is not verified; LibreOffice may re-fit `normAutofit` text on its own (see `docs/02-protocol.md`).
+
 ## [0.7.46] — 2026-09-07
 
 ### Added
