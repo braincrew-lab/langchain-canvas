@@ -4,6 +4,13 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.48] — 2026-09-14
+
+### Fixed
+
+- A spreadsheet grid now follows its panel when the panel is resized by dragging its edge or collapsing a sidebar. Before, the grid kept its old size and left a blank area beside it until the browser window itself was resized.
+- A read-only workbook grid covers the whole panel, so a sheet with little data no longer shows a blank strip past its last row or column. Editable tables keep their own sizing.
+
 ## [0.7.47] — 2026-09-10
 
 ### Fixed

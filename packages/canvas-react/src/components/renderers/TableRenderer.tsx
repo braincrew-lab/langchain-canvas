@@ -171,6 +171,66 @@ const READ_ONLY_SETTINGS = {
   showSheetTabs: true,
 } as const;
 
+/** Fortune-sheet's column width and row height (px) for an unsized column/row. */
+const DEFAULT_COLUMN_PX = 73;
+const DEFAULT_ROW_PX = 19;
+
+function countToCover(
+  count: number,
+  lengths: Record<string, number> | undefined,
+  fallback: number,
+  span: number,
+): number {
+  let covered = 0;
+  for (let i = 0; i < count; i++) covered += lengths?.[i] ?? fallback;
+  return covered >= span ? count : count + Math.ceil((span - covered) / fallback);
+}
+
+/**
+ * Grow each sheet's row and column count until the grid covers `width` × `height`
+ * px. Fortune draws nothing past a sheet's last row or column, so a sheet sized to
+ * its data leaves a blank strip once the panel is wider or taller than that data.
+ * Counts only grow; stored row heights and column widths are counted as they are.
+ */
+export function padSheetsToArea(
+  sheets: TableData["sheet"],
+  width: number,
+  height: number,
+): TableData["sheet"] {
+  return sheets?.map((sheet) => {
+    const config = (sheet.config ?? {}) as {
+      columnlen?: Record<string, number>;
+      rowlen?: Record<string, number>;
+    };
+    return {
+      ...sheet,
+      column: countToCover(Number(sheet.column) || 0, config.columnlen, DEFAULT_COLUMN_PX, width),
+      row: countToCover(Number(sheet.row) || 0, config.rowlen, DEFAULT_ROW_PX, height),
+    };
+  });
+}
+
+/**
+ * Call `onChange` (at most once per frame) when the element's box actually changes
+ * size. Returns the cleanup.
+ */
+export function watchBoxSize(element: HTMLElement, onChange: () => void): () => void {
+  let last = `${element.clientWidth}x${element.clientHeight}`;
+  let frame = 0;
+  const observer = new ResizeObserver(() => {
+    const size = `${element.clientWidth}x${element.clientHeight}`;
+    if (size === last) return;
+    last = size;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(onChange);
+  });
+  observer.observe(element);
+  return () => {
+    observer.disconnect();
+    cancelAnimationFrame(frame);
+  };
+}
+
 export function TableRenderer({
   artifact,
   readOnly = false,
@@ -270,6 +330,15 @@ export function TableRenderer({
 
   const hasSheet = sheetHasContent(artifact.data.sheet);
 
+  // Fortune-sheet re-measures its canvas only on a window resize. A host that
+  // resizes the panel without one (a drag handle, a collapsing sidebar) left the
+  // grid at its old size beside a blank area, so replay that resize here.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    return watchBoxSize(root, () => window.dispatchEvent(new Event("resize")));
+  }, [mounted, formulasReady, hasSheet, columns.length]);
+
   // Non-destructive sort / filter over the structured rows. Only offered for a
   // rows-backed table — once the user edits into a Fortune sheet, that sheet is the
   // source of truth and its own header menu owns sorting. The filter is debounced
@@ -308,18 +377,24 @@ export function TableRenderer({
   // The workbook's data is frozen at mount (keyed by wbKey). In-sheet edits are
   // owned by Fortune and mirrored back via onChange — they must NOT feed back into
   // this prop or it resets mid-edit.
-  const initialData = useMemo(
-    () =>
-      viewActive
-        ? toWorkbook(columns, viewRows, formulas)
-        : hasSheet
-          ? // Rows the agent wrote after the person's last edit win their cells;
-            // the person's formatting and out-of-table cells survive.
-            mergeRowsIntoSheet(columns, rows, normalizeSheets(artifact.data.sheet), formulas)!
-          : toWorkbook(columns, rows, formulas),
+  const initialData = useMemo(() => {
+    const sheets = viewActive
+      ? toWorkbook(columns, viewRows, formulas)
+      : hasSheet
+        ? // Rows the agent wrote after the person's last edit win their cells;
+          // the person's formatting and out-of-table cells survive.
+          mergeRowsIntoSheet(columns, rows, normalizeSheets(artifact.data.sheet), formulas)!
+        : toWorkbook(columns, rows, formulas);
+    if (!readOnly || typeof window === "undefined") return sheets;
+    // A read-only grid is sized to its data; cover the largest area the panel can
+    // grow to (the screen) so resizing never reveals the end of the sheet.
+    return padSheetsToArea(
+      sheets,
+      Math.max(window.innerWidth, window.screen?.availWidth ?? 0),
+      Math.max(window.innerHeight, window.screen?.availHeight ?? 0),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wbKey, formulasReady],
-  );
+  }, [wbKey, formulasReady, readOnly]);
 
   // Persist in-sheet edits (cell values, inserted rows/columns, images, styling)
   // back onto the artifact so they survive re-renders and flow into exports.
