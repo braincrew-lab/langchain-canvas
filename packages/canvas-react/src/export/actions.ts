@@ -138,7 +138,8 @@ export function buildExportActions(artifact: Artifact, options: ExportActionOpti
         const html = await standalone();
         if (html == null) return;
         const fluidPage = artifact.type === "html" && !artifact.meta?.ratio;
-        printToPdf(fluidPage ? htmlPageToPrintHtml(html) : html);
+        if (fluidPage) printToPdf(htmlPageToPrintHtml(html), { wholeBoxes: true });
+        else printToPdf(html);
       },
     });
   }

@@ -204,7 +204,7 @@ describe("htmlSlideToPrintHtml", () => {
   });
 });
 
-import { htmlPageToPrintHtml, PRINT_COLOR_CSS } from "./exporters";
+import { htmlPageToPrintHtml, PRINT_COLOR_CSS, PRINT_KEEP_ATTR } from "./exporters";
 
 describe("htmlPageToPrintHtml", () => {
   const page = `<!doctype html><html><head><title>Page</title></head><body style="background:#0b1020"><h1>Hi</h1></body></html>`;
@@ -215,12 +215,15 @@ describe("htmlPageToPrintHtml", () => {
     expect(out).toContain("@page{margin:0}");
     expect(out.indexOf(PRINT_COLOR_CSS)).toBeLessThan(out.indexOf("</head>"));
     expect(out.indexOf("@page{margin:0}")).toBeLessThan(out.indexOf("</head>"));
+    // a box the print frame marks is not split across two pages
+    expect(out).toContain(`[${PRINT_KEEP_ATTR}]{break-inside:avoid;page-break-inside:avoid}`);
     expect(out).toContain('<body style="background:#0b1020"><h1>Hi</h1></body>');
   });
   it("puts the rules first when the page has no head", () => {
     const out = htmlPageToPrintHtml("<h1>Hi</h1>");
-    expect(out.startsWith(`<style>@page{margin:0}${PRINT_COLOR_CSS}</style>`)).toBe(true);
-    expect(out.endsWith("<h1>Hi</h1>")).toBe(true);
+    expect(out.startsWith("<style>@page{margin:0}")).toBe(true);
+    expect(out).toContain(PRINT_COLOR_CSS);
+    expect(out.endsWith("</style><h1>Hi</h1>")).toBe(true);
   });
 });
 

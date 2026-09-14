@@ -52,8 +52,11 @@ describe("buildExportActions", () => {
       assetBaseUrl: null,
     }).find((a) => a.id === "pdf")!;
     await pdf.run();
-    const printed = vi.mocked(printToPdf).mock.calls.at(-1)?.[0] ?? "";
+    const call = vi.mocked(printToPdf).mock.calls.at(-1);
+    const printed = call?.[0] ?? "";
     expect(printed).toContain(PRINT_COLOR_CSS);
+    // cards are measured in the frame and kept on one page
+    expect(call?.[1]).toEqual({ wholeBoxes: true });
     expect(printed).toContain('<body style="background:#0b1020"><h1>Hi</h1></body>');
   });
 });
