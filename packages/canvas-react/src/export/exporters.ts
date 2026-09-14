@@ -409,6 +409,16 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
   return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
 }
 
+/** A fluid web page as the print pipeline gets it: the page as authored plus
+ *  the rule that keeps its background colours — without it a dark page prints
+ *  as bare text on white — and a margin-free page, so that background runs to
+ *  the paper edge instead of sitting inside a white frame. */
+export function htmlPageToPrintHtml(html: string): string {
+  const style = `<style>@page{margin:0}${PRINT_COLOR_CSS}</style>`;
+  const i = html.toLowerCase().lastIndexOf("</head>");
+  return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
+}
+
 /** A table element as a real `<table>` in the print sheet — the grid the
  *  editor draws, with the same line, fills and text. */
 function tableHtml(el: SlideElement, box: string, fg: string): string {

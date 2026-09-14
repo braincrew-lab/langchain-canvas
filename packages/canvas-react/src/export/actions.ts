@@ -10,7 +10,7 @@
 import type { Artifact, HtmlData, SlidesData } from "../protocol/artifacts";
 import { DEFAULT_LABELS, type CanvasLabels } from "../components/chrome";
 import { downloadBlob, slugify } from "./download";
-import { dataExporters, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml } from "./exporters";
+import { dataExporters, htmlPageToPrintHtml, htmlSlideToPrintHtml, slidesToPrintHtml, toStandaloneHtml } from "./exporters";
 import { printToPdf } from "./pdf";
 import { inlineArtifactAssets, inlineHtmlAssets } from "../io/canvasAssets";
 
@@ -134,9 +134,11 @@ export function buildExportActions(artifact: Artifact, options: ExportActionOpti
       extension: "pdf",
       run: async () => {
         // A fixed-aspect slide prints to a slide-sized landscape page (no A4
-        // clip); a fluid web page prints as-is.
+        // clip); a fluid web page prints as authored, with its colours kept.
         const html = await standalone();
-        if (html != null) printToPdf(html);
+        if (html == null) return;
+        const fluidPage = artifact.type === "html" && !artifact.meta?.ratio;
+        printToPdf(fluidPage ? htmlPageToPrintHtml(html) : html);
       },
     });
   }
