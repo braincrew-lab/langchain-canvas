@@ -10,7 +10,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BULLET_HANG_EM } from "../client/slideText";
-import { fitSnugLines } from "./pdf";
+import { PRINT_KEEP_ATTR } from "./exporters";
+import { fitSnugLines, markWholeBoxes } from "./pdf";
 
 function fakeContext(): CanvasRenderingContext2D {
   return { font: "", measureText: (text: string) => ({ width: Array.from(text).length * 10 }) } as unknown as CanvasRenderingContext2D;
@@ -63,6 +64,62 @@ describe("fitSnugLines (the print sheet's snug one-line fit)", () => {
     fitSnugLines(document);
     expect(node.style.whiteSpace).toBe("nowrap");
     expect(parseFloat(node.style.fontSize)).toBeCloseTo(24 * (65 / 70), 6);
+  });
+});
+
+describe("markWholeBoxes (a card stays on one printed page)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  /** A box with inline `style`, laid out `height` px tall (jsdom has no layout). */
+  function box(style: string, height: number, tag = "div"): HTMLElement {
+    const node = document.createElement(tag);
+    node.setAttribute("style", style);
+    document.body.appendChild(node);
+    node.getBoundingClientRect = () => ({ height }) as DOMRect;
+    return node;
+  }
+
+  it("keeps a filled or bordered block shorter than a page whole", () => {
+    const filled = box("display:block;background-color:rgb(20, 24, 40)", 300);
+    const bordered = box("display:block;border:1px solid rgb(60, 60, 80)", 200);
+    markWholeBoxes(document, 1000);
+    expect(filled.hasAttribute(PRINT_KEEP_ATTR)).toBe(true);
+    expect(bordered.hasAttribute(PRINT_KEEP_ATTR)).toBe(true);
+  });
+
+  it("leaves plain blocks, clear fills, inline chips and page-tall boxes free to break", () => {
+    // A box taller than a page cannot fit anywhere; marking it would only push
+    // it to a fresh page and leave the page before it half empty.
+    const plain = box("display:block", 300);
+    const clear = box("display:block;background-color:rgba(0, 0, 0, 0)", 300);
+    const chip = box("display:inline;background-color:rgb(20, 24, 40)", 20, "span");
+    const tall = box("display:block;background-color:rgb(20, 24, 40)", 1500);
+    markWholeBoxes(document, 1000);
+    for (const node of [plain, clear, chip, tall]) expect(node.hasAttribute(PRINT_KEEP_ATTR)).toBe(false);
+  });
+
+  it("lets a section holding cards break between them while each card stays whole", () => {
+    // Keeping the whole section pushed it to a fresh page and left the page
+    // before it two thirds empty (measured on a four-step action plan).
+    const section = box("display:block;background-color:rgb(20, 24, 40)", 850);
+    const steps = [0, 1, 2, 3].map(() => {
+      const step = box("display:block;border:1px solid rgb(60, 60, 80)", 190);
+      section.appendChild(step);
+      return step;
+    });
+    markWholeBoxes(document, 1000);
+    expect(section.hasAttribute(PRINT_KEEP_ATTR)).toBe(false);
+    for (const step of steps) expect(step.hasAttribute(PRINT_KEEP_ATTR)).toBe(true);
+  });
+
+  it("still keeps a card whole when all it holds is a small badge", () => {
+    const card = box("display:block;background-color:rgb(20, 24, 40)", 220);
+    const badge = box("display:block;background-color:rgb(120, 140, 250)", 34);
+    card.appendChild(badge);
+    markWholeBoxes(document, 1000);
+    expect(card.hasAttribute(PRINT_KEEP_ATTR)).toBe(true);
   });
 });
 

@@ -68,6 +68,11 @@ export const dataExporters: Record<string, FileExport[]> = {
 export const PRINT_COLOR_CSS =
   "*{-webkit-print-color-adjust:exact;print-color-adjust:exact}";
 
+/** The attribute the print frame puts on a card it keeps on one page
+ *  (`markWholeBoxes`); a web page's print sheet turns it into
+ *  `break-inside: avoid`. */
+export const PRINT_KEEP_ATTR = "data-print-keep";
+
 /** Wrap already-rendered inner HTML into a standalone, styled `.html` document. */
 export function toStandaloneHtml(title: string, renderedHtml: string): string {
   return `<!doctype html>
@@ -405,6 +410,19 @@ export function htmlSlideToPrintHtml(html: string, ratio?: string): string {
     `.slide-container{width:${w}px!important;height:${h}px!important;` +
     `box-shadow:none!important;border-radius:0!important;overflow:hidden!important;` +
     `page-break-after:avoid}</style>`;
+  const i = html.toLowerCase().lastIndexOf("</head>");
+  return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
+}
+
+/** A fluid web page as the print pipeline gets it: the page as authored plus
+ *  the rule that keeps its background colours — without it a dark page prints
+ *  as bare text on white — a margin-free page, so that background runs to
+ *  the paper edge instead of sitting inside a white frame, and the rule that
+ *  keeps a card the print frame marked on one page. */
+export function htmlPageToPrintHtml(html: string): string {
+  const style =
+    `<style>@page{margin:0}${PRINT_COLOR_CSS}` +
+    `[${PRINT_KEEP_ATTR}]{break-inside:avoid;page-break-inside:avoid}</style>`;
   const i = html.toLowerCase().lastIndexOf("</head>");
   return i === -1 ? style + html : html.slice(0, i) + style + html.slice(i);
 }

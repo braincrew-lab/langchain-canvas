@@ -23,7 +23,7 @@ import type { HtmlData } from "../../protocol/artifacts";
 import type { IframeCommand } from "../../store/store";
 import { useCanvasStore, useCanvasStoreApi } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
-import { useLabels } from "../chrome";
+import { useChrome, useLabels } from "../chrome";
 
 const DEVICES = [
   { id: "desktop", label: "Desktop", width: "100%" },
@@ -344,6 +344,7 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
 
 export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   const labels = useLabels();
+  const chrome = useChrome();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const imgFileRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
@@ -491,6 +492,8 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // the fluid device-width switch (meaningless for a fixed slide) is hidden.
   const ratio = artifact.meta?.ratio as string | undefined;
   const slide = useSlideFit(ratio, stageRef);
+  // A host may leave the switch out; the page then always takes the full width.
+  const showWidthSwitch = !ratio && chrome.htmlPreviewWidth;
 
   const deviceSeg = (
     <div className="cv-html-seg" role="group" aria-label={labels.previewWidth}>
@@ -506,15 +509,16 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
     <div className="cv-html-wrap">
       <input ref={imgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onImgFile(e.target.files?.[0]); e.target.value = ""; }} />
       <input ref={bgFileRef} type="file" accept="image/*" hidden onChange={(e) => { onSlideBg(e.target.files?.[0]); e.target.value = ""; }} />
+      {/* Looking only, the width switch is the whole toolbar: without it there is no bar. */}
+      {(!readOnly || showWidthSwitch) && (
       <div className="cv-html-bar cv-chrome">
         {readOnly ? (
-          // Looking only: the device-width switch is the whole toolbar.
-          !ratio && deviceSeg
+          deviceSeg
         ) : (
           <>
         {mode === "design" && (
           <>
-            {!ratio && (
+            {showWidthSwitch && (
               <>
                 {deviceSeg}
                 <span className="cv-html-bar__sep" />
@@ -705,6 +709,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
           </>
         )}
       </div>
+      )}
 
       {a11y !== null && (
         <div className="cv-a11y" role="status">
@@ -743,7 +748,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
               title={artifact.title}
               srcDoc={srcDoc}
               sandbox="allow-scripts allow-popups allow-modals"
-              style={{ width: DEVICES.find((d) => d.id === device)!.width }}
+              style={{ width: showWidthSwitch ? DEVICES.find((d) => d.id === device)!.width : "100%" }}
             />
           )}
         </div>

@@ -4,6 +4,17 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.49] — 2026-09-15
+
+### Added
+
+- `chrome.htmlPreviewWidth` (default on): a host can leave out the Desktop / Tablet / Mobile width switch above a web page. The page then always takes the full width. A read-only html tab with nothing left in its toolbar draws no toolbar box; fixed-ratio slides no longer show an empty one either.
+- Printing a web page to PDF keeps each card on one page. The print frame lays the page out at paper width and keeps every box with a fill, a border or a shadow that is shorter than a page from breaking in the middle. A section that holds cards of its own may still break between them, so it does not leave half a page empty.
+
+### Fixed
+
+- A web page printed to PDF keeps its background colours and has no page margin, so a dark page prints as it looks on screen instead of as text on white inside a white frame.
+
 ## [0.7.48] — 2026-09-14
 
 ### Fixed

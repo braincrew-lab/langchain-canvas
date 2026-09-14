@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Artifact } from "../protocol/artifacts";
 import { buildExportActions } from "./actions";
 import { slugify } from "./download";
+import { PRINT_COLOR_CSS } from "./exporters";
+import { printToPdf } from "./pdf";
+
+vi.mock("./pdf", () => ({ printToPdf: vi.fn() }));
 
 const artifact = (type: Artifact["type"], data: Artifact["data"]): Artifact => ({
   id: `a.${type}`,
@@ -39,6 +43,21 @@ describe("buildExportActions", () => {
     expect(openTab.label).toBe("새 탭에서 열기");
     expect(html.label).toBe("웹페이지");
     expect(md.label).toBe("마크다운");
+  });
+
+  it("prints a web page with the colours it was drawn with", async () => {
+    const html = `<!doctype html><html><head></head><body style="background:#0b1020"><h1>Hi</h1></body></html>`;
+    const pdf = buildExportActions(artifact("html", { html }), {
+      getRenderedHtml: () => null,
+      assetBaseUrl: null,
+    }).find((a) => a.id === "pdf")!;
+    await pdf.run();
+    const call = vi.mocked(printToPdf).mock.calls.at(-1);
+    const printed = call?.[0] ?? "";
+    expect(printed).toContain(PRINT_COLOR_CSS);
+    // cards are measured in the frame and kept on one page
+    expect(call?.[1]).toEqual({ wholeBoxes: true });
+    expect(printed).toContain('<body style="background:#0b1020"><h1>Hi</h1></body>');
   });
 });
 

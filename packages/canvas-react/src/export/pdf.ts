@@ -19,10 +19,68 @@
  * `document.write` so the content is parsed inertly.
  */
 import { snugLineWidth } from "../client/slideText";
+import { PRINT_KEEP_ATTR } from "./exporters";
 
 /** How much wider than its box a one-line text may run before fitting gives
  *  up and lets it wrap — the print twin of the renderer's snug fit. */
 const SNUG_MAX_OVERFLOW = 1.22;
+
+/** A printed page at 96 dpi, taken from the smaller of the two common papers
+ *  on each side: US Letter's height (11 in) and A4's width (210 mm). A box
+ *  measured at the narrower width is never shorter than it prints, and one
+ *  under the shorter height fits a page of either paper. */
+const PRINT_PAGE_WIDTH_PX = 794;
+const PRINT_PAGE_HEIGHT_PX = 1056;
+
+/** Display values of a box that a page break could cut through. */
+const BOX_DISPLAYS = new Set(["block", "flex", "grid", "list-item", "table", "flow-root"]);
+
+/** Whether a computed style draws a box: a block with a fill, a border or a shadow. */
+function drawsBox(computed: CSSStyleDeclaration): boolean {
+  if (!BOX_DISPLAYS.has(computed.display)) return false;
+  const color = computed.backgroundColor;
+  const clear = !color || color === "transparent" || /^rgba\(.*,\s*0\)$/.test(color);
+  const filled = !clear || (!!computed.backgroundImage && computed.backgroundImage !== "none");
+  const bordered = (["Top", "Right", "Bottom", "Left"] as const).some(
+    (side) => parseFloat(computed[`border${side}Width`]) > 0 && computed[`border${side}Style`] !== "none",
+  );
+  const shadowed = !!computed.boxShadow && computed.boxShadow !== "none";
+  return filled || bordered || shadowed;
+}
+
+/**
+ * Mark the boxes a reader sees as one card, so the print keeps each on one page.
+ *
+ * A box shorter than a page gets `PRINT_KEEP_ATTR`, which the web page's print
+ * sheet turns into `break-inside: avoid`, unless it holds a card of its own (a
+ * box a tenth of a page tall or more — a badge or a chip does not count). Such
+ * a section may break between its cards, and each card stays whole: keeping
+ * the whole section pushed it to a fresh page and left the page before it two
+ * thirds empty. A box a page tall or taller fits no page and is left alone.
+ * Runs from the host on the sandboxed frame's document.
+ */
+export function markWholeBoxes(doc: Document, pageHeightPx: number): void {
+  const view = doc.defaultView;
+  if (!view || !doc.body) return;
+  const boxes: { node: HTMLElement; height: number }[] = [];
+  doc.body.querySelectorAll<HTMLElement>("*").forEach((node) => {
+    if (drawsBox(view.getComputedStyle(node))) boxes.push({ node, height: node.getBoundingClientRect().height });
+  });
+  const cardHeightPx = pageHeightPx / 10;
+  for (const { node, height } of boxes) {
+    if (height <= 0 || height >= pageHeightPx) continue;
+    const holdsCard = boxes.some(
+      (other) => other.node !== node && other.height >= cardHeightPx && node.contains(other.node),
+    );
+    if (!holdsCard) node.setAttribute(PRINT_KEEP_ATTR, "");
+  }
+}
+
+export interface PrintFrameOptions {
+  /** Lay a fluid web page out at paper width and keep each card on one page
+   *  (`markWholeBoxes`). A slide sheet sets its own pages and leaves this off. */
+  wholeBoxes?: boolean;
+}
 
 /**
  * Shrink marked one-line texts a hair instead of letting them wrap.
@@ -73,11 +131,23 @@ export function fitSnugLines(doc: Document): void {
  * Resolves with the frame once that is done — `printToPdf` prints it; the
  * print gate measures it. Rejects when the frame yields no window.
  */
-export function preparePrintFrame(html: string): Promise<HTMLIFrameElement> {
+export function preparePrintFrame(html: string, options: PrintFrameOptions = {}): Promise<HTMLIFrameElement> {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
   Object.assign(iframe.style, { position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0" });
+  if (options.wholeBoxes) {
+    // Measured boxes need the page laid out at paper width, off screen: a
+    // zero-size frame wraps every card into a column of single words.
+    Object.assign(iframe.style, {
+      right: "auto",
+      bottom: "auto",
+      left: "-10000px",
+      top: "0",
+      width: `${PRINT_PAGE_WIDTH_PX}px`,
+      height: `${PRINT_PAGE_HEIGHT_PX}px`,
+    });
+  }
   return new Promise((resolve, reject) => {
     iframe.onload = () => {
       const win = iframe.contentWindow;
@@ -90,6 +160,7 @@ export function preparePrintFrame(html: string): Promise<HTMLIFrameElement> {
       void sheet.body?.offsetHeight; // lay the sheet out so its faces start loading
       void sheet.fonts.ready.then(() => {
         fitSnugLines(sheet);
+        if (options.wholeBoxes) markWholeBoxes(sheet, PRINT_PAGE_HEIGHT_PX);
         resolve(iframe);
       });
     };
@@ -98,8 +169,8 @@ export function preparePrintFrame(html: string): Promise<HTMLIFrameElement> {
   });
 }
 
-export function printToPdf(html: string): void {
-  void preparePrintFrame(html)
+export function printToPdf(html: string, options: PrintFrameOptions = {}): void {
+  void preparePrintFrame(html, options)
     .then((iframe) => {
       const win = iframe.contentWindow;
       if (!win) {
