@@ -421,6 +421,9 @@ export interface CanvasChrome {
   /** The version rail on a stored file's tab — off when the file is viewed
    *  only and the host keeps version history elsewhere. */
   fileVersions: boolean;
+  /** The Desktop / Tablet / Mobile width switch above a web page — off when
+   *  pages are only looked at on a desktop; the page then takes the full width. */
+  htmlPreviewWidth: boolean;
 }
 
 export const DEFAULT_CHROME: CanvasChrome = {
@@ -434,6 +437,7 @@ export const DEFAULT_CHROME: CanvasChrome = {
   fileFacts: true,
   fileDownload: true,
   fileVersions: true,
+  htmlPreviewWidth: true,
 };
 
 const ChromeContext = createContext<{ labels: CanvasLabels; chrome: CanvasChrome }>({

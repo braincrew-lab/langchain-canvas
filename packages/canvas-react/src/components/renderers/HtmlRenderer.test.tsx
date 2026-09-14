@@ -7,12 +7,12 @@ import { act } from "react";
 // @ts-expect-error — react-dom ships no types here and this package adds no
 // devDependency for a single test; the runtime import is real.
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Artifact, HtmlData } from "../../protocol/artifacts";
 import { createCanvasStore } from "../../store/store";
 import { CanvasProvider } from "../../store/context";
-import { ChromeProvider, DEFAULT_LABELS } from "../chrome";
+import { ChromeProvider, DEFAULT_LABELS, type CanvasChrome } from "../chrome";
 import { HtmlRenderer } from "./HtmlRenderer";
 
 const page: Artifact<HtmlData> = {
@@ -32,11 +32,15 @@ afterEach(() => {
   host?.remove();
   root = null;
   host = null;
+  vi.unstubAllGlobals();
 });
 
-function mount(readOnly: boolean) {
+function mount(
+  readOnly: boolean,
+  { chrome, artifact = page }: { chrome?: Partial<CanvasChrome>; artifact?: Artifact<HtmlData> } = {},
+) {
   const store = createCanvasStore();
-  store.getState().applyEvent({ type: "canvas.create", artifact: page });
+  store.getState().applyEvent({ type: "canvas.create", artifact });
   store.getState().setReadOnly(readOnly);
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -44,8 +48,8 @@ function mount(readOnly: boolean) {
   act(() =>
     root!.render(
       <CanvasProvider store={store}>
-        <ChromeProvider>
-          <HtmlRenderer artifact={page} />
+        <ChromeProvider chrome={chrome}>
+          <HtmlRenderer artifact={artifact} />
         </ChromeProvider>
       </CanvasProvider>,
     ),
@@ -67,5 +71,31 @@ describe("HtmlRenderer readOnly", () => {
     expect(host!.querySelector("iframe")?.getAttribute("srcdoc")).toContain("window.__LCX_READONLY=true");
     // the device-width switch is the one control that stays
     expect(host!.querySelectorAll(".cv-html-seg button").length).toBe(3);
+  });
+});
+
+describe("HtmlRenderer preview width switch", () => {
+  it("a host can leave the switch out of the edit toolbar", () => {
+    mount(false, { chrome: { htmlPreviewWidth: false } });
+    expect(host!.querySelectorAll(".cv-html-add").length).toBeGreaterThan(0);
+    expect(host!.textContent).not.toContain(DEFAULT_LABELS.viewportMobile);
+    // only the design / code switch is left
+    expect(host!.querySelectorAll(".cv-html-seg button").length).toBe(2);
+    expect(host!.querySelector("iframe")?.style.width).toBe("100%");
+  });
+
+  it("read-only without the switch draws no toolbar at all", () => {
+    mount(true, { chrome: { htmlPreviewWidth: false } });
+    expect(host!.querySelector(".cv-html-bar")).toBeNull();
+    expect(host!.querySelector("iframe")?.style.width).toBe("100%");
+  });
+
+  it("a read-only fixed-ratio slide draws no empty toolbar", () => {
+    if (typeof ResizeObserver === "undefined") {
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    }
+    mount(true, { artifact: { ...page, meta: { ratio: "16:9" } } });
+    expect(host!.querySelector(".cv-html-bar")).toBeNull();
+    expect(host!.querySelector("iframe")).not.toBeNull();
   });
 });
