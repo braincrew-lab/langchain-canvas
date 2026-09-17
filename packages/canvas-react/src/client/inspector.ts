@@ -90,6 +90,34 @@ export const STYLE_PROPS = [
 ] as const;
 
 // Kept as ES5-ish source since it is serialized verbatim into the iframe.
+/** Keeps every link inside the frame. A `srcdoc` document resolves a bare
+ *  `#section` against the host page's URL, so a plain anchor click tries to load
+ *  the host site inside the iframe — which the host's frame-ancestors policy
+ *  refuses, leaving a "refused to connect" page where the document was. In-page
+ *  anchors scroll to their target instead (read-only only: in edit mode a click
+ *  selects the element and must not move the page); every other link and every
+ *  form submit is dropped, so a page can never lead out of the canvas. Runs
+ *  before anything else the inspector wires, in both modes. */
+export const NAV_GUARD_SCRIPT = `
+if (!window.__LCX_NAV_GUARD) {
+window.__LCX_NAV_GUARD = true;
+document.addEventListener("click", function (e) {
+  var t = e.target;
+  var a = t instanceof Element ? t.closest("a[href]") : null;
+  if (!a) return;
+  e.preventDefault();
+  if (!window.__LCX_READONLY) return;
+  var href = a.getAttribute("href") || "";
+  if (href.charAt(0) !== "#") return;
+  var id = "";
+  try { id = decodeURIComponent(href.slice(1)); } catch (err) { id = href.slice(1); }
+  var target = id ? (document.getElementById(id) || document.getElementsByName(id)[0]) : null;
+  (target || document.documentElement).scrollIntoView({ behavior: "smooth", block: "start" });
+}, true);
+document.addEventListener("submit", function (e) { e.preventDefault(); }, true);
+}
+`;
+
 const INSPECTOR_SCRIPT = `
 (function () {
   var MARK = ${JSON.stringify(INSPECTOR_MARK)};
@@ -272,6 +300,7 @@ const INSPECTOR_SCRIPT = `
     positionResize();
   }
   function start() {
+    ${NAV_GUARD_SCRIPT}
     // Resolve asset references now and after any change (insert_html, set_src,
     // duplicate). Idempotent: rewritten images carry data-lcx-src and are
     // skipped, so the observer settles after one pass.
