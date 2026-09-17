@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.50] — 2026-09-18
+
+### Fixed
+
+- A link inside an html page never leaves the frame. The page is shown in a `srcdoc` iframe, which resolved a bare `#section` link against the host page's URL, so a table of contents entry or a "back to top" button loaded the host site inside the frame and the host refused the connection. Read-only pages now scroll to the in-page target instead; every other link is dropped and a form never submits, in both modes.
+
 ## [0.7.49] — 2026-09-15
 
 ### Added
