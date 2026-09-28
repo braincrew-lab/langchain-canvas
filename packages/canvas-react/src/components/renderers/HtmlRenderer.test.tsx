@@ -74,6 +74,34 @@ describe("HtmlRenderer readOnly", () => {
   });
 });
 
+describe("HtmlRenderer iframe sandbox", () => {
+  it("is allow-scripts only on the non-slide (web page) iframe", () => {
+    mount(false);
+    expect(host!.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+
+  it("is allow-scripts only on the fixed-aspect slide iframe", () => {
+    if (typeof ResizeObserver === "undefined") {
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    }
+    mount(false, { artifact: { ...page, meta: { ratio: "16:9" } } });
+    expect(host!.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+});
+
+describe("HtmlRenderer srcDoc CSP", () => {
+  it("carries a meta CSP as the first head element, independent of any route or parent CSP", () => {
+    mount(false);
+    const srcDoc = host!.querySelector("iframe")!.getAttribute("srcdoc")!;
+    expect(srcDoc.startsWith('<!DOCTYPE html><meta http-equiv="Content-Security-Policy"')).toBe(true);
+    const doc = new DOMParser().parseFromString(srcDoc, "text/html");
+    const meta = doc.head?.firstElementChild;
+    expect(meta?.tagName.toLowerCase()).toBe("meta");
+    expect(meta?.getAttribute("http-equiv")).toBe("Content-Security-Policy");
+    expect(meta?.getAttribute("content")).not.toContain("connect-src");
+  });
+});
+
 describe("HtmlRenderer preview width switch", () => {
   it("a host can leave the switch out of the edit toolbar", () => {
     mount(false, { chrome: { htmlPreviewWidth: false } });
