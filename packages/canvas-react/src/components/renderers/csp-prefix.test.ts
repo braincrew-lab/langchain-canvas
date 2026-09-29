@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { withCspPrefix } from "./csp-prefix";
+import { deriveAssetOrigin, withCspPrefix } from "./csp-prefix";
 
 const CSP_PREFIX = '<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="';
 
@@ -74,5 +74,22 @@ describe("withCspPrefix — asset origins", () => {
     expect(directives["img-src"]).toBe("data: blob:");
     expect(directives["style-src"]).toBe("'unsafe-inline'");
     expect(directives["font-src"]).toBe("data:");
+  });
+});
+
+describe("deriveAssetOrigin", () => {
+  it("returns null when there is no asset base URL", () => {
+    expect(deriveAssetOrigin(null)).toBeNull();
+    expect(deriveAssetOrigin(undefined)).toBeNull();
+    expect(deriveAssetOrigin("")).toBeNull();
+  });
+
+  it("resolves an absolute asset base URL to its own origin", () => {
+    expect(deriveAssetOrigin("https://cdn.example.com/files/")).toBe("https://cdn.example.com");
+    expect(deriveAssetOrigin("https://cdn.example.com:8443/files/")).toBe("https://cdn.example.com:8443");
+  });
+
+  it("resolves a relative asset base URL to the parent page's origin (window.location), not an opaque srcDoc origin", () => {
+    expect(deriveAssetOrigin("/api/canvas/files/")).toBe(window.location.origin);
   });
 });

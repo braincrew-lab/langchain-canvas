@@ -53,3 +53,28 @@ export function withCspPrefix(doc: string, assetOrigins: string[] = []): string 
   const rest = stripLeadingNoise(doc);
   return `<!DOCTYPE html><meta http-equiv="Content-Security-Policy" content="${cspContent(assetOrigins)}">${rest}`;
 }
+
+/**
+ * Derives the origin that serves canvas assets from `assetBaseUrl`, so the
+ * `srcDoc` CSP can allow it without every host having to pass `assetOrigins`
+ * explicitly (`<Canvas>` has no prop path to forward one to `HtmlRenderer`).
+ *
+ * An absolute `assetBaseUrl` (e.g. `"https://api.example.com/files/"`) resolves
+ * to its own origin. A relative one (e.g. `"/api/files/"`) resolves against the
+ * *parent page's* address, not the iframe's: a `srcDoc` iframe sandboxed with
+ * `allow-scripts` only (no `allow-same-origin`) has an opaque origin, so `'self'`
+ * in the CSP would never match it, and the HTML spec resolves a `srcDoc`
+ * document's relative URLs against its parent browsing context's address —
+ * `window.location` here IS the parent page, since this runs in the host page,
+ * not inside the sandboxed iframe. Returns `null` when there is no base URL, or
+ * when it cannot be parsed (e.g. no `window` in a non-browser environment).
+ */
+export function deriveAssetOrigin(assetBaseUrl: string | null | undefined): string | null {
+  if (!assetBaseUrl) return null;
+  try {
+    const base = typeof window !== "undefined" ? window.location.href : undefined;
+    return new URL(assetBaseUrl, base).origin;
+  } catch {
+    return null;
+  }
+}
