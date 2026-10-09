@@ -4,6 +4,13 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.51] — 2026-10-09
+
+### Security
+
+- An html page runs in a tighter sandbox. The `srcdoc` iframe now allows scripts only — popups and modal dialogs are no longer allowed — so a page cannot open new windows or block the host with `alert()`.
+- An html page carries its own Content Security Policy. `withCspPrefix` puts a CSP meta tag at the top of the page before it is shown, so the page can load assets only from the host's asset origin (taken from `assetBaseUrl`) and cannot send data anywhere else.
+
 ## [0.7.50] — 2026-09-18
 
 ### Fixed

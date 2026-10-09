@@ -37,11 +37,16 @@ afterEach(() => {
 
 function mount(
   readOnly: boolean,
-  { chrome, artifact = page }: { chrome?: Partial<CanvasChrome>; artifact?: Artifact<HtmlData> } = {},
+  {
+    chrome,
+    artifact = page,
+    assetBaseUrl,
+  }: { chrome?: Partial<CanvasChrome>; artifact?: Artifact<HtmlData>; assetBaseUrl?: string } = {},
 ) {
   const store = createCanvasStore();
   store.getState().applyEvent({ type: "canvas.create", artifact });
   store.getState().setReadOnly(readOnly);
+  if (assetBaseUrl !== undefined) store.getState().setAssetBaseUrl(assetBaseUrl);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -71,6 +76,60 @@ describe("HtmlRenderer readOnly", () => {
     expect(host!.querySelector("iframe")?.getAttribute("srcdoc")).toContain("window.__LCX_READONLY=true");
     // the device-width switch is the one control that stays
     expect(host!.querySelectorAll(".cv-html-seg button").length).toBe(3);
+  });
+});
+
+describe("HtmlRenderer iframe sandbox", () => {
+  it("is allow-scripts only on the non-slide (web page) iframe", () => {
+    mount(false);
+    expect(host!.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+
+  it("is allow-scripts only on the fixed-aspect slide iframe", () => {
+    if (typeof ResizeObserver === "undefined") {
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    }
+    mount(false, { artifact: { ...page, meta: { ratio: "16:9" } } });
+    expect(host!.querySelector("iframe")?.getAttribute("sandbox")).toBe("allow-scripts");
+  });
+});
+
+describe("HtmlRenderer srcDoc CSP", () => {
+  it("carries a meta CSP as the first head element, independent of any route or parent CSP", () => {
+    mount(false);
+    const srcDoc = host!.querySelector("iframe")!.getAttribute("srcdoc")!;
+    expect(srcDoc.startsWith('<!DOCTYPE html><meta http-equiv="Content-Security-Policy"')).toBe(true);
+    const doc = new DOMParser().parseFromString(srcDoc, "text/html");
+    const meta = doc.head?.firstElementChild;
+    expect(meta?.tagName.toLowerCase()).toBe("meta");
+    expect(meta?.getAttribute("http-equiv")).toBe("Content-Security-Policy");
+    expect(meta?.getAttribute("content")).not.toContain("connect-src");
+  });
+
+  function contentOf(host: HTMLDivElement): string {
+    const srcDoc = host.querySelector("iframe")!.getAttribute("srcdoc")!;
+    const doc = new DOMParser().parseFromString(srcDoc, "text/html");
+    return doc.head!.firstElementChild!.getAttribute("content")!;
+  }
+
+  it("allows an absolute asset base URL's own origin, derived automatically (no assetOrigins prop path exists)", () => {
+    mount(false, { assetBaseUrl: "https://cdn.example.com/files/" });
+    const content = contentOf(host!);
+    expect(content).toContain("https://cdn.example.com");
+    expect(content).not.toContain("connect-src");
+  });
+
+  it("resolves a relative asset base URL to the parent page's origin, not the opaque srcDoc iframe origin", () => {
+    mount(false, { assetBaseUrl: "/api/canvas/files/" });
+    const content = contentOf(host!);
+    expect(content).toContain(window.location.origin);
+    expect(content).not.toContain("connect-src");
+  });
+
+  it("omits any asset origin when no asset base URL is configured", () => {
+    mount(false);
+    const content = contentOf(host!);
+    expect(content).toBe("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'");
   });
 });
 

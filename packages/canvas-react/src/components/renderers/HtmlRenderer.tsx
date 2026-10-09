@@ -24,6 +24,7 @@ import type { IframeCommand } from "../../store/store";
 import { useCanvasStore, useCanvasStoreApi } from "../../hooks/useCanvasStore";
 import type { RendererProps } from "../../registry/registry";
 import { useChrome, useLabels } from "../chrome";
+import { deriveAssetOrigin, withCspPrefix } from "./csp-prefix";
 
 const DEVICES = [
   { id: "desktop", label: "Desktop", width: "100%" },
@@ -342,7 +343,10 @@ function useSlideFit(ratio: string | undefined, boxRef: React.RefObject<HTMLDivE
   return { scale, width: SLIDE_W, height };
 }
 
-export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
+export function HtmlRenderer({
+  artifact,
+  assetOrigins = [],
+}: RendererProps<HtmlData> & { assetOrigins?: string[] }) {
   const labels = useLabels();
   const chrome = useChrome();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -377,14 +381,28 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
   // hidden}`, which traps a tall page inside the iframe with no scrollbar. For the
   // web case, force the document scrollable so it scrolls inside the panel.
   const isFixedSlide = Boolean(artifact.meta?.ratio);
+  // `<Canvas>` has no prop path to forward `assetOrigins` down to this renderer
+  // (`RendererProps` is just `{ artifact }`), so the live canvas' own asset
+  // origin — served from `assetBaseUrl` — must be derived here rather than
+  // relied upon to arrive as a prop. Any explicit `assetOrigins` a host does
+  // pass are additive.
+  const derivedAssetOrigin = deriveAssetOrigin(assetBaseUrl);
+  const effectiveAssetOrigins = derivedAssetOrigin
+    ? Array.from(new Set([derivedAssetOrigin, ...assetOrigins]))
+    : assetOrigins;
   const srcDoc = useMemo(() => {
     if (mode === "design" && artifact.data.html === lastSelfHtml.current) return srcDocRef.current;
     const base = withInspector(artifact.data.html, assetBaseUrl ?? undefined, { readOnly });
-    srcDocRef.current = isFixedSlide ? base : withScrollableBody(base);
+    const scrollable = isFixedSlide ? base : withScrollableBody(base);
+    // Last step: a meta CSP goes in front of every model byte so the sandbox
+    // is enforced inside the document itself. A route-scoped CSP header does
+    // not help here — a soft SPA navigation into an existing page never
+    // re-fetches the document response, so it never re-applies.
+    srcDocRef.current = withCspPrefix(scrollable, effectiveAssetOrigins);
     lastSelfHtml.current = null; // rebuilt from source — no longer a live self-edit
     return srcDocRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact.data.html, mode, isFixedSlide, assetBaseUrl, readOnly]);
+  }, [artifact.data.html, mode, isFixedSlide, assetBaseUrl, readOnly, effectiveAssetOrigins]);
   const selected = selections.filter((s) => s.artifactId === artifact.id);
   const single = selected.length === 1 ? selected[0] : null;
 
@@ -737,7 +755,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
                 className="cv-html"
                 title={artifact.title}
                 srcDoc={srcDoc}
-                sandbox="allow-scripts allow-popups allow-modals"
+                sandbox="allow-scripts"
                 style={{ width: slide.width, height: slide.height, transform: `scale(${slide.scale})`, transformOrigin: "top left" }}
               />
             </div>
@@ -747,7 +765,7 @@ export function HtmlRenderer({ artifact }: RendererProps<HtmlData>) {
               className="cv-html"
               title={artifact.title}
               srcDoc={srcDoc}
-              sandbox="allow-scripts allow-popups allow-modals"
+              sandbox="allow-scripts"
               style={{ width: showWidthSwitch ? DEVICES.find((d) => d.id === device)!.width : "100%" }}
             />
           )}
