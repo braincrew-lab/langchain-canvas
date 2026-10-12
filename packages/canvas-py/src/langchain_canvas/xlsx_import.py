@@ -391,6 +391,30 @@ def xlsx_fit_to_one_page(data: bytes) -> bytes:
     return out.getvalue()
 
 
+def xlsx_printed_sheets(data: bytes) -> list[int] | None:
+    """Worksheet indexes in the order LibreOffice prints them, or None.
+
+    LibreOffice prints a visible sheet that holds a value, a chart or a
+    picture, and skips a hidden or empty one; so page ``k`` of the fit-to-page
+    copy belongs to the k-th index returned here. A workbook with a chart
+    sheet returns None: LibreOffice prints that as a page too, but the
+    worksheet indexes do not count it, so the page map cannot be predicted.
+    """
+    import openpyxl  # type: ignore[import-untyped]
+
+    workbook = openpyxl.load_workbook(io.BytesIO(data))
+    if workbook.chartsheets:
+        return None
+    printed: list[int] = []
+    for index, worksheet in enumerate(workbook.worksheets):
+        if worksheet.sheet_state != "visible":
+            continue
+        has_value = any(cell.value is not None for row in worksheet.iter_rows() for cell in row)
+        if has_value or worksheet._charts or worksheet._images:
+            printed.append(index)
+    return printed
+
+
 def _sheet_chart_boxes(
     worksheet: Any, columnlen: dict[int, int], rowlen: dict[int, int]
 ) -> list[dict[str, int]]:

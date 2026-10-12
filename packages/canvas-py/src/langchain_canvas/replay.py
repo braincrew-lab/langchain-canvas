@@ -543,6 +543,10 @@ _GRID_MAX_SHEETS = 4
 
 _EXCERPT_MAX_CHARS = 400
 _COVER_MAX_SIZE = (480, 640)
+# Pictures stacked under a sheet's data: the gap between two, and the px a
+# default grid row takes (19px plus its border) for growing the sheet to fit.
+_CHART_STACK_GAP_PX = 20
+_STACK_ROW_PX = 20
 
 
 def _file_preview_events(
@@ -644,7 +648,8 @@ def _file_preview_data(
                 # the pages that carry charts show under the grid.
                 boxes = data["workbook"].pop("_charts", [])
                 crops = _derive_chart_images(path, got.data, active) if boxes else None
-                if not _place_chart_images(data["workbook"], boxes, crops):
+                printed = _printed_sheets(got.data) if boxes else None
+                if not _place_chart_images(data["workbook"], boxes, crops, printed):
                     data["chartPages"] = _derive_chart_pages(path, got.data, active)
             elif cover is not None:
                 data["grids"] = _derive_grids(path, got.data, active)
@@ -748,39 +753,108 @@ def _derive_chart_images(
         return None
 
 
-def _place_chart_images(
-    workbook: dict[str, Any], boxes: list[dict[str, Any]], crops: list[dict[str, Any]] | None
-) -> bool:
-    """Put one crop per chart box into the sheets' ``images``; True when done.
+def _printed_sheets(data: bytes) -> list[int] | None:
+    """The worksheet indexes the print copy has a page for; None when unknowable."""
+    from .xlsx_import import xlsx_printed_sheets
 
-    Boxes come from the workbook (sheet by sheet, top to bottom) and crops
-    from the rendered pages in the same order, so they pair by position. A
-    count mismatch means the pairing cannot be trusted: nothing is placed and
-    the caller falls back to whole chart pages under the grid.
+    try:
+        return xlsx_printed_sheets(data)
+    except Exception:  # noqa: BLE001 — without a page map the pages are shown instead
+        return None
+
+
+def _by_key(items: list[dict[str, Any]], key: str) -> dict[int, list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(int(item[key]), []).append(item)
+    return grouped
+
+
+def _chart_picture(number: int, crop: dict[str, Any], box: dict[str, Any]) -> dict[str, Any]:
+    png = crop["png"]
+    return {
+        "id": f"chart_{number}",
+        "src": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+        "left": box["left"],
+        "top": box["top"],
+        "width": box["width"],
+        "height": box["height"],
+    }
+
+
+def _stack_below(
+    sheet: dict[str, Any], crops: list[dict[str, Any]], width: int, first: int
+) -> list[dict[str, Any]]:
+    """Pictures of ``crops`` one above the other, starting under the sheet's data.
+
+    A row is as tall as the grid draws it: its stored height or the default,
+    plus its 1px border (the geometry ``_anchor_box`` uses for charts).
     """
-    if not boxes or not crops or len(boxes) != len(crops):
+    from .xlsx_import import _DEFAULT_ROW_PX
+
+    rowlen = (sheet.get("config") or {}).get("rowlen") or {}
+    rows = max((cell["r"] for cell in sheet.get("celldata") or []), default=-1) + 1
+    top = sum(rowlen.get(row, _DEFAULT_ROW_PX) + 1 for row in range(rows))
+    pictures = []
+    for number, crop in enumerate(crops, first):
+        _, _, box_width, box_height = crop["box"]
+        height = max(16, round(width * box_height / box_width))
+        spot = {"left": 0, "top": top, "width": width, "height": height}
+        pictures.append(_chart_picture(number, crop, spot))
+        top += height + _CHART_STACK_GAP_PX
+    return pictures
+
+
+def _place_chart_images(
+    workbook: dict[str, Any],
+    boxes: list[dict[str, Any]],
+    crops: list[dict[str, Any]] | None,
+    printed: list[int] | None,
+) -> bool:
+    """Pair crops with chart anchors sheet by sheet; True when any sheet got pictures.
+
+    Page ``k`` of the fit-to-page copy is the k-th printed sheet. A sheet whose
+    crop count matches its anchors gets each crop at its anchor; a sheet with a
+    different nonzero count gets its crops stacked under its data; a sheet
+    with none stays bare. ``printed`` None (a chart sheet, which LibreOffice
+    prints as a page), an anchor on an unprinted sheet, a crop past the last
+    printed sheet or a crop without a picture means the page map cannot be
+    trusted: nothing is placed.
+    """
+    if not boxes or not crops or not printed:
         return False
     sheets = workbook.get("sheet") or []
-    for number, (box, crop) in enumerate(zip(boxes, crops, strict=True)):
-        try:
-            sheet = sheets[int(box["sheet"])]
-        except (IndexError, KeyError, TypeError, ValueError):
+    try:
+        by_page = _by_key(crops, "page")
+        by_sheet = _by_key(boxes, "sheet")
+        if max(by_page) > len(printed) or not all(crop.get("png") for crop in crops):
             return False
-        png = crop.get("png") or b""
-        if not png:
+        if any(index not in printed or index >= len(sheets) for index in by_sheet):
             return False
-        images = sheet.setdefault("images", [])
-        images.append(
-            {
-                "id": f"chart_{number}",
-                "src": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
-                "left": box["left"],
-                "top": box["top"],
-                "width": box["width"],
-                "height": box["height"],
-            }
-        )
-    return True
+        placed: list[tuple[dict[str, Any], list[dict[str, Any]], bool]] = []
+        number = 0
+        for index, anchors in by_sheet.items():
+            found = by_page.get(printed.index(index) + 1, [])
+            if not found:
+                continue
+            stacked = len(found) != len(anchors)
+            if stacked:
+                pictures = _stack_below(sheets[index], found, anchors[0]["width"], number)
+            else:
+                pictures = [
+                    _chart_picture(number + k, crop, anchor)
+                    for k, (anchor, crop) in enumerate(zip(anchors, found, strict=True))
+                ]
+            placed.append((sheets[index], pictures, stacked))
+            number += len(pictures)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return False
+    for sheet, pictures, stacked in placed:
+        sheet.setdefault("images", []).extend(pictures)
+        if stacked:
+            bottom = max(p["top"] + p["height"] for p in pictures)
+            sheet["row"] = max(sheet.get("row", 0), -(-bottom // _STACK_ROW_PX) + 1)
+    return bool(placed)
 
 
 def _derive_grids(
