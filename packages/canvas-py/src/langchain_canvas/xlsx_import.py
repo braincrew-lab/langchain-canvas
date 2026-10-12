@@ -497,11 +497,17 @@ def _flatten(
     return columns, rows
 
 
-def xlsx_sheets_and_charts(data: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def xlsx_sheets_and_charts(
+    data: bytes, *, read_only: bool = False
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """``xlsx_to_sheets`` plus where the charts sit (px boxes, sheet by sheet).
 
     The sheets dict is the wire shape the TypeScript twin also produces;
     the chart boxes travel beside it so that shape stays untouched.
+    ``read_only=True`` is for a grid that is only looked at: it adds what the
+    file shows on top of the editable shape — hidden sheets, rows and columns,
+    number-format sections, conditional formats, fills, notes and links (see
+    :mod:`.xlsx_fidelity`).
     """
     try:
         from openpyxl import load_workbook  # type: ignore[import-untyped]
@@ -618,8 +624,17 @@ def xlsx_sheets_and_charts(data: bytes) -> tuple[dict[str, Any], list[dict[str, 
                        "rowlen": rowlen, "borderInfo": border_info},
             "images": _sheet_images(worksheet, columnlen, rowlen),
         })
+        if read_only:
+            from .xlsx_fidelity import apply_read_only_fidelity
+
+            apply_read_only_fidelity(sheets[-1], worksheet, cached)
         for box in _sheet_chart_boxes(worksheet, columnlen, rowlen):
             charts.append({"sheet": index, **box})
+
+    if read_only:
+        from .xlsx_fidelity import open_first_visible
+
+        open_first_visible(sheets)
 
     first = workbook.worksheets[0] if workbook.worksheets else None
     first_covered: dict[tuple[int, int], tuple[int, int]] = {}
