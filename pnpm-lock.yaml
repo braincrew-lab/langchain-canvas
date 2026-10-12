@@ -14,7 +14,7 @@ overrides:
 
 patchedDependencies:
   '@fortune-sheet/core@1.0.4':
-    hash: ayio3jxh736xbdir3vzx5l62u4
+    hash: njgoq7vworgy2a4qemtiquzk74
     path: patches/@fortune-sheet__core@1.0.4.patch
 
 importers:
@@ -89,7 +89,7 @@ importers:
     devDependencies:
       '@fortune-sheet/core':
         specifier: 1.0.4
-        version: 1.0.4(patch_hash=ayio3jxh736xbdir3vzx5l62u4)
+        version: 1.0.4(patch_hash=njgoq7vworgy2a4qemtiquzk74)
       '@fortune-sheet/react':
         specifier: ^1.0.4
         version: 1.0.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -2205,7 +2205,7 @@ snapshots:
       bessel: 1.0.2
       jstat: 1.9.6
 
-  '@fortune-sheet/core@1.0.4(patch_hash=ayio3jxh736xbdir3vzx5l62u4)':
+  '@fortune-sheet/core@1.0.4(patch_hash=njgoq7vworgy2a4qemtiquzk74)':
     dependencies:
       '@fortune-sheet/formula-parser': 0.2.13
       dayjs: 1.11.21
@@ -2221,7 +2221,7 @@ snapshots:
 
   '@fortune-sheet/react@1.0.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@fortune-sheet/core': 1.0.4(patch_hash=ayio3jxh736xbdir3vzx5l62u4)
+      '@fortune-sheet/core': 1.0.4(patch_hash=njgoq7vworgy2a4qemtiquzk74)
       '@types/regenerator-runtime': 0.13.8
       immer: 9.0.21
       lodash: 4.18.1

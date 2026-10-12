@@ -1,5 +1,5 @@
 diff --git a/dist/index.esm.js b/dist/index.esm.js
-index 5c9820b1a261305d500e69eeaf350821872beaf4..0da0fe3b924015e901b696cb028ba194359b14dd 100644
+index 5c9820b1a261305d500e69eeaf350821872beaf4..1be422c5543870bec964fc0927a5dc03c738603b 100644
 --- a/dist/index.esm.js
 +++ b/dist/index.esm.js
 @@ -2,7 +2,7 @@ import _ from 'lodash';
@@ -11,8 +11,18 @@ index 5c9820b1a261305d500e69eeaf350821872beaf4..0da0fe3b924015e901b696cb028ba194
  
  function _arrayLikeToArray(r, a) {
    (null == a || a > r.length) && (a = r.length);
+@@ -52823,6 +52823,9 @@ function getCellTextInfo(cell, renderCtx, sheetCtx, option, ctx) {
+   if (space_height === undefined) {
+     space_height = 2;
+   }
++  if (cell && cell.lcx && cell.lcx.indent > 0) {
++    space_width += cell.lcx.indent * 9;
++  }
+   var horizonAlign = normalizedCellAttr(cell, "ht");
+   var verticalAlign = normalizedCellAttr(cell, "vt");
+   var tb = normalizedCellAttr(cell, "tb");
 diff --git a/dist/index.js b/dist/index.js
-index 04113a18dee9feee28e9434ee3023626c800e7d3..50544e83a18d05b61b0d3c5fec9520c13a907638 100644
+index 04113a18dee9feee28e9434ee3023626c800e7d3..4191717b77ec0189985066ac81e8c752957e8d66 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -6,7 +6,7 @@ var _ = require('lodash');
@@ -24,6 +34,16 @@ index 04113a18dee9feee28e9434ee3023626c800e7d3..50544e83a18d05b61b0d3c5fec9520c1
  
  function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
  
+@@ -52833,6 +52833,9 @@ function getCellTextInfo(cell, renderCtx, sheetCtx, option, ctx) {
+   if (space_height === undefined) {
+     space_height = 2;
+   }
++  if (cell && cell.lcx && cell.lcx.indent > 0) {
++    space_width += cell.lcx.indent * 9;
++  }
+   var horizonAlign = normalizedCellAttr(cell, "ht");
+   var verticalAlign = normalizedCellAttr(cell, "vt");
+   var tb = normalizedCellAttr(cell, "tb");
 diff --git a/package.json b/package.json
 index 4c6268d0fb178f78521d431f2f4a4799cf3dccc4..a302ec01bf9dfecfc127a7f58b5681ee7f1d14f4 100644
 --- a/package.json
