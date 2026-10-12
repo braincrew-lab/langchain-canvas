@@ -24,8 +24,14 @@ from .xlsx_import import INDEXED_PALETTE, _format_number, _js_number, _to_hex
 
 #: Excel's eight named format colours.
 _NAMED_COLOURS = {
-    "black": "#000000", "blue": "#0000FF", "cyan": "#00FFFF", "green": "#00FF00",
-    "magenta": "#FF00FF", "red": "#FF0000", "white": "#FFFFFF", "yellow": "#FFFF00",
+    "black": "#000000",
+    "blue": "#0000FF",
+    "cyan": "#00FFFF",
+    "green": "#00FF00",
+    "magenta": "#FF00FF",
+    "red": "#FF0000",
+    "white": "#FFFFFF",
+    "yellow": "#FFFF00",
 }
 _CONDITION = re.compile(r"^\[(<=|>=|<>|<|>|=)\s*(-?\d+(?:\.\d+)?)\]")
 _BRACKET = re.compile(r"\[[^\]]*\]")
@@ -35,10 +41,23 @@ _DIGITS = set("0#?,.%")
 #: How much of a cell a pattern's ink covers — for the blended fallback colour a
 #: grid without the painter shows.
 _PATTERN_INK = {
-    "gray0625": 0.0625, "gray125": 0.125, "lightGray": 0.25, "mediumGray": 0.5,
-    "darkGray": 0.75, "lightHorizontal": 0.25, "lightVertical": 0.25, "lightDown": 0.25,
-    "lightUp": 0.25, "lightGrid": 0.4, "lightTrellis": 0.3, "darkHorizontal": 0.5,
-    "darkVertical": 0.5, "darkDown": 0.5, "darkUp": 0.5, "darkGrid": 0.6, "darkTrellis": 0.7,
+    "gray0625": 0.0625,
+    "gray125": 0.125,
+    "lightGray": 0.25,
+    "mediumGray": 0.5,
+    "darkGray": 0.75,
+    "lightHorizontal": 0.25,
+    "lightVertical": 0.25,
+    "lightDown": 0.25,
+    "lightUp": 0.25,
+    "lightGrid": 0.4,
+    "lightTrellis": 0.3,
+    "darkHorizontal": 0.5,
+    "darkVertical": 0.5,
+    "darkDown": 0.5,
+    "darkUp": 0.5,
+    "darkGrid": 0.6,
+    "darkTrellis": 0.7,
 }
 _SAFE_LINK = re.compile(r"^(https?://|mailto:)", re.I)
 #: Upper bound on cells one validation range marks — a whole-column rule on a
@@ -55,7 +74,7 @@ def _split_sections(fmt: str) -> list[str]:
     while index < len(fmt):
         char = fmt[index]
         if char == "\\" and index + 1 < len(fmt):
-            current += fmt[index:index + 2]
+            current += fmt[index : index + 2]
             index += 2
             continue
         if char == '"':
@@ -95,15 +114,22 @@ def _leading_brackets(section: str) -> str:
 def _holds(value: float, condition: tuple[str, float]) -> bool:
     op, bound = condition
     return {
-        "<": value < bound, "<=": value <= bound, ">": value > bound,
-        ">=": value >= bound, "=": value == bound, "<>": value != bound,
+        "<": value < bound,
+        "<=": value <= bound,
+        ">": value > bound,
+        ">=": value >= bound,
+        "=": value == bound,
+        "<>": value != bound,
     }[op]
 
 
 def _pick(value: float, sections: list[str]) -> tuple[str, bool]:
     """The section a number shows through, and whether the value's sign is
     already spelled by that section (so the number prints unsigned)."""
-    first, second = _condition(sections[0]), (_condition(sections[1]) if len(sections) > 1 else None)
+    first, second = (
+        _condition(sections[0]),
+        (_condition(sections[1]) if len(sections) > 1 else None),
+    )
     if first or second:
         if first and _holds(value, first):
             return sections[0], True
@@ -132,7 +158,7 @@ def _render(section: str, value: float) -> str | None:
             end = body.find("]", index)
             if end < 0:
                 return None
-            token = body[index:end + 1]
+            token = body[index : end + 1]
             if token.startswith("[$") and "-" not in token[2:3]:
                 literal = token[2:-1].split("-")[0]
                 if seen_digits:
@@ -148,7 +174,7 @@ def _render(section: str, value: float) -> str | None:
             end = body.find('"', index + 1)
             if end < 0:
                 return None
-            literal = body[index + 1:end]
+            literal = body[index + 1 : end]
             index = end + 1
         elif char == "_" and index + 1 < len(body):
             literal = " "
@@ -209,8 +235,7 @@ def _wants_sections(fmt: str) -> bool:
 def _blend(fg: str, bg: str, ink: float) -> str:
     a, b = int(fg[1:], 16), int(bg[1:], 16)
     channels = [
-        round(((a >> shift) & 255) * ink + ((b >> shift) & 255) * (1 - ink))
-        for shift in (16, 8, 0)
+        round(((a >> shift) & 255) * ink + ((b >> shift) & 255) * (1 - ink)) for shift in (16, 8, 0)
     ]
     return "#" + "".join(f"{channel:02X}" for channel in channels)
 
@@ -220,8 +245,7 @@ def _fill(cell: Any) -> tuple[dict[str, Any] | None, str | None]:
     fill = cell.fill
     if getattr(fill, "tagname", "") == "gradientFill":
         stops = [
-            [round(float(stop.position), 4), _to_hex(stop.color) or "#FFFFFF"]
-            for stop in fill.stop
+            [round(float(stop.position), 4), _to_hex(stop.color) or "#FFFFFF"] for stop in fill.stop
         ]
         if not stops:
             return None, None
@@ -351,9 +375,7 @@ def _dropdown_cells(worksheet: Any) -> list[tuple[int, int]]:
     return cells
 
 
-def apply_read_only_fidelity(
-    sheet: dict[str, Any], worksheet: Any, cached_sheet: Any
-) -> None:
+def apply_read_only_fidelity(sheet: dict[str, Any], worksheet: Any, cached_sheet: Any) -> None:
     """Add a read-only sheet's hidden state, links, tab colour and cell extras."""
     if worksheet.sheet_state in ("hidden", "veryHidden"):
         sheet["hide"] = 1

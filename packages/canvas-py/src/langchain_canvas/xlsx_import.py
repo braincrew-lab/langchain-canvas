@@ -445,7 +445,9 @@ def _sheet_chart_boxes(
     """
     boxes: list[dict[str, int]] = []
     for chart in list(getattr(worksheet, "_charts", []) or []):
-        box = _anchor_box(getattr(chart, "anchor", None), columnlen, rowlen, border=1, hidden=hidden)
+        box = _anchor_box(
+            getattr(chart, "anchor", None), columnlen, rowlen, border=1, hidden=hidden
+        )
         if box is not None:
             boxes.append(box)
     boxes.sort(key=lambda box: (box["top"], box["left"]))

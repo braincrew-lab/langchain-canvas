@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from statistics import mean, pstdev
-from typing import Any, Callable
+from typing import Any
 
 from openpyxl.worksheet.cell_range import CellRange  # type: ignore[import-untyped]
 
@@ -58,9 +59,7 @@ def _column_number(letters: str) -> int:
 # --- a small expression evaluator ---------------------------------------------
 
 
-def _evaluate(
-    text: str, read: Callable[[int, int], Any], shift: tuple[int, int]
-) -> Any:
+def _evaluate(text: str, read: Callable[[int, int], Any], shift: tuple[int, int]) -> Any:
     """Evaluate an Excel formula written for the rule's top-left cell at a
     cell ``shift`` rows/columns away: relative references move, ``$`` ones stay."""
     tokens: list[tuple[str, str]] = []
@@ -266,7 +265,7 @@ def _mix(a: str, b: str, ratio: float) -> str:
 def _scale_colour(value: float, stops: list[tuple[float, str]]) -> str:
     if value <= stops[0][0]:
         return stops[0][1]
-    for (low, low_colour), (high, high_colour) in zip(stops, stops[1:]):
+    for (low, low_colour), (high, high_colour) in zip(stops, stops[1:], strict=False):
         if value <= high:
             span = high - low
             return _mix(low_colour, high_colour, 0 if span == 0 else (value - low) / span)
@@ -365,7 +364,9 @@ def _positions(sqref: Any) -> list[tuple[int, int]]:
     ]
 
 
-def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_left: tuple[int, int]) -> dict[tuple[int, int], dict[str, Any]]:
+def _matches(
+    rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_left: tuple[int, int]
+) -> dict[tuple[int, int], dict[str, Any]]:
     """Cells a rule applies to, with the keys it sets on each."""
     kind = rule.type
     values = {at: sheet.value(*at) for at in positions}
@@ -388,8 +389,14 @@ def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_lef
                 inside = _numeric(value) is not None and low <= float(value) <= high
                 ok = inside if op == "between" else not inside
             else:
-                symbol = {"lessThan": "<", "lessThanOrEqual": "<=", "greaterThan": ">",
-                          "greaterThanOrEqual": ">=", "equal": "=", "notEqual": "<>"}[op]
+                symbol = {
+                    "lessThan": "<",
+                    "lessThanOrEqual": "<=",
+                    "greaterThan": ">",
+                    "greaterThanOrEqual": ">=",
+                    "equal": "=",
+                    "notEqual": "<>",
+                }[op]
                 ok = _compare(value, symbol, bounds[0])
             if ok:
                 hits[at] = style
@@ -402,8 +409,10 @@ def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_lef
         for at, value in values.items():
             text = _text(value).lower()
             ok = {
-                "containsText": needle in text, "notContainsText": needle not in text,
-                "beginsWith": text.startswith(needle), "endsWith": text.endswith(needle),
+                "containsText": needle in text,
+                "notContainsText": needle not in text,
+                "beginsWith": text.startswith(needle),
+                "endsWith": text.endswith(needle),
             }[kind]
             if ok:
                 hits[at] = style
@@ -414,7 +423,9 @@ def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_lef
                 hits[at] = style
     elif kind in ("containsErrors", "notContainsErrors"):
         for at, value in values.items():
-            error = isinstance(value, str) and value.startswith("#") and value.endswith(("!", "?", "A"))
+            error = (
+                isinstance(value, str) and value.startswith("#") and value.endswith(("!", "?", "A"))
+            )
             if error == (kind == "containsErrors"):
                 hits[at] = style
     elif kind in ("duplicateValues", "uniqueValues"):
@@ -449,9 +460,17 @@ def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_lef
                 if number is None:
                     continue
                 if above:
-                    ok = number >= average + spread if rule.equalAverage else number > average + spread
+                    ok = (
+                        number >= average + spread
+                        if rule.equalAverage
+                        else number > average + spread
+                    )
                 else:
-                    ok = number <= average - spread if rule.equalAverage else number < average - spread
+                    ok = (
+                        number <= average - spread
+                        if rule.equalAverage
+                        else number < average - spread
+                    )
                 if ok:
                     hits[at] = style
     elif kind == "timePeriod":
@@ -463,7 +482,7 @@ def _matches(rule: Any, sheet: _Sheet, positions: list[tuple[int, int]], top_lef
         scale = rule.colorScale
         stops = [
             (_cfvo_value(cfvo, numbers), _to_hex(colour) or "#FFFFFF")
-            for cfvo, colour in zip(scale.cfvo, scale.color)
+            for cfvo, colour in zip(scale.cfvo, scale.color, strict=False)
         ]
         if numbers and all(point is not None for point, _ in stops):
             ordered_stops = sorted(((float(p), c) for p, c in stops), key=lambda s: s[0])  # type: ignore[arg-type]
