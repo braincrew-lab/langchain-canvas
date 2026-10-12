@@ -484,15 +484,18 @@ class _ChartCropper:
 
     suffixes = (".xlsx",)
 
-    def __init__(self, crops: int) -> None:
-        self.crops = crops
+    def __init__(self, crops: int | list[int], page: int = 1) -> None:
+        """``crops`` is a count on ``page``, or one crop per listed page number."""
+        self.pages = [page] * crops if isinstance(crops, int) else crops
 
     def convert(self, data: bytes, *, path: str):  # pragma: no cover - not used here
         raise AssertionError("text conversion is not part of this test")
 
     def chart_images(self, data: bytes, *, path: str) -> list[dict]:
-        crop = {"page": 2, "box": [50, 100, 300, 200], "png": b"\x89PNG-crop"}
-        return [dict(crop) for _ in range(self.crops)]
+        return [
+            {"page": page, "box": [50, 100, 300, 200], "png": b"\x89PNG-crop"}
+            for page in self.pages
+        ]
 
     def chart_pages(self, data: bytes, *, path: str) -> list[int]:
         return [2]
@@ -517,7 +520,7 @@ def test_workbook_charts_land_in_the_grid_as_pictures(tmp_path) -> None:
     assert "_charts" not in data["workbook"]
 
 
-def test_workbook_chart_count_mismatch_falls_back_to_chart_pages(tmp_path) -> None:
+def test_workbook_chart_count_mismatch_stacks_the_sheet_crops_under_its_data(tmp_path) -> None:
     from langchain_canvas.replay import _file_preview_data
     from langchain_canvas.store import InMemoryCanvasStore
 
@@ -525,8 +528,9 @@ def test_workbook_chart_count_mismatch_falls_back_to_chart_pages(tmp_path) -> No
     commit = store.write_bytes("c1", "report.xlsx", _chart_workbook(), "chart")
     data = _file_preview_data(store, "c1", "report.xlsx", commit.revision, [_ChartCropper(2)])
     assert data is not None
-    assert not data["workbook"]["sheet"][0].get("images")
-    assert data["chartPages"] == [2]
+    images = data["workbook"]["sheet"][0]["images"]
+    assert [i["id"] for i in images] == ["chart_0", "chart_1"]
+    assert data["chartPages"] is None
 
 
 def test_pdf_chart_images_keep_side_by_side_charts_apart() -> None:
@@ -641,3 +645,155 @@ def test_chart_pages_keep_a_chart_cut_by_the_page_edge() -> None:
     converter = PdfSourceConverter()
     assert converter.chart_pages(pdf, path="x.pdf") == [1]
     assert converter.chart_images(pdf, path="x.pdf") == []
+
+
+def _bar_chart(ws):
+    from openpyxl.chart import BarChart, Reference
+
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    return chart
+
+
+def _two_chart_workbook() -> bytes:
+    """Two sheets, three data rows each, one chart each."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    first = wb.active
+    first.title = "첫째"
+    second = wb.create_sheet("둘째")
+    for ws in (first, second):
+        ws.append(["구분", "수"])
+        ws.append(["운영", 3])
+        ws.append(["개발", 1])
+        ws.add_chart(_bar_chart(ws), "A15")
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def _preview(workbook: bytes, cropper: _ChartCropper) -> dict:
+    from langchain_canvas.replay import _file_preview_data
+    from langchain_canvas.store import InMemoryCanvasStore
+
+    store = InMemoryCanvasStore()
+    commit = store.write_bytes("c1", "report.xlsx", workbook, "chart")
+    data = _file_preview_data(store, "c1", "report.xlsx", commit.revision, [cropper])
+    assert data is not None
+    return data
+
+
+def test_two_sheets_pair_each_sheet_on_its_own_page() -> None:
+    """Sheet 0 has one crop for its one anchor; sheet 1 has two crops for one anchor."""
+    data = _preview(_two_chart_workbook(), _ChartCropper([1, 2, 2]))
+    first, second = data["workbook"]["sheet"]
+    assert [i["id"] for i in first["images"]] == ["chart_0"]
+    assert first["images"][0]["top"] == 14 * 20  # at its anchor cell
+    assert [i["id"] for i in second["images"]] == ["chart_1", "chart_2"]
+    # stacked under the data: three rows of 19px + 1px border
+    assert second["images"][0]["top"] >= 3 * 20
+    assert second["images"][1]["top"] > second["images"][0]["top"] + second["images"][0]["height"]
+    assert second["row"] * 20 >= second["images"][1]["top"] + second["images"][1]["height"]
+    assert data["chartPages"] is None
+
+
+def test_an_empty_sheet_does_not_shift_the_page_map() -> None:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.active.title = "메모"
+    sheet = wb.create_sheet("피벗")
+    sheet.append(["구분", "문서 수"])
+    sheet.append(["운영", 3])
+    sheet.append(["개발", 1])
+    sheet.add_chart(_bar_chart(sheet), "A15")
+    out = io.BytesIO()
+    wb.save(out)
+
+    data = _preview(out.getvalue(), _ChartCropper(1, page=1))
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert [i["id"] for i in data["workbook"]["sheet"][1]["images"]] == ["chart_0"]
+    assert data["chartPages"] is None
+
+
+def test_a_crop_page_past_the_printed_sheets_falls_back_to_chart_pages() -> None:
+    data = _preview(_chart_workbook(), _ChartCropper(1, page=2))
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert data["chartPages"] == [2]
+
+
+def test_printed_sheets_skip_hidden_and_empty_sheets() -> None:
+    import openpyxl
+    from openpyxl.drawing.image import Image as XlImage
+
+    from langchain_canvas.xlsx_import import xlsx_printed_sheets
+
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "값"  # 0: visible, has a value
+    hidden = wb.create_sheet("숨김")  # 1: hidden, has a value
+    hidden["A1"] = "값"
+    hidden.sheet_state = "hidden"
+    wb.create_sheet("빈")  # 2: visible, nothing in it
+    charted = wb.create_sheet("차트만")  # 3: a chart and no values
+    charted.add_chart(_bar_chart(charted), "A1")
+    pictured = wb.create_sheet("그림만")  # 4: a picture and no values
+    png = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(png, format="PNG")
+    png.seek(0)
+    pictured.add_image(XlImage(png), "A1")
+
+    out = io.BytesIO()
+    wb.save(out)
+    assert xlsx_printed_sheets(out.getvalue()) == [0, 3, 4]
+
+    reloaded = openpyxl.load_workbook(io.BytesIO(out.getvalue()))
+    reloaded.create_chartsheet("차트 시트").add_chart(_bar_chart(reloaded.worksheets[0]))
+    with_chartsheet = io.BytesIO()
+    reloaded.save(with_chartsheet)
+    assert xlsx_printed_sheets(with_chartsheet.getvalue()) is None
+
+
+def test_a_chartsheet_first_falls_back_to_chart_pages() -> None:
+    """LibreOffice prints a chartsheet as a page the worksheet indexes do not count."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(_chart_workbook()))
+    chartsheet = wb.create_chartsheet("차트 시트", index=0)
+    chartsheet.add_chart(_bar_chart(wb.worksheets[0]))
+    out = io.BytesIO()
+    wb.save(out)
+
+    data = _preview(out.getvalue(), _ChartCropper(1, page=1))
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert data["chartPages"] == [2]
+
+
+def test_a_sheet_without_crops_stays_bare_while_the_other_is_placed() -> None:
+    data = _preview(_two_chart_workbook(), _ChartCropper([2]))
+    first, second = data["workbook"]["sheet"]
+    assert not first.get("images")
+    assert [i["id"] for i in second["images"]] == ["chart_0"]
+    assert data["chartPages"] is None
+
+
+def test_a_crop_without_a_picture_falls_back_to_chart_pages() -> None:
+    class _Blank(_ChartCropper):
+        def chart_images(self, data: bytes, *, path: str) -> list[dict]:
+            return [{"page": 1, "box": [0, 0, 300, 200], "png": b""}]
+
+    data = _preview(_chart_workbook(), _Blank(1))
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert data["chartPages"] == [2]
+
+
+def test_an_unreadable_page_map_falls_back_to_chart_pages(monkeypatch) -> None:
+    import langchain_canvas.xlsx_import as xlsx_import
+
+    def _boom(data: bytes) -> list[int]:
+        raise ValueError("not a workbook")
+
+    monkeypatch.setattr(xlsx_import, "xlsx_printed_sheets", _boom)
+    data = _preview(_chart_workbook(), _ChartCropper(1))
+    assert not data["workbook"]["sheet"][0].get("images")
+    assert data["chartPages"] == [2]
