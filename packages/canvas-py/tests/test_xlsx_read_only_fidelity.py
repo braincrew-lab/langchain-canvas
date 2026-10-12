@@ -250,3 +250,39 @@ def test_rotated_text_grows_an_auto_height_row_and_numbers_align_right() -> None
     assert rowlen[0] > 25
     assert rowlen[1] == 20  # 15pt stored, untouched
     assert _cells(sheet)["2_0"]["m"] == "-" and _cells(sheet)["2_0"]["ht"] == 2
+
+
+def test_a_picture_below_hidden_rows_moves_up_with_the_grid() -> None:
+    from openpyxl.drawing.image import Image as XLImage
+    from PIL import Image as PILImage
+
+    def build(hide: bool) -> bytes:
+        wb = Workbook()
+        ws = wb.active
+        buffer = io.BytesIO()
+        PILImage.new("RGB", (10, 10), "red").save(buffer, format="PNG")
+        buffer.seek(0)
+        ws.add_image(XLImage(buffer), "A6")
+        if hide:
+            ws.row_dimensions[2].hidden = True
+            ws.row_dimensions[3].hidden = True
+        return _bytes(wb)
+
+    def top(data: bytes, read_only: bool) -> int:
+        parsed, _ = xlsx_sheets_and_charts(data, read_only=read_only)
+        return parsed["sheets"][0]["images"][0]["top"]
+
+    shown, folded = top(build(False), True), top(build(True), True)
+    assert shown - folded == 2 * 19
+    # the editable reader keeps its old geometry
+    assert top(build(True), False) == shown
+
+
+def test_fortune_red_marker_is_dropped_once_the_colour_is_baked() -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = -5
+    ws["A1"].number_format = "[Red]0;-0"
+    cell = _cells(_read_only(wb)[0])["0_0"]
+    assert cell["m"] == "-5" and cell.get("fc") != "#FF0000"
+    assert "[Red]" not in cell["ct"]["fa"]
