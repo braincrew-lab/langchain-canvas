@@ -286,3 +286,30 @@ def test_fortune_red_marker_is_dropped_once_the_colour_is_baked() -> None:
     cell = _cells(_read_only(wb)[0])["0_0"]
     assert cell["m"] == "-5" and cell.get("fc") != "#FF0000"
     assert "[Red]" not in cell["ct"]["fa"]
+
+
+def test_pictures_and_charts_use_the_rows_after_rotated_text_grows_them() -> None:
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.drawing.image import Image as XLImage
+    from PIL import Image as PILImage
+
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "보기 글자 보기 글자"
+    ws["A1"].alignment = Alignment(textRotation=45)
+    for row in range(2, 6):
+        ws.cell(row=row, column=2, value=row)
+    buffer = io.BytesIO()
+    PILImage.new("RGB", (10, 10), "red").save(buffer, format="PNG")
+    buffer.seek(0)
+    ws.add_image(XLImage(buffer), "D6")
+    chart = BarChart()
+    chart.add_data(Reference(ws, min_col=2, min_row=2, max_row=5))
+    ws.add_chart(chart, "D6")
+    parsed, charts = xlsx_sheets_and_charts(_bytes(wb), read_only=True)
+    sheet = parsed["sheets"][0]
+    grown = sheet["config"]["rowlen"][0]
+    assert grown > 19
+    # rows 1-5 above the anchor: the grown first row plus four default rows
+    assert sheet["images"][0]["top"] == grown + 4 * 19
+    assert charts[0]["top"] == (grown + 1) + 4 * (19 + 1)  # charts count the 1px row border
