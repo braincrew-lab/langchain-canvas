@@ -76,6 +76,24 @@ export function normalizeSheets(sheet: TableData["sheet"]): TableData["sheet"] {
   });
 }
 
+/** The sheets a workbook mounts with, outside a sort/filter view. */
+export function baseSheets(
+  columns: TableColumn[],
+  rows: TableData["rows"],
+  sheet: TableData["sheet"],
+  formulas: FormulaValues,
+  readOnly: boolean,
+): TableData["sheet"] {
+  // A read-only workbook is the file as the host parsed it, pictures included
+  // (a chart-only sheet has no cell values). Its rows are a lossy first-sheet
+  // projection (header taken, empty rows dropped), so they never overlay it.
+  if (readOnly && sheet?.length) return normalizeSheets(sheet);
+  // Rows the agent wrote after the person's last edit win their cells; the
+  // person's formatting and out-of-table cells survive.
+  if (!sheetHasContent(sheet)) return toWorkbook(columns, rows, formulas);
+  return mergeRowsIntoSheet(columns, rows, normalizeSheets(sheet), formulas)!;
+}
+
 /** Convert the agent's simple columns/rows into a Fortune-sheet workbook. */
 function toWorkbook(columns: TableColumn[], rows: TableData["rows"], formulas: FormulaValues): Record<string, unknown>[] {
   const celldata: Record<string, unknown>[] = [];
@@ -234,7 +252,10 @@ export function watchBoxSize(element: HTMLElement, onChange: () => void): () => 
 export function TableRenderer({
   artifact,
   readOnly = false,
-}: RendererProps<TableData> & { readOnly?: boolean }) {
+}: RendererProps<TableData> & {
+  /** Read-only means the parsed `sheet` is the truth; `rows` are never merged into it. */
+  readOnly?: boolean;
+}) {
   const labels = useLabels();
   // A table written by hand or by an agent may carry only `sheet`, or only
   // `rows`; neither absence is a reason to crash the tab.
@@ -380,11 +401,7 @@ export function TableRenderer({
   const initialData = useMemo(() => {
     const sheets = viewActive
       ? toWorkbook(columns, viewRows, formulas)
-      : hasSheet
-        ? // Rows the agent wrote after the person's last edit win their cells;
-          // the person's formatting and out-of-table cells survive.
-          mergeRowsIntoSheet(columns, rows, normalizeSheets(artifact.data.sheet), formulas)!
-        : toWorkbook(columns, rows, formulas);
+      : baseSheets(columns, rows, artifact.data.sheet, formulas, readOnly);
     if (!readOnly || typeof window === "undefined") return sheets;
     // A read-only grid is sized to its data; cover the largest area the panel can
     // grow to (the screen) so resizing never reveals the end of the sheet.
@@ -446,7 +463,10 @@ export function TableRenderer({
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">{labels.tableLoading}</div>;
   }
-  if (!hasSheet && columns.length === 0) {
+  // A read-only workbook mounts with any parsed sheet, even one with no cell
+  // values (a chart-only sheet holds just a picture).
+  const mountable = hasSheet || (readOnly && !!artifact.data.sheet?.length);
+  if (!mountable && columns.length === 0) {
     return <div className="cv-sheet cv-sheet--empty">{labels.tableWaiting}</div>;
   }
   // Wait for formula pre-computation before mounting, so the workbook mounts once

@@ -280,6 +280,61 @@ class ImageSourceConverter:
         )
 
 
+_Box = tuple[float, float, float, float]  # left, top, right, bottom (from the top)
+
+
+def _inside(inner: _Box, outer: _Box) -> bool:
+    return (
+        inner[0] >= outer[0] - 1
+        and inner[1] >= outer[1] - 1
+        and inner[2] <= outer[2] + 1
+        and inner[3] <= outer[3] + 1
+    )
+
+
+def _same(a: _Box, b: _Box) -> bool:
+    return all(abs(x - y) <= 2 for x, y in zip(a, b, strict=True))
+
+
+def _visible_share(box: _Box, page_width: float, page_height: float) -> float:
+    """The share of a box's area that lies on the page."""
+    area = (box[2] - box[0]) * (box[3] - box[1])
+    if area <= 0:
+        return 0.0
+    width = min(box[2], page_width) - max(box[0], 0.0)
+    height = min(box[3], page_height) - max(box[1], 0.0)
+    return max(0.0, width) * max(0.0, height) / area
+
+
+def _outer_chart_boxes(boxes: list[_Box], marks: list[_Box]) -> list[_Box]:
+    """Candidate boxes holding a mark, outermost only, twins merged, reading order."""
+    charts = [
+        box for box in boxes if any(_inside(mark, box) and not _same(mark, box) for mark in marks)
+    ]
+    outer = [
+        box
+        for box in charts
+        if not any(
+            other is not box and not _same(other, box) and _inside(box, other) for other in charts
+        )
+    ]
+    merged: list[_Box] = []
+    for box in outer:
+        twin = next((k for k, kept in enumerate(merged) if _same(kept, box)), None)
+        if twin is None:
+            merged.append(box)
+            continue
+        kept = merged[twin]
+        merged[twin] = (
+            min(kept[0], box[0]),
+            min(kept[1], box[1]),
+            max(kept[2], box[2]),
+            max(kept[3], box[3]),
+        )
+    merged.sort(key=lambda b: (round(b[1]), round(b[0])))
+    return merged
+
+
 class PdfSourceConverter:
     """PDFs as per-page extracted text, and — on request — as page images.
 
@@ -354,84 +409,108 @@ class PdfSourceConverter:
             "data": base64.b64encode(png).decode(),
         }
 
-    #: A chart page is a few large vector shapes (plot area, wide bars,
-    #: wedges) on a page with little text; a printed sheet is text with, at
-    #: most, cell fills. Pictures do not count: a sheet full of screenshots
-    #: is still a sheet. Measured on LibreOffice output: table pages carried
-    #: 0-35 fills, up to 3 large ones and 60-770 text objects; chart pages
-    #: 4-25 fills, 3-7 large ones and 30-100 text objects.
+    #: Deprecated: not read since 0.7.52 (chart pages come from ``_chart_boxes``).
+    #: Kept so a host that sets them keeps working.
     chart_min_big_paths: int = 2
     chart_min_area_paths: int = 40
-    #: A chart area is a filled or stroked box at least this big (pt) with a
-    #: colored mark (bar, wedge, line) inside it, lying on the page. Each
-    #: crop is rendered on its own at the scale that makes it about
+    chart_max_text_objects: int = 200
+    #: A mark (bar, wedge, legend key) is a colored fill at least this big (pt).
+    #: A chart printed fit-to-page draws its bars about 3pt wide.
+    chart_mark_min: float = 1.0
+    #: A chart area is a filled or stroked box with a colored mark inside it.
+    #: It is at least this fraction of the page width and height, so a chart
+    #: shrunk with its page is still found.
+    chart_box_min_fraction: tuple[float, float] = (0.08, 0.04)
+    #: A box that leaves the page counts for chart_pages only when at
+    #: least this share of its area is on the page; a sliver of a chart drawn
+    #: past the edge is not a chart page.
+    chart_cut_min_visible: float = 0.25
+    #: Absolute floor (pt) on top of the fraction; 0 leaves the fraction alone.
+    chart_box_min_width: float = 0.0
+    chart_box_min_height: float = 0.0
+    #: Each crop is rendered on its own at the scale that makes it about
     #: ``chart_crop_width`` px wide (between the two scale bounds), so a
     #: chart on a page that was shrunk to fit still reads at grid size.
-    chart_box_min_width: float = 100.0
-    chart_box_min_height: float = 60.0
     chart_crop_width: float = 960.0
     chart_crop_min_scale: float = 2.0
     chart_crop_max_scale: float = 8.0
-    chart_max_text_objects: int = 200
 
     def chart_pages(self, data: bytes, *, path: str) -> list[int]:
-        """1-based pages whose vector content reads as a chart.
+        """1-based pages that hold at least one chart.
 
-        A page counts when it draws at least ``chart_min_big_paths`` shapes
-        larger than 40pt on a side (or ``chart_min_area_paths`` shapes with
-        any real area) and carries no more than ``chart_max_text_objects``
-        text objects. Embedded pictures are ignored. Hosts that render
-        office files to PDF call this on that PDF so the workbook viewer can
-        show chart pages under the read-only grid.
+        A page counts when ``_chart_boxes`` finds a chart area on it. A chart
+        cut by a page break counts on both pages, though ``chart_images``
+        skips it. Hosts that render office files to PDF call this on that PDF
+        so the workbook viewer can show chart pages under the read-only grid.
         """
-        import ctypes
-
-        import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
-
-        def _size(raw: object) -> tuple[float, float]:
-            left, bottom, right, top = (ctypes.c_float() for _ in range(4))
-            if not pdfium_c.FPDFPageObj_GetBounds(raw, left, bottom, right, top):
-                return 0.0, 0.0
-            return right.value - left.value, top.value - bottom.value
-
         document = self._document(data)
-        pages: list[int] = []
         try:
-            for index, page in enumerate(document, 1):
-                area = big = text = 0
-                for obj in page.get_objects(max_depth=2):
-                    if obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT:
-                        text += 1
-                    elif obj.type == pdfium_c.FPDF_PAGEOBJ_PATH:
-                        width, height = _size(obj.raw)
-                        if width > 4 and height > 4:
-                            area += 1
-                        if width > 40 and height > 40:
-                            big += 1
-                shapes = big >= self.chart_min_big_paths or area >= self.chart_min_area_paths
-                if shapes and text <= self.chart_max_text_objects:
-                    pages.append(index)
+            return [
+                index
+                for index, page in enumerate(document, 1)
+                if self._chart_boxes(page, keep_cut=True)
+            ]
         finally:
             document.close()
-        return pages
 
     def chart_images(self, data: bytes, *, path: str) -> list[dict[str, Any]]:
         """Each chart on the rendered pages as a PNG crop, in page order.
 
-        LibreOffice draws a chart as a box (its chart area, a filled or
-        stroked rectangle) with colored marks inside: bars, wedges, lines.
-        A box counts when a colored, non-white filled shape sits inside it
-        and no larger qualifying box holds it (the plot area inside a chart
-        is not a second chart); the border and the white fill of one chart
-        area collapse into one box. A box that leaves the page is a chart
-        cut by a page break, drawn again on the next page — it is skipped,
-        so the caller sees a whole chart or none (see
-        ``xlsx_fit_to_one_page`` for how a host avoids the break). Cell fills
-        and gridlines sit in no box, so a printed table yields nothing.
+        A chart is found by ``_chart_boxes``. A box that leaves the page is a
+        chart cut by a page break, drawn again on the next page — it is
+        skipped, so the caller sees a whole chart or none (see
+        ``xlsx_fit_to_one_page`` for how a host avoids the break).
         Returns ``[{"page": n, "box": [x, y, w, h], "png": bytes}, ...]``
         with the box in points from the page's top-left corner, ordered by
         page, then top to bottom and left to right — the order charts take
         in a workbook printed sheet by sheet.
+        """
+        document = self._document(data)
+        crops: list[dict[str, Any]] = []
+        try:
+            for index, page in enumerate(document, 1):
+                for box in self._chart_boxes(page, keep_cut=False):
+                    crops.append(self._crop_chart(page, index, box))
+        finally:
+            document.close()
+        return crops
+
+    def _crop_chart(self, page: Any, index: int, box: _Box) -> dict[str, Any]:
+        left, top, right, bottom = box
+        page_width, page_height = page.get_size()
+        pad = 2.0
+        # Only the chart's own area is rendered, at a scale that makes it
+        # about ``chart_crop_width`` px wide.
+        scale = min(
+            self.chart_crop_max_scale,
+            max(self.chart_crop_min_scale, self.chart_crop_width / (right - left)),
+        )
+        cut_left = max(0.0, left - pad)
+        cut_top = max(0.0, top - pad)
+        cut_right = max(0.0, page_width - min(page_width, right + pad))
+        cut_bottom = max(0.0, page_height - min(page_height, bottom + pad))
+        crop = page.render(scale=scale, crop=(cut_left, cut_bottom, cut_right, cut_top)).to_pil()
+        out = io.BytesIO()
+        crop.save(out, format="PNG")
+        return {
+            "page": index,
+            "box": [round(left, 1), round(top, 1), round(right - left, 1), round(bottom - top, 1)],
+            "png": out.getvalue(),
+        }
+
+    def _chart_boxes(self, page: Any, *, keep_cut: bool) -> list[_Box]:
+        """Chart areas on one page as (left, top, right, bottom) in points from the top.
+
+        LibreOffice draws a chart as a box (its chart area, a filled or
+        stroked rectangle) with colored marks inside: bars, wedges, lines.
+        A box counts when it is at least ``chart_box_min_fraction`` of the
+        page and a colored, non-white filled mark of ``chart_mark_min`` sits
+        inside it; no larger qualifying box may hold it (the plot area inside
+        a chart is not a second chart), and the border and the white fill of
+        one chart area collapse into one box. A box that leaves the page is
+        a chart cut by a page break: dropped unless ``keep_cut``. Cell fills
+        and gridlines sit in no box, so a printed table yields nothing.
+        Boxes come ordered top to bottom, then left to right.
         """
         import ctypes
 
@@ -454,112 +533,43 @@ class PdfSourceConverter:
                 return None
             return red.value, green.value, blue.value
 
-        Box = tuple[float, float, float, float]  # left, top, right, bottom (from the top)
-
-        def _inside(inner: Box, outer: Box) -> bool:
-            return (
-                inner[0] >= outer[0] - 1
-                and inner[1] >= outer[1] - 1
-                and inner[2] <= outer[2] + 1
-                and inner[3] <= outer[3] + 1
+        page_width, page_height = page.get_size()
+        min_width = max(self.chart_box_min_width, page_width * self.chart_box_min_fraction[0])
+        min_height = max(self.chart_box_min_height, page_height * self.chart_box_min_fraction[1])
+        boxes: list[_Box] = []
+        marks: list[_Box] = []
+        for obj in page.get_objects(max_depth=2):
+            if obj.type != pdfium_c.FPDF_PAGEOBJ_PATH:
+                continue
+            bounds = _bounds(obj.raw)
+            if bounds is None:
+                continue
+            left, bottom, right, top = bounds
+            box: _Box = (left, page_height - top, right, page_height - bottom)
+            width, height = right - left, top - bottom
+            filled, stroked = _draw_mode(obj.raw)
+            on_page = (
+                left >= -1
+                and right <= page_width + 1
+                and box[1] >= -1
+                and box[3] <= page_height + 1
             )
-
-        def _same(a: Box, b: Box) -> bool:
-            return all(abs(x - y) <= 2 for x, y in zip(a, b, strict=True))
-
-        document = self._document(data)
-        crops: list[dict[str, Any]] = []
-        try:
-            for index, page in enumerate(document, 1):
-                page_width, page_height = page.get_size()
-                boxes: list[Box] = []
-                marks: list[Box] = []
-                for obj in page.get_objects(max_depth=2):
-                    if obj.type != pdfium_c.FPDF_PAGEOBJ_PATH:
-                        continue
-                    bounds = _bounds(obj.raw)
-                    if bounds is None:
-                        continue
-                    left, bottom, right, top = bounds
-                    box: Box = (left, page_height - top, right, page_height - bottom)
-                    width, height = right - left, top - bottom
-                    filled, stroked = _draw_mode(obj.raw)
-                    on_page = (
-                        left >= -1
-                        and right <= page_width + 1
-                        and box[1] >= -1
-                        and box[3] <= page_height + 1
-                    )
-                    if (
-                        on_page
-                        and (filled or stroked)
-                        and width >= self.chart_box_min_width
-                        and height >= self.chart_box_min_height
-                    ):
-                        boxes.append(box)
-                    if filled and width > 4 and height > 4:
-                        rgb = _fill_rgb(obj.raw)
-                        if rgb is not None and rgb != (255, 255, 255):
-                            marks.append(box)
-                charts = [
-                    box
-                    for box in boxes
-                    if any(_inside(mark, box) and not _same(mark, box) for mark in marks)
-                ]
-                outer = [
-                    box
-                    for box in charts
-                    if not any(
-                        other is not box and not _same(other, box) and _inside(box, other)
-                        for other in charts
-                    )
-                ]
-                merged: list[Box] = []
-                for box in outer:
-                    twin = next((k for k, kept in enumerate(merged) if _same(kept, box)), None)
-                    if twin is None:
-                        merged.append(box)
-                        continue
-                    kept = merged[twin]
-                    merged[twin] = (
-                        min(kept[0], box[0]),
-                        min(kept[1], box[1]),
-                        max(kept[2], box[2]),
-                        max(kept[3], box[3]),
-                    )
-                merged.sort(key=lambda b: (round(b[1]), round(b[0])))
-                pad = 2.0
-                for left, top, right, bottom in merged:
-                    # Only the chart's own area is rendered, at a scale that
-                    # makes it about ``chart_crop_width`` px wide.
-                    scale = min(
-                        self.chart_crop_max_scale,
-                        max(self.chart_crop_min_scale, self.chart_crop_width / (right - left)),
-                    )
-                    cut_left = max(0.0, left - pad)
-                    cut_top = max(0.0, top - pad)
-                    cut_right = max(0.0, page_width - min(page_width, right + pad))
-                    cut_bottom = max(0.0, page_height - min(page_height, bottom + pad))
-                    crop = page.render(
-                        scale=scale, crop=(cut_left, cut_bottom, cut_right, cut_top)
-                    ).to_pil()
-                    out = io.BytesIO()
-                    crop.save(out, format="PNG")
-                    crops.append(
-                        {
-                            "page": index,
-                            "box": [
-                                round(left, 1),
-                                round(top, 1),
-                                round(right - left, 1),
-                                round(bottom - top, 1),
-                            ],
-                            "png": out.getvalue(),
-                        }
-                    )
-        finally:
-            document.close()
-        return crops
+            shown = on_page or (
+                keep_cut
+                and _visible_share(box, page_width, page_height) >= self.chart_cut_min_visible
+            )
+            if (
+                shown
+                and (filled or stroked)
+                and width >= min_width
+                and height >= min_height
+            ):
+                boxes.append(box)
+            if filled and width > self.chart_mark_min and height > self.chart_mark_min:
+                rgb = _fill_rgb(obj.raw)
+                if rgb is not None and rgb != (255, 255, 255):
+                    marks.append(box)
+        return _outer_chart_boxes(boxes, marks)
 
     def render_pages(self, data: bytes, *, path: str, pages: list[int]) -> ConvertedSource:
         """The requested 1-based pages as labeled PNG image blocks.

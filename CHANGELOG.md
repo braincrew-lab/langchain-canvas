@@ -4,6 +4,19 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.52] — 2026-10-12
+
+### Fixed
+
+- A read-only workbook is drawn from the sheet the host parsed, as it is. Before, the first-sheet `rows` were merged over it, which moved values up one row, replaced number formats such as `#,##0` with `General`, put column letters in row 1 and dropped the last rows. A sheet with no cell values but a picture (a chart-only sheet) also keeps its picture. Read-only means the parsed `sheet` is the truth; `rows` are never merged into it. Editable tables are unchanged.
+- A chart that was shrunk to fit its page is found again. The chart finder (`PdfSourceConverter.chart_images`) now counts a colored fill as a bar from 1pt (it was 4pt, and a fit-to-page chart draws bars about 3pt wide), and a chart area must be at least 8% of the page width and 4% of the page height (it was a fixed 100 x 60pt). A workbook with a small or shrunk chart now gets its picture instead of a page image under the grid.
+- `PdfSourceConverter.chart_pages` uses the same chart finder. Before, it counted shapes and text objects, so a printed table page could pass as a chart page. Now a page counts when it holds a chart area. A chart cut by a page break still counts on each page that shows at least a quarter of it (`chart_cut_min_visible`).
+- Charts are paired with their crops one sheet at a time. Before, one wrong count anywhere in the workbook dropped every chart picture and showed whole pages instead. Now each sheet is matched with its own printed page: a sheet whose crop count equals its chart count gets each picture at its anchor, a sheet with a different count gets its pictures stacked under its data, and the other sheets are unaffected. The page map skips hidden and empty sheets (`xlsx_printed_sheets`). A workbook with a chart sheet, or a crop on a page past the last printed sheet, still falls back to the chart pages under the grid, because the pages can no longer be matched to sheets.
+
+### Changed
+
+- `chart_box_min_width` and `chart_box_min_height` on `PdfSourceConverter` are now absolute floors on top of the page share, and default to 0 (they were 100 and 60). `chart_min_big_paths`, `chart_min_area_paths` and `chart_max_text_objects` stay as attributes but are no longer read.
+
 ## [0.7.51] — 2026-10-09
 
 ### Security
