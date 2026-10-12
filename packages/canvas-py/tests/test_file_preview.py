@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import io
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -579,3 +580,64 @@ def test_fit_to_one_page_copy_is_deterministic_and_sets_the_flags() -> None:
     assert sheet.sheet_properties.pageSetUpPr.fitToPage is True
     assert (sheet.page_setup.fitToWidth, sheet.page_setup.fitToHeight) == (1, 1)
     assert len(sheet._charts) == 1
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _small_chart(x: int, y: int, w: int, h: int, *, bar_w: int, bar_h: int, legend: int = 0) -> str:
+    """A chart box (stroked border, white area) with two bars and an optional legend key."""
+    bars = (
+        f"0 0 1 rg {x + 10} {y + 10} {bar_w} {bar_h} re f "
+        f"{x + 10 + bar_w * 2} {y + 10} {bar_w} {bar_h} re f"
+    )
+    key = f" 1 0 0 rg {x + w - 20} {y + h - 20} {legend} {legend} re f" if legend else ""
+    border = f"0 0 0 RG {x} {y} {w} {h} re S 1 1 1 rg {x + 1} {y + 1} {w - 2} {h - 2} re f"
+    return f"{border} {bars}{key}"
+
+
+def test_pdf_chart_images_keep_thin_bars_of_a_shrunk_chart() -> None:
+    """A chart printed fit-to-page has bars about 3pt wide and a 3pt legend key."""
+    page = _small_chart(50, 400, 300, 200, bar_w=3, bar_h=100, legend=3)
+    crops = PdfSourceConverter().chart_images(_vector_pdf([page]), path="x.pdf")
+    assert [c["page"] for c in crops] == [1]
+
+
+def test_pdf_chart_images_find_a_small_chart_box() -> None:
+    """An 80x50pt chart area is still a chart (the floor is a share of the page)."""
+    page = _small_chart(50, 400, 80, 50, bar_w=30, bar_h=20)
+    crops = PdfSourceConverter().chart_images(_vector_pdf([page]), path="x.pdf")
+    assert [c["page"] for c in crops] == [1]
+
+
+def test_pdf_chart_images_ignore_a_hairline_fill() -> None:
+    """A colored fill thinner than a point is a rule, not a bar."""
+    page = (
+        "0 0 0 RG 50 400 300 200 re S 1 1 1 rg 51 401 298 198 re f "
+        "0 0 1 rg 60 450 200 0.5 re f"
+    )
+    assert PdfSourceConverter().chart_images(_vector_pdf([page]), path="x.pdf") == []
+
+
+def test_libreoffice_fit_copy_of_a_shrunk_chart_yields_one_crop() -> None:
+    """Measured: the fit-to-page copy of a workbook with one chart lost its bars (2.8pt)."""
+    data = (_FIXTURES / "shrunk_chart_fit.pdf").read_bytes()
+    crops = PdfSourceConverter().chart_images(data, path="a.pdf")
+    assert len(crops) == 1
+
+
+def test_chart_pages_skip_a_printed_table_page() -> None:
+    """Measured: a table page (3 big fills, 146 text objects) used to pass the old counts."""
+    data = (_FIXTURES / "shrunk_chart_orig.pdf").read_bytes()
+    converter = PdfSourceConverter()
+    expected = sorted({c["page"] for c in converter.chart_images(data, path="a.pdf")})
+    assert converter.chart_pages(data, path="a.pdf") == expected
+
+
+def test_chart_pages_keep_a_chart_cut_by_the_page_edge() -> None:
+    """A chart split by a page break still lists its pages, but yields no crop."""
+    page = _small_chart(50, -100, 300, 250, bar_w=30, bar_h=100)  # leaves the page bottom
+    pdf = _vector_pdf([page])
+    converter = PdfSourceConverter()
+    assert converter.chart_pages(pdf, path="x.pdf") == [1]
+    assert converter.chart_images(pdf, path="x.pdf") == []
