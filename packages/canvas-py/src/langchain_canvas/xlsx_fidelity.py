@@ -250,10 +250,13 @@ def _fill(cell: Any) -> tuple[dict[str, Any] | None, str | None]:
         if not stops:
             return None, None
         kind = "path" if getattr(fill, "type", "linear") == "path" else "linear"
-        spec = {"gradient": kind, "degree": float(getattr(fill, "degree", 0) or 0), "stops": stops}
-        if kind == "linear" and spec["degree"].is_integer():
-            spec["degree"] = int(spec["degree"])
-        return spec, stops[0][1]
+        degree = float(getattr(fill, "degree", 0) or 0)
+        spec: dict[str, Any] = {
+            "gradient": kind,
+            "degree": int(degree) if degree.is_integer() else degree,
+            "stops": stops,
+        }
+        return spec, str(stops[0][1])
     pattern = getattr(fill, "patternType", None)
     if pattern in (None, "none", "solid"):
         return None, None

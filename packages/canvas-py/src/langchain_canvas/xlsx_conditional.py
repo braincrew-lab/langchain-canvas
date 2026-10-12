@@ -231,7 +231,7 @@ def _numeric(value: Any) -> float | None:
 
 def _cfvo_value(cfvo: Any, numbers: list[float]) -> float | None:
     kind = getattr(cfvo, "type", None)
-    raw = getattr(cfvo, "val", None)
+    raw: Any = getattr(cfvo, "val", None)
     if not numbers:
         return None
     if kind == "min":
@@ -492,15 +492,15 @@ def _matches(
                     hits[at] = {"bg": _scale_colour(number, ordered_stops)}
     elif kind == "dataBar":
         bar = rule.dataBar
-        low = _cfvo_value(bar.cfvo[0], numbers)
-        high = _cfvo_value(bar.cfvo[1], numbers)
+        bar_low = _cfvo_value(bar.cfvo[0], numbers)
+        bar_high = _cfvo_value(bar.cfvo[1], numbers)
         colour = _to_hex(bar.color) or "#638EC6"
-        if low is not None and high is not None:
-            span = (high - low) or 1
+        if bar_low is not None and bar_high is not None:
+            span = (bar_high - bar_low) or 1
             for at, value in values.items():
                 number = _numeric(value)
                 if number is not None:
-                    ratio = max(0.0, min(1.0, (number - low) / span))
+                    ratio = max(0.0, min(1.0, (number - bar_low) / span))
                     hits[at] = {"lcx": {"bar": {"ratio": round(ratio, 4), "color": colour}}}
     elif kind == "iconSet":
         icons = rule.iconSet
