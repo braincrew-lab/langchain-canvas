@@ -249,6 +249,11 @@ def _cell_extras(cell: Any, cached: Any, v: dict[str, Any]) -> bool:
             shown = format_number_sections(float(number), fmt)
             if shown is not None:
                 v["m"], colour = shown
+                # The colour is decided here; Fortune's own "[Red]" check would
+                # repaint every negative red whichever section carries it.
+                fa = (v.get("ct") or {}).get("fa")
+                if isinstance(fa, str) and "[Red]" in fa:
+                    v["ct"] = {**v["ct"], "fa": fa.replace("[Red]", "")}
                 if colour:
                     v["fc"] = colour
                     format_coloured = True
@@ -325,6 +330,11 @@ def _hidden_columns(worksheet: Any) -> dict[int, int]:
             if column >= 1:
                 hidden[column - 1] = 0
     return hidden
+
+
+def hidden_rows_and_columns(worksheet: Any) -> tuple[frozenset[int], frozenset[int]]:
+    """0-based rows and columns the sheet hides — they take no space on the grid."""
+    return frozenset(_hidden_rows(worksheet)), frozenset(_hidden_columns(worksheet))
 
 
 def _dropdown_cells(worksheet: Any) -> list[tuple[int, int]]:

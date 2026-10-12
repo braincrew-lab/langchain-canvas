@@ -291,7 +291,12 @@ def _parse_merge(merged: Any) -> tuple[str, dict[str, int]]:
 
 
 def _anchor_box(
-    anchor: Any, columnlen: dict[int, int], rowlen: dict[int, int], *, border: int = 0
+    anchor: Any,
+    columnlen: dict[int, int],
+    rowlen: dict[int, int],
+    *,
+    border: int = 0,
+    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
 ) -> dict[str, int] | None:
     """A drawing anchor as a Fortune px box (left/top/width/height), or None.
 
@@ -301,17 +306,25 @@ def _anchor_box(
     1px border, and each column as its width plus 1px (core:
     ``rh_height += rowlen + 1``); ``border=1`` counts that. Pictures keep
     ``border=0`` because the TypeScript twin and its golden still do — the
-    two readers move together when that drift is fixed.
+    two readers move together when that drift is fixed. ``hidden`` holds the
+    (rows, columns) a read-only grid folds away; they take no space, so a
+    drawing below or right of them moves up or left with the grid.
     """
+    hidden_rows, hidden_columns = hidden
     start = getattr(anchor, "_from", None)
     if start is None:
         return None
 
     def col_left(column: int) -> int:
-        return sum(columnlen.get(i, _DEFAULT_COL_PX) + border for i in range(column))
+        return sum(
+            columnlen.get(i, _DEFAULT_COL_PX) + border
+            for i in range(column) if i not in hidden_columns
+        )
 
     def row_top(row: int) -> int:
-        return sum(rowlen.get(i, _DEFAULT_ROW_PX) + border for i in range(row))
+        return sum(
+            rowlen.get(i, _DEFAULT_ROW_PX) + border for i in range(row) if i not in hidden_rows
+        )
 
     left = col_left(start.col) + _round((start.colOff or 0) / _EMU_PER_PX)
     top = row_top(start.row) + _round((start.rowOff or 0) / _EMU_PER_PX)
@@ -332,13 +345,16 @@ def _anchor_box(
 
 
 def _sheet_images(
-    worksheet: Any, columnlen: dict[int, int], rowlen: dict[int, int]
+    worksheet: Any,
+    columnlen: dict[int, int],
+    rowlen: dict[int, int],
+    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
 ) -> list[dict[str, Any]]:
     """A worksheet's floating images as Fortune images (px position + data URL)."""
     placed = list(getattr(worksheet, "_images", []) or [])
     images: list[dict[str, Any]] = []
     for index, image in enumerate(placed):
-        box = _anchor_box(getattr(image, "anchor", None), columnlen, rowlen)
+        box = _anchor_box(getattr(image, "anchor", None), columnlen, rowlen, hidden=hidden)
         if box is None:
             continue
         try:
@@ -416,7 +432,10 @@ def xlsx_printed_sheets(data: bytes) -> list[int] | None:
 
 
 def _sheet_chart_boxes(
-    worksheet: Any, columnlen: dict[int, int], rowlen: dict[int, int]
+    worksheet: Any,
+    columnlen: dict[int, int],
+    rowlen: dict[int, int],
+    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
 ) -> list[dict[str, int]]:
     """Where a worksheet's charts sit, as Fortune px boxes in anchor order.
 
@@ -426,7 +445,7 @@ def _sheet_chart_boxes(
     """
     boxes: list[dict[str, int]] = []
     for chart in list(getattr(worksheet, "_charts", []) or []):
-        box = _anchor_box(getattr(chart, "anchor", None), columnlen, rowlen, border=1)
+        box = _anchor_box(getattr(chart, "anchor", None), columnlen, rowlen, border=1, hidden=hidden)
         if box is not None:
             boxes.append(box)
     boxes.sort(key=lambda box: (box["top"], box["left"]))
@@ -609,6 +628,11 @@ def xlsx_sheets_and_charts(
             if stored_height:
                 rowlen[row - 1] = _round(stored_height * 1.33)  # points -> px
 
+        folded: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset())
+        if read_only:
+            from .xlsx_fidelity import hidden_rows_and_columns
+
+            folded = hidden_rows_and_columns(worksheet)
         sheets.append({
             "name": worksheet.title or f"Sheet{index + 1}",
             "id": f"sheet_{index}",
@@ -622,13 +646,13 @@ def xlsx_sheets_and_charts(
             "celldata": celldata,
             "config": {"merge": merge, "columnlen": columnlen,
                        "rowlen": rowlen, "borderInfo": border_info},
-            "images": _sheet_images(worksheet, columnlen, rowlen),
+            "images": _sheet_images(worksheet, columnlen, rowlen, folded),
         })
         if read_only:
             from .xlsx_fidelity import apply_read_only_fidelity
 
             apply_read_only_fidelity(sheets[-1], worksheet, cached)
-        for box in _sheet_chart_boxes(worksheet, columnlen, rowlen):
+        for box in _sheet_chart_boxes(worksheet, columnlen, rowlen, folded):
             charts.append({"sheet": index, **box})
 
     if read_only:
