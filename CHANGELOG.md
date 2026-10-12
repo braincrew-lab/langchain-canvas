@@ -4,6 +4,18 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A read-only workbook is drawn from the sheet the host parsed, as it is. Before, the first-sheet `rows` were merged over it, which moved values up one row, replaced number formats such as `#,##0` with `General`, put column letters in row 1 and dropped the last rows. A sheet with no cell values but a picture (a chart-only sheet) also keeps its picture. Read-only means the parsed `sheet` is the truth; `rows` are never merged into it. Editable tables are unchanged.
+- A chart that was shrunk to fit its page is found again. The chart finder (`PdfSourceConverter.chart_images`) now counts a colored fill as a bar from 1pt (it was 4pt, and a fit-to-page chart draws bars about 3pt wide), and a chart area must be at least 8% of the page width and 4% of the page height (it was a fixed 100 x 60pt). A workbook with a small or shrunk chart now gets its picture instead of a page image under the grid.
+- `PdfSourceConverter.chart_pages` uses the same chart finder. Before, it counted shapes and text objects, so a printed table page could pass as a chart page. Now a page counts when it holds a chart area. A chart cut by a page break still counts on each page that shows at least a quarter of it (`chart_cut_min_visible`).
+
+### Changed
+
+- `chart_box_min_width` and `chart_box_min_height` on `PdfSourceConverter` are now absolute floors on top of the page share, and default to 0 (they were 100 and 60). `chart_min_big_paths`, `chart_min_area_paths` and `chart_max_text_objects` stay as attributes but are no longer read.
+
 ## [0.7.51] — 2026-10-09
 
 ### Security
