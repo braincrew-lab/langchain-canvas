@@ -2,7 +2,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import {
+  baseSheets,
   normalizeSheets,
   padSheetsToArea,
   sheetHasContent,
@@ -149,5 +151,66 @@ describe("watchBoxSize", () => {
 
     stop();
     expect(observer.disconnected).toBe(true);
+  });
+});
+
+describe("baseSheets", () => {
+  // A parsed workbook: a title in B1, an empty row, one value in B3 with a
+  // thousands format. Its `rows` are the lossy first-sheet projection the host
+  // derives (header taken from row 1, empty rows dropped, empty labels filled
+  // with column letters).
+  const columns = [
+    { key: "A", label: "A" },
+    { key: "B", label: "월별 매출" },
+    { key: "C", label: "C" },
+  ];
+  const rows = [{ B: 128000000 }];
+  const parsedSheet = (): Array<Record<string, unknown>> => [
+    {
+      name: "요약",
+      celldata: [
+        { r: 0, c: 1, v: { v: "월별 매출", m: "월별 매출" } },
+        { r: 2, c: 1, v: { v: 128000000, m: "128,000,000", ct: { fa: "#,##0", t: "n" } } },
+      ],
+    },
+  ];
+  type Cell = { v?: unknown; ct?: { fa?: string } };
+  const cellAt = (sheets: ReturnType<typeof baseSheets>, r: number, c: number): Cell | undefined =>
+    (sheets![0].celldata as Array<{ r: number; c: number; v: Cell }>).find((x) => x.r === r && x.c === c)?.v;
+
+  it("should draw a read-only workbook from its parsed sheet unchanged", () => {
+    const sheet = parsedSheet();
+
+    const result = baseSheets(columns, rows, sheet, new Map(), true);
+
+    expect(result).toEqual(normalizeSheets(sheet));
+    expect(cellAt(result, 0, 0)).toBeUndefined();
+    expect(cellAt(result, 0, 2)).toBeUndefined();
+    expect(cellAt(result, 2, 1)?.ct?.fa).toBe("#,##0");
+  });
+
+  it("should keep merging agent rows into an editable table's sheet", () => {
+    const sheet = parsedSheet();
+
+    const result = baseSheets(columns, rows, sheet, new Map(), false);
+
+    expect(result).toEqual(mergeRowsIntoSheet(columns, rows, normalizeSheets(sheet), new Map()));
+    expect(cellAt(result, 0, 0)?.v).toBe("A");
+  });
+
+  it("should build from rows when no sheet has content", () => {
+    for (const readOnly of [true, false]) {
+      const result = baseSheets(columns, rows, undefined, new Map(), readOnly);
+      expect(cellAt(result, 0, 0)?.v).toBe("A");
+      expect(cellAt(result, 1, 1)?.v).toBe(128000000);
+    }
+  });
+
+  it("should keep the pictures of a read-only sheet with no cell values", () => {
+    const sheet = [{ name: "차트", celldata: [], images: [{ id: "chart_0", src: "data:image/png;base64,AAAA" }] }];
+
+    const result = baseSheets([], [], sheet, new Map(), true);
+
+    expect((result![0].images as unknown[]).length).toBe(1);
   });
 });
