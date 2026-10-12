@@ -4,6 +4,19 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A read-only workbook looks like the file in Excel. `xlsx_sheets_and_charts(data, read_only=True)` (used for every read-only workbook the replay shows) now carries what the grid used to drop:
+  - hidden and very hidden sheets stay hidden (`hide: 1`; the sheet keeps its index so chart pictures still pair with their sheets), and the first visible sheet opens;
+  - hidden rows and columns stay hidden (`config.rowhidden` / `config.colhidden`), and a sheet keeps its tab colour;
+  - number formats with sections show the section a value falls in: `#,##0;[Red]\(#,##0\);\-` shows `-1500000` as a red `(1,500,000)` and `0` as `-`. Colour tokens (`[Red]`, `[RED]`, `[Blue]`, `[ColorN]`), conditions (`[>=1000000]`), quoted text, `\x`, `_x` and `*x` are read; formula cells get the same treatment, and numbers keep Excel's right alignment;
+  - conditional formats are decided against the values the file holds and written into the cells: every `cellIs` operator, text rules, blanks, errors, duplicates and uniques, top/bottom N and percent, above/below average, time periods, expressions (cell references move with the cell; `AND`, `OR`, `NOT`, `ISBLANK`, `ABS`, `MOD`, `LEN`), colour scales, data bars and icon sets. Priority and stop-if-true are kept, and a number-format colour beats a rule's font colour. A rule that cannot be decided is listed on the sheet under `lcxSkipped` instead of being dropped;
+  - strike-through, text rotation (the 0-180 encoding Excel and Fortune share) and stacked text, with auto-height rows grown so turned text is not clipped; indent; patterned and gradient fills; notes; web links (http, https and mailto only) and links to a cell in the workbook; the list-validation arrow on cells that hold a value.
+- The read-only grid paints what Fortune-sheet has no field for. `TableRenderer` passes Fortune `hooks` from `sheetPaint.ts` to a read-only workbook: patterned and gradient fills and data bars replace the background brush, icons and the list arrow are drawn over the cell, and a click on a web link opens it in a new tab without an opener. Indent moves the text through a small addition to the Fortune patch (`patches/@fortune-sheet__core@1.0.4.patch`).
+- Editable tables are unchanged: `xlsx_to_sheets` still returns the same sheets, and the parity golden file did not move.
+
 ## [0.7.52] — 2026-10-12
 
 ### Fixed
