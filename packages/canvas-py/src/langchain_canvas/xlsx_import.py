@@ -648,12 +648,15 @@ def xlsx_sheets_and_charts(
             "celldata": celldata,
             "config": {"merge": merge, "columnlen": columnlen,
                        "rowlen": rowlen, "borderInfo": border_info},
-            "images": _sheet_images(worksheet, columnlen, rowlen, folded),
+            # A read-only sheet places its pictures after its rows are final
+            # (rotated text grows rows), so pictures and charts share one geometry.
+            "images": [] if read_only else _sheet_images(worksheet, columnlen, rowlen),
         })
         if read_only:
             from .xlsx_fidelity import apply_read_only_fidelity
 
             apply_read_only_fidelity(sheets[-1], worksheet, cached)
+            sheets[-1]["images"] = _sheet_images(worksheet, columnlen, rowlen, folded)
         for box in _sheet_chart_boxes(worksheet, columnlen, rowlen, folded):
             charts.append({"sheet": index, **box})
 
