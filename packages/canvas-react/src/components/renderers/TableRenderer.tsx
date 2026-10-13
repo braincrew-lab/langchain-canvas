@@ -25,6 +25,7 @@ import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
 import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
+import { SHEET_PAINT_HOOKS } from "./sheetPaint";
 import { useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
 
@@ -530,7 +531,7 @@ export function TableRenderer({
             ref={wbRef}
             data={initialData as never}
             onChange={readOnly ? undefined : handleChange}
-            {...(readOnly ? READ_ONLY_SETTINGS : {})}
+            {...(readOnly ? { ...READ_ONLY_SETTINGS, hooks: SHEET_PAINT_HOOKS } : {})}
           />
         </Suspense>
       </div>

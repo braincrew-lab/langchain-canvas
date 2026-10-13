@@ -700,7 +700,7 @@ def _derive_workbook(data: bytes) -> dict[str, Any] | None:
     from .xlsx_import import xlsx_sheets_and_charts
 
     try:
-        parsed, charts = xlsx_sheets_and_charts(data)
+        parsed, charts = xlsx_sheets_and_charts(data, read_only=True)
     except Exception:  # noqa: BLE001 — an unreadable workbook keeps the file card
         return None
     return {

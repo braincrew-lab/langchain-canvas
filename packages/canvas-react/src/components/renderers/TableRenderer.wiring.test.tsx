@@ -18,11 +18,15 @@ import { TableRenderer } from "./TableRenderer";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const probe = vi.hoisted(() => ({ data: undefined as Array<Record<string, unknown>> | undefined }));
+const probe = vi.hoisted(() => ({
+  data: undefined as Array<Record<string, unknown>> | undefined,
+  hooks: undefined as Record<string, unknown> | undefined,
+}));
 
 vi.mock("@fortune-sheet/react", () => ({
-  Workbook: (props: { data: Array<Record<string, unknown>> }) => {
+  Workbook: (props: { data: Array<Record<string, unknown>>; hooks?: Record<string, unknown> }) => {
     probe.data = props.data;
+    probe.hooks = props.hooks;
     return null;
   },
 }));
@@ -63,6 +67,7 @@ afterEach(() => {
   root = null;
   host = null;
   probe.data = undefined;
+  probe.hooks = undefined;
 });
 
 async function mountReadOnly(artifact: Artifact<TableData>): Promise<void> {
@@ -96,6 +101,14 @@ describe("TableRenderer read-only workbook", () => {
     const value = celldata.find((cell) => cell.r === 2 && cell.c === 1);
     expect(value?.v.ct?.fa).toBe("#,##0");
     expect(celldata.find((cell) => cell.r === 0 && cell.c === 0)).toBeUndefined();
+  });
+
+  it("should paint a read-only workbook with the sheet painter hooks", async () => {
+    await mountReadOnly(workbook);
+
+    expect(typeof probe.hooks?.beforeRenderCell).toBe("function");
+    expect(typeof probe.hooks?.afterRenderCell).toBe("function");
+    expect(typeof probe.hooks?.afterCellMouseDown).toBe("function");
   });
 
   it("should mount a read-only workbook whose only sheet holds a picture", async () => {
