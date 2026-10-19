@@ -109,3 +109,101 @@ def test_an_oversized_png_is_not_placed() -> None:
 
     assert _ids(data) == []
     assert data["chartPages"] == [2]
+
+
+# --- the pixel data must be what the header says ---------------------------------------------
+
+
+def _image(
+    width: int = 3, height: int = 2, *, depth: int = 8, ctype: int = 2, interlace: int = 0,
+    method: int = 0, rows: int | None = None, idats: list[bytes] | None = None,
+    between: bytes = b"", before: bytes = b"", after_stream: bytes = b"",
+) -> bytes:
+    """A PNG with correct CRCs whose header and pixel data can each be made to disagree."""
+    channels = {0: 1, 2: 3, 4: 2, 6: 4}.get(ctype, 1)
+    row = b"\x00" + bytes((width * channels * depth + 7) // 8)
+    stream = zlib.compress(row * (height if rows is None else rows)) + after_stream
+    header = struct.pack(">IIBBBBB", width, height, depth, ctype, method, 0, interlace)
+    parts = idats if idats is not None else [stream]
+    data = (_chunk(b"IDAT", parts[0]) + between + b"".join(_chunk(b"IDAT", p) for p in parts[1:]))
+    return (
+        _SIGNATURE + before + _chunk(b"IHDR", header) + data + _chunk(b"IEND", b"")
+    )
+
+
+_SMALL_HEADER = struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0)
+_TWO_ROWS = zlib.compress((b"\x00" + bytes(9)) * 2)  # the pixel data of a 3x2 RGB image
+
+
+def _bad_pixel_data() -> dict[str, bytes]:
+    stream = _TWO_ROWS
+    return {
+        "idat is not zlib": _image(idats=[b"not zlib"]),
+        "idat is empty": _image(idats=[b""]),
+        "one row short": _image(rows=1),
+        "one row too many": _image(rows=3),
+        "no rows at all": _image(rows=0),
+        "stream cut before its end": _image(idats=[stream[:-6]]),
+        "bytes after the stream": _image(after_stream=b"\x00"),
+        "idat chunks apart": _image(
+            idats=[stream[:5], stream[5:]], between=_chunk(b"tEXt", b"k\x00v")
+        ),
+        "a second ihdr": _image(before=_chunk(b"IHDR", _SMALL_HEADER)),
+        "interlaced": _image(interlace=1),
+        "palette image": _image(ctype=3),
+        "depth the color type lacks": _image(depth=1, ctype=2),
+        "unknown color type": _image(ctype=5),
+        "unknown compression": _image(method=1),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_bad_pixel_data()))
+def test_a_png_whose_pixel_data_does_not_fit_its_header_is_not_usable(name: str) -> None:
+    assert not is_usable_png(_bad_pixel_data()[name])
+
+
+def test_a_small_header_in_front_of_a_huge_one_is_not_usable() -> None:
+    small = _chunk(b"IHDR", _SMALL_HEADER)
+    huge = _bit_png(20_000, 20_000)
+
+    assert not is_usable_png(_SIGNATURE + small + huge[8:])
+
+
+@pytest.mark.parametrize(
+    "png",
+    [
+        _image(),  # 8-bit RGB: what the converter writes
+        _image(ctype=6),  # RGBA
+        _image(depth=16, ctype=2),
+        _image(5, 7, depth=1, ctype=0),
+        _image(depth=8, ctype=4),
+        _image(idats=[_TWO_ROWS[:5], _TWO_ROWS[5:]]),
+    ],
+    ids=["rgb8", "rgba8", "rgb16", "gray1", "gray-alpha8", "two idat chunks"],
+)
+def test_pngs_of_the_kinds_a_renderer_writes_are_usable(png: bytes) -> None:
+    assert is_usable_png(png)
+
+
+def test_a_pixel_bomb_is_not_inflated_past_what_the_header_allows(monkeypatch) -> None:
+    import langchain_canvas.xlsx_gallery as xlsx_gallery
+
+    asked: list[int] = []
+    real = zlib.decompressobj
+
+    class _Spy:
+        def __init__(self) -> None:
+            self._inner = real()
+
+        def decompress(self, data: bytes, limit: int) -> bytes:
+            asked.append(limit)
+            return self._inner.decompress(data, limit)
+
+        def __getattr__(self, name: str):
+            return getattr(self._inner, name)
+
+    monkeypatch.setattr(xlsx_gallery.zlib, "decompressobj", _Spy)
+    bomb = _image(2, 2, idats=[zlib.compress(bytes(50_000_000))])
+
+    assert not is_usable_png(bomb)
+    assert asked and max(asked) <= 1 << 20 and len(asked) < 10

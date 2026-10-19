@@ -544,13 +544,14 @@ class PdfSourceConverter:
 
     @staticmethod
     def _marker_areas(textpage: Any, text: str, page_height: float) -> list[_Box]:
-        """Where the page's text reads ``text``, one box per occurrence (at most 8).
+        """Where the page's text reads ``text``, one box per occurrence.
 
-        Each box is the union of the characters' boxes, from the top-left corner.
+        Each box is the union of the characters' boxes, from the top-left corner. The
+        search stops one past :data:`_MAX_MARKER_HITS`, which is enough to tell there are more.
         """
         searcher = textpage.search(text, match_case=True)
         areas: list[_Box] = []
-        while len(areas) < _MAX_MARKER_HITS and (found := searcher.get_next()) is not None:
+        while len(areas) <= _MAX_MARKER_HITS and (found := searcher.get_next()) is not None:
             first, count = found
             chars = [textpage.get_charbox(first + k, loose=True) for k in range(count)]
             areas.append((
@@ -579,6 +580,10 @@ class PdfSourceConverter:
         A piece lies where the page's text reads the marker, says a non-empty part of the
         marker string, and is drawn in the marker's white (when its color can be read).
         Lying there alone is not enough: a big title may overlap the small marker.
+
+        The rule relies on the layout ``xlsx_chart_gallery`` builds: the marker is the text
+        of cell A1 and the chart (or the notice block) starts at B2, so nothing the chart
+        draws shares the marker's row, and LibreOffice fills the marker text white.
         """
         import ctypes
 
@@ -610,6 +615,8 @@ class PdfSourceConverter:
         union: _Box | None = None
         try:
             areas = PdfSourceConverter._marker_areas(textpage, marker_text, page_height)
+            if len(areas) > _MAX_MARKER_HITS:
+                return None  # a page that says the marker this often is not ours: no crop
             for obj in page.get_objects(max_depth=1):
                 is_text = obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT
                 # a chart title that only mentions "lcx" is not the marker

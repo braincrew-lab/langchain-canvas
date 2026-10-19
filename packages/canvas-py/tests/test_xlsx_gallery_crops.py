@@ -218,3 +218,48 @@ def test_every_occurrence_of_a_split_marker_stays_out_of_the_crop() -> None:
     crop = _crop(twice)
 
     assert abs(crop["box"][2] - 202) <= 2 and abs(crop["box"][3] - 152) <= 2
+
+
+def test_a_page_that_says_the_marker_more_than_eight_times_is_not_cropped() -> None:
+    def page(times: int) -> str:
+        rows = " ".join(_marker_objects(_FIVE, y=800 - 12 * n) for n in range(times))
+        return f"{rows} {_OUTLINE}"
+
+    assert abs(_crop(page(8))["box"][3] - 152) <= 2  # eight are all left out of the box
+    assert PdfSourceConverter().chart_images(_vector_pdf([page(9)]), path="g.pdf") == []
+
+
+# --- the layout the marker rule relies on ---------------------------------------------------
+
+
+def _gallery_sheets(data: bytes):
+    from langchain_canvas.xlsx_gallery import xlsx_chart_gallery
+    from langchain_canvas.xlsx_import import xlsx_sheets_and_charts
+
+    _, entries = xlsx_sheets_and_charts(data, read_only=True)
+    book = openpyxl.load_workbook(io.BytesIO(xlsx_chart_gallery(data, entries)))
+    return [sheet for sheet in book.worksheets if sheet.title.startswith("lcx")]
+
+
+def test_a_gallery_page_has_its_marker_in_a1_and_its_chart_from_b2() -> None:
+    sheets = _gallery_sheets(_five_chart_workbook())
+
+    assert len(sheets) == 5
+    for sheet in sheets:
+        assert sheet["A1"].value == sheet.title
+        assert sheet["A1"].font.color.rgb.endswith("FFFFFF")  # the marker text is white
+        (chart,) = sheet._charts
+        assert (chart.anchor._from.col, chart.anchor._from.row) == (1, 1)  # B2, zero-based
+
+
+def test_a_placeholder_page_has_its_marker_in_a1_and_its_notice_from_b2() -> None:
+    from pathlib import Path
+
+    data = (Path(__file__).parent / "fixtures" / "chartex_waterfall.xlsx").read_bytes()
+
+    (sheet,) = _gallery_sheets(data)
+
+    assert sheet["A1"].value == sheet.title and sheet["A1"].font.color.rgb.endswith("FFFFFF")
+    (block,) = sheet.merged_cells.ranges
+    assert (block.min_col, block.min_row) == (2, 2)  # B2
+    assert sheet["B2"].value

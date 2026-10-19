@@ -29,6 +29,9 @@ _MAX_GALLERY_PX = (1600, 1200)
 # at most and the converter renders a crop at 8x at most, so a side stays within 9,600 px and
 # the area within 8 megapixels (the tallest narrow chart is 720 x 7,200 px). A crop above
 # 10,000 px a side or 16 megapixels is larger than we could have made and is refused.
+_PNG_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}  # color type -> samples per pixel (no palette)
+_PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 4: (8, 16), 6: (8, 16)}
+_INFLATE_STEP = 1 << 20
 _MAX_CROP_SIDE_PX = 10_000
 _MAX_CROP_PIXELS = 16_000_000
 _CORE_DATE = re.compile(rb"(<dcterms:(created|modified)\b[^>]*>)[^<]*(</dcterms:\2>)")
@@ -79,41 +82,83 @@ def gallery_salt(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
+def _png_chunks(png: bytes | bytearray) -> list[tuple[bytes, bytes]] | None:
+    """``(type, body)`` of every chunk when the chunk list is whole, else None.
+
+    Whole: each chunk inside the data with a correct CRC, IEND last with nothing after it.
+    """
+    if not png.startswith(_PNG_SIGNATURE):
+        return None
+    chunks: list[tuple[bytes, bytes]] = []
+    at = len(_PNG_SIGNATURE)
+    while at + 12 <= len(png):
+        (length,) = struct.unpack(">I", png[at : at + 4])
+        end = at + 8 + length
+        if end + 4 > len(png):
+            return None
+        if zlib.crc32(png[at + 4 : end]) != struct.unpack(">I", png[end : end + 4])[0]:
+            return None
+        kind = bytes(png[at + 4 : at + 8])
+        chunks.append((kind, bytes(png[at + 8 : end])))
+        at = end + 4
+        if kind == b"IEND":
+            return chunks if at == len(png) else None
+    return None
+
+
+def _inflates_to(stream: bytes, size: int) -> bool:
+    """Whether ``stream`` is a whole zlib stream of exactly ``size`` bytes.
+
+    It is inflated a step at a time and given up on as soon as it passes ``size``, so a
+    stream that expands without end costs no more than ``size`` bytes of work.
+    """
+    decoder = zlib.decompressobj()
+    produced, pending = 0, stream
+    try:
+        while not decoder.eof:
+            chunk = decoder.decompress(pending, _INFLATE_STEP)
+            pending = decoder.unconsumed_tail
+            produced += len(chunk)
+            if produced > size or not (chunk or pending):
+                break
+    except zlib.error:
+        return False
+    return decoder.eof and produced == size and not decoder.unused_data
+
+
 def is_usable_png(png: bytes | bytearray) -> bool:
     """Whether ``png`` is a whole PNG of a size our own gallery render could produce.
 
-    A host's crop is placed as an image the viewer decodes, so the chunks are walked:
-    each one inside the data with a correct CRC, IHDR first and 13 bytes long, at least
-    one IDAT, IEND last with nothing after it. The size comes from IHDR and must stay
-    within :data:`_MAX_CROP_SIDE_PX` a side and :data:`_MAX_CROP_PIXELS` in all.
+    A host's crop is placed as an image the viewer decodes, so it is checked end to end:
+    the chunk list is whole (see ``_png_chunks``), there is exactly one IHDR, first and 13
+    bytes long, the IDAT chunks follow one another, and their data inflates to exactly the
+    rows IHDR describes. The size is bounded by :data:`_MAX_CROP_SIDE_PX` a side and
+    :data:`_MAX_CROP_PIXELS` in all. Only non-interlaced images are accepted, in the color
+    type and bit depth pairs of the PNG standard other than palette images. The converter
+    writes 8-bit RGB (color type 2).
     """
-    if not png.startswith(_PNG_SIGNATURE):
+    chunks = _png_chunks(png)
+    if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13:
         return False
-    at, size, data_seen = len(_PNG_SIGNATURE), None, False
-    while at + 12 <= len(png):
-        (length,) = struct.unpack(">I", png[at : at + 4])
-        kind, end = bytes(png[at + 4 : at + 8]), at + 8 + length
-        if end + 4 > len(png) or zlib.crc32(png[at + 4 : end]) != struct.unpack(
-            ">I", png[end : end + 4]
-        )[0]:
-            return False
-        if size is None:
-            if kind != b"IHDR" or length != 13:
-                return False
-            size = struct.unpack(">II", png[at + 8 : at + 16])
-        elif kind == b"IDAT":
-            data_seen = True
-        elif kind == b"IEND":
-            width, height = size
-            return (
-                data_seen
-                and end + 4 == len(png)
-                and 0 < width <= _MAX_CROP_SIDE_PX
-                and 0 < height <= _MAX_CROP_SIDE_PX
-                and width * height <= _MAX_CROP_PIXELS
-            )
-        at = end + 4
-    return False
+    kinds = [kind for kind, _ in chunks]
+    idat = [at for at, kind in enumerate(kinds) if kind == b"IDAT"]
+    if kinds.count(b"IHDR") != 1 or not idat or idat[-1] - idat[0] != len(idat) - 1:
+        return False
+    width, height, depth, ctype, method, filtering, interlace = struct.unpack(
+        ">IIBBBBB", chunks[0][1]
+    )
+    if (
+        depth not in _PNG_DEPTHS.get(ctype, ())
+        or method
+        or filtering
+        or interlace
+        or not 0 < width <= _MAX_CROP_SIDE_PX
+        or not 0 < height <= _MAX_CROP_SIDE_PX
+        or width * height > _MAX_CROP_PIXELS
+    ):
+        return False
+    row = 1 + (width * _PNG_CHANNELS[ctype] * depth + 7) // 8
+    return _inflates_to(b"".join(chunks[at][1] for at in idat), row * height)
 
 
 def _gallery_size(box: dict[str, Any]) -> tuple[int, int]:
