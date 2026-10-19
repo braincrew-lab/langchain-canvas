@@ -4,6 +4,24 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.54] — 2026-10-20
+
+### Fixed
+
+- Chart pictures in a read-only workbook now land on the right sheet and the right anchor. Before, the replay guessed which printed page belonged to which sheet, and which shape was a chart by its colors. A formatting-only first sheet or a hidden sheet moved every picture one sheet over. Now the host renders a print copy with one page per chart (`xlsx_chart_gallery`), each page marked with a small text `lcx<salt>chart<k>`, and `PdfSourceConverter.chart_images` crops each page by that marker. The salt is the first 12 digits of the workbook's sha256, so a crop from another file is never placed. The copy is the same bytes for the same workbook, so a host's render cache holds. A workbook with more than 40 charts, a host that cannot crop, or a failed copy still lists the chart pages under the grid. Chart pictures are capped at 8 MB per workbook, and each chart is drawn at 120x80 px or more and 1600x1200 px or less.
+- Excel 2016+ charts (chartex), and regular charts inside a group or an `mc:Choice`, show a notice picture at their anchor ("미리보기에서 지원하지 않는 차트입니다 / Chart type not supported in preview"). Before, openpyxl dropped them and LibreOffice drew an unrelated line chart called "Chart Title". `xlsx_sheets_and_charts(data, read_only=True)` lists them as `unsupported` boxes. A chart sheet or a free-floating chart still has no anchor cell, so the chart pages stay listed for it.
+- Anchors are held inside Excel's sheet: a column or row past `XFD` / 1,048,576 is cut back, and a sheet's drawing positions are computed from its sized and folded lines only, so one anchor at the last row costs no more than one at the first. At most 500 pictures and charts are placed per workbook.
+
+### Added
+
+- The text view of a workbook (`XlsxSourceConverter`, so `read_canvas`) lists the text inside drawing shapes under each sheet, after the cells, as `#### shapes (text in drawing shapes)` with one line per shape (`- E2 name: text`). Hidden shapes are left out, and shape text is made safe to show a model (`model_safe_text`). A workbook without shape text gives the same output as before. The reader behind it, `xlsx_drawings.read_drawing_objects`, reads shapes, connectors, grouped shapes, chartex frames and the charts above from `xl/drawings`, within the archive limits, and refuses a part with a DOCTYPE, a NUL, invalid UTF-8 or more than 16 MB.
+
+### Removed
+
+- The public functions `xlsx_fit_to_one_page` and `xlsx_printed_sheets`, and the page-order guessing and stacking they served. `PdfSourceConverter.chart_images` no longer finds charts by color; it reads the gallery markers.
+
+Python only; no npm change.
+
 ## [0.7.53] — 2026-10-13
 
 ### Fixed
