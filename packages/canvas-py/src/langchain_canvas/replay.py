@@ -29,6 +29,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
+import math
 import mimetypes
 from collections import OrderedDict
 from collections.abc import Callable
@@ -44,6 +46,8 @@ from .converters import (
 from .protocol import Artifact, CanvasCommit, CanvasCreate, CanvasPatch, CanvasStatus
 from .store import BinaryContentError, CanvasStore, CanvasStoreError, fold_history
 from .table_merge import project_sheet_into_rows
+
+logger = logging.getLogger(__name__)
 
 TABLE_SUFFIX = ".table.json"
 CHART_SUFFIX = ".chart.json"
@@ -543,10 +547,8 @@ _GRID_MAX_SHEETS = 4
 
 _EXCERPT_MAX_CHARS = 400
 _COVER_MAX_SIZE = (480, 640)
-# Pictures stacked under a sheet's data: the gap between two, and the px a
-# default grid row takes (19px plus its border) for growing the sheet to fit.
-_CHART_STACK_GAP_PX = 20
-_STACK_ROW_PX = 20
+#: PNG bytes of chart pictures one workbook preview may carry on the wire.
+_MAX_CHART_PICTURE_BYTES = 8_000_000
 
 
 def _file_preview_events(
@@ -643,14 +645,7 @@ def _file_preview_data(
         if path.lower().endswith(".xlsx"):
             data["workbook"] = _derive_workbook(got.data)
             if data["workbook"] is not None:
-                # Charts go into the grid as pictures at their anchors when the
-                # host can crop each one from the rendered pages; otherwise
-                # the pages that carry charts show under the grid.
-                boxes = data["workbook"].pop("_charts", [])
-                crops = _derive_chart_images(path, got.data, active) if boxes else None
-                printed = _printed_sheets(got.data) if boxes else None
-                if not _place_chart_images(data["workbook"], boxes, crops, printed):
-                    data["chartPages"] = _derive_chart_pages(path, got.data, active)
+                _place_workbook_charts(data, got.data, path, active)
             elif cover is not None:
                 data["grids"] = _derive_grids(path, got.data, active)
         if cover is None:
@@ -731,43 +726,119 @@ def _derive_chart_pages(
     return [int(p) for p in pages] or None
 
 
-def _derive_chart_images(
-    path: str, data: bytes, converters: list[SourceConverter]
-) -> list[dict[str, Any]] | None:
-    """Each chart as a PNG crop, via a converter's ``chart_images``; else None.
+def _place_workbook_charts(
+    preview: dict[str, Any], original: bytes, path: str, converters: list[SourceConverter]
+) -> None:
+    """Put a workbook's charts in its grid as pictures, or list their pages under it.
 
-    The same optional extension family as ``chart_pages``: the host that
-    renders office files to PDF crops the chart areas out of those pages.
+    Each chart gets a picture at its anchor when the host crops them from a gallery
+    copy (one marked page per chart). The rendered pages that carry charts are listed
+    under the grid when no chart picture could be placed, and always when a chart has
+    no anchor cell to place a picture at (a chart sheet, a free-floating chart).
     """
+    workbook = preview["workbook"]
+    charts = workbook.pop("_charts", [])
+    boxes = [c for c in charts if c["kind"] in ("chart", "unsupported")]
+    unboxed = sum(c["kind"] == "unboxed" for c in charts)
+    placed = _derive_chart_gallery(path, original, workbook, boxes, converters) if boxes else None
+    kinds = _place_gallery_images(workbook, placed, path=path) if placed else set()
+    pictured = "chart" in kinds
+    wanted = not boxes or any(b["kind"] == "chart" for b in boxes)
+    if (wanted and not pictured) or unboxed:
+        preview["chartPages"] = _derive_chart_pages(path, original, converters)
+
+
+def _is_gallery_crop(crop: Any, salt: str, count: int) -> bool:
+    """Whether a host's crop is well formed and belongs to this workbook's gallery."""
+    if not isinstance(crop, dict):
+        return False
+    number, box = crop.get("chart"), crop.get("box")
+    return (
+        crop.get("salt") == salt
+        and isinstance(number, int)
+        and not isinstance(number, bool)
+        and 0 <= number < count
+        and isinstance(crop.get("png"), (bytes, bytearray))
+        and len(crop["png"]) > 0
+        and isinstance(box, (list, tuple))
+        and len(box) == 4
+        and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+            for v in box
+        )
+    )
+
+
+def _derive_chart_gallery(
+    path: str,
+    data: bytes,
+    workbook: dict[str, Any],
+    boxes: list[dict[str, Any]],
+    converters: list[SourceConverter],
+) -> dict[int, tuple[dict[str, Any], dict[str, Any]]] | None:
+    """Each chart's crop from a gallery copy, as ``{k: (box, crop)}``; None when unavailable.
+
+    The host crops the copy with its converter's ``chart_images``. A crop belongs to
+    the k-th visible box only when it carries this workbook's salt, so a crop from
+    anywhere else is never placed. Any failure is None: the charts are a bonus on the grid.
+    """
+    from .xlsx_gallery import MAX_GALLERY_CHARTS, gallery_salt, xlsx_chart_gallery
+
     converter = converter_for(path, converters)
     cropper = getattr(converter, "chart_images", None)
     if converter is None or cropper is None:
         return None
     try:
-        # A print copy with every sheet on one page: no chart is cut by a
-        # page break, and none is drawn twice.
-        from .xlsx_import import xlsx_fit_to_one_page
-
-        return list(cropper(xlsx_fit_to_one_page(data), path=path))
+        sheets = workbook.get("sheet") or []
+        # A hidden sheet's charts are hidden in the grid too
+        entries = [b for b in boxes if not sheets[b["sheet"]].get("hide")]
+        if not entries or len(entries) > MAX_GALLERY_CHARTS:
+            return None
+        salt = gallery_salt(data)
+        crops = cropper(xlsx_chart_gallery(data, entries), path=path)
+        placed: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
+        for crop in crops:
+            if _is_gallery_crop(crop, salt, len(entries)):
+                placed.setdefault(crop["chart"], (entries[crop["chart"]], crop))
+        return placed
     except Exception:  # noqa: BLE001 — charts are a bonus on the grid
         return None
 
 
-def _printed_sheets(data: bytes) -> list[int] | None:
-    """The worksheet indexes the print copy has a page for; None when unknowable."""
-    from .xlsx_import import xlsx_printed_sheets
+def _place_gallery_images(
+    workbook: dict[str, Any],
+    placed: dict[int, tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    path: str,
+) -> set[str]:
+    """Add each cropped chart to its sheet's pictures; the kinds of box that got one.
 
+    Pictures go in chart order until the PNG bytes would pass the payload cap; the
+    rest are left out and counted in one warning. If any picture cannot be built,
+    none is added and the result is empty.
+    """
+    sheets = workbook.get("sheet") or []
+    kinds: set[str] = set()
+    total = omitted = 0
     try:
-        return xlsx_printed_sheets(data)
-    except Exception:  # noqa: BLE001 — without a page map the pages are shown instead
-        return None
-
-
-def _by_key(items: list[dict[str, Any]], key: str) -> dict[int, list[dict[str, Any]]]:
-    grouped: dict[int, list[dict[str, Any]]] = {}
-    for item in items:
-        grouped.setdefault(int(item[key]), []).append(item)
-    return grouped
+        # Every picture is built before any is added, so a failure leaves the grid as it was
+        pictures: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for number in sorted(placed):
+            box, crop = placed[number]
+            if total + len(crop["png"]) > _MAX_CHART_PICTURE_BYTES:
+                omitted += 1
+                continue
+            total += len(crop["png"])
+            pictures.append((sheets[box["sheet"]], _chart_picture(number, crop, box)))
+            kinds.add(box["kind"])
+    except Exception:  # noqa: BLE001 — charts are a bonus on the grid
+        logger.warning("xlsx_preview.chart_pictures_failed path=%s", path)
+        return set()
+    for sheet, picture in pictures:
+        sheet.setdefault("images", []).append(picture)
+    if omitted:
+        logger.warning("xlsx_preview.chart_pictures_capped path=%s omitted=%d", path, omitted)
+    return kinds
 
 
 def _chart_picture(number: int, crop: dict[str, Any], box: dict[str, Any]) -> dict[str, Any]:
@@ -780,81 +851,6 @@ def _chart_picture(number: int, crop: dict[str, Any], box: dict[str, Any]) -> di
         "width": box["width"],
         "height": box["height"],
     }
-
-
-def _stack_below(
-    sheet: dict[str, Any], crops: list[dict[str, Any]], width: int, first: int
-) -> list[dict[str, Any]]:
-    """Pictures of ``crops`` one above the other, starting under the sheet's data.
-
-    A row is as tall as the grid draws it: its stored height or the default,
-    plus its 1px border (the geometry ``_anchor_box`` uses for charts).
-    """
-    from .xlsx_import import _DEFAULT_ROW_PX
-
-    rowlen = (sheet.get("config") or {}).get("rowlen") or {}
-    rows = max((cell["r"] for cell in sheet.get("celldata") or []), default=-1) + 1
-    top = sum(rowlen.get(row, _DEFAULT_ROW_PX) + 1 for row in range(rows))
-    pictures = []
-    for number, crop in enumerate(crops, first):
-        _, _, box_width, box_height = crop["box"]
-        height = max(16, round(width * box_height / box_width))
-        spot = {"left": 0, "top": top, "width": width, "height": height}
-        pictures.append(_chart_picture(number, crop, spot))
-        top += height + _CHART_STACK_GAP_PX
-    return pictures
-
-
-def _place_chart_images(
-    workbook: dict[str, Any],
-    boxes: list[dict[str, Any]],
-    crops: list[dict[str, Any]] | None,
-    printed: list[int] | None,
-) -> bool:
-    """Pair crops with chart anchors sheet by sheet; True when any sheet got pictures.
-
-    Page ``k`` of the fit-to-page copy is the k-th printed sheet. A sheet whose
-    crop count matches its anchors gets each crop at its anchor; a sheet with a
-    different nonzero count gets its crops stacked under its data; a sheet
-    with none stays bare. ``printed`` None (a chart sheet, which LibreOffice
-    prints as a page), an anchor on an unprinted sheet, a crop past the last
-    printed sheet or a crop without a picture means the page map cannot be
-    trusted: nothing is placed.
-    """
-    if not boxes or not crops or not printed:
-        return False
-    sheets = workbook.get("sheet") or []
-    try:
-        by_page = _by_key(crops, "page")
-        by_sheet = _by_key(boxes, "sheet")
-        if max(by_page) > len(printed) or not all(crop.get("png") for crop in crops):
-            return False
-        if any(index not in printed or index >= len(sheets) for index in by_sheet):
-            return False
-        placed: list[tuple[dict[str, Any], list[dict[str, Any]], bool]] = []
-        number = 0
-        for index, anchors in by_sheet.items():
-            found = by_page.get(printed.index(index) + 1, [])
-            if not found:
-                continue
-            stacked = len(found) != len(anchors)
-            if stacked:
-                pictures = _stack_below(sheets[index], found, anchors[0]["width"], number)
-            else:
-                pictures = [
-                    _chart_picture(number + k, crop, anchor)
-                    for k, (anchor, crop) in enumerate(zip(anchors, found, strict=True))
-                ]
-            placed.append((sheets[index], pictures, stacked))
-            number += len(pictures)
-    except (KeyError, TypeError, ValueError, ZeroDivisionError):
-        return False
-    for sheet, pictures, stacked in placed:
-        sheet.setdefault("images", []).extend(pictures)
-        if stacked:
-            bottom = max(p["top"] + p["height"] for p in pictures)
-            sheet["row"] = max(sheet.get("row", 0), -(-bottom // _STACK_ROW_PX) + 1)
-    return bool(placed)
 
 
 def _derive_grids(

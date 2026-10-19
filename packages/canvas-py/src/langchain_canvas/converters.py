@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import re
 import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -208,6 +209,7 @@ class XlsxSourceConverter:
 
         ensure_archive_within_limits(data, path=path)
         workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        shapes = _shape_lines(data, path)
         sections: list[str] = []
         sheet_names: list[str] = []
         for sheet in workbook.worksheets:
@@ -217,12 +219,40 @@ class XlsxSourceConverter:
             for row in sheet.iter_rows(values_only=True):
                 writer.writerow(["" if cell is None else str(cell) for cell in row])
             body = out.getvalue().rstrip("\n") or "(empty)"
-            sections.append(f"### sheet: {sheet.title}\n{body}")
+            section = f"### sheet: {sheet.title}\n{body}"
+            if sheet.title in shapes:
+                section += "\n\n#### shapes (text in drawing shapes)\n" + "\n".join(
+                    shapes[sheet.title]
+                )
+            sections.append(section)
         workbook.close()
+        metadata = {"sheets": ", ".join(sheet_names), "values": "cached results"}
+        if shapes:
+            metadata["shapes"] = str(sum(len(lines) for lines in shapes.values()))
         return ConvertedSource(
-            blocks=[{"type": "text", "text": "\n\n".join(sections)}],
-            metadata={"sheets": ", ".join(sheet_names), "values": "cached results"},
+            blocks=[{"type": "text", "text": "\n\n".join(sections)}], metadata=metadata
         )
+
+
+def _shape_lines(data: bytes, path: str) -> dict[str, list[str]]:
+    """The text in a workbook's drawing shapes as ``- cell name: text`` lines per sheet name.
+
+    Hidden shapes and shapes without text are left out; name and text are made safe to
+    show a model. A drawing that cannot be read gives no lines: the cell text stands alone.
+    """
+    from .xlsx_drawings import model_safe_text, read_drawing_objects
+
+    try:
+        objects = read_drawing_objects(data, path=path)
+    except Exception:  # noqa: BLE001 — shape text is an addition to the cell text
+        return {}
+    lines: dict[str, list[str]] = {}
+    for obj in objects:
+        if obj["text"] and not obj["hidden"]:
+            lines.setdefault(obj["sheet_name"], []).append(
+                f"- {obj['cell']} {model_safe_text(obj['name'])}: {model_safe_text(obj['text'])}"
+            )
+    return lines
 
 
 #: Anthropic-family request limit is 5 MB per image *after* base64 (+33%).
@@ -286,6 +316,9 @@ class ImageSourceConverter:
 
 
 _Box = tuple[float, float, float, float]  # left, top, right, bottom (from the top)
+
+#: The text a gallery page carries: ``lcx<12 hex digits of the workbook's salt>chart<k>``.
+_GALLERY_MARKER = re.compile(r"^lcx([0-9a-f]{12})chart(\d+)$")
 
 
 def _inside(inner: _Box, outer: _Box) -> bool:
@@ -444,41 +477,98 @@ class PdfSourceConverter:
         """1-based pages that hold at least one chart.
 
         A page counts when ``_chart_boxes`` finds a chart area on it. A chart
-        cut by a page break counts on both pages, though ``chart_images``
-        skips it. Hosts that render office files to PDF call this on that PDF
-        so the workbook viewer can show chart pages under the read-only grid.
+        cut by a page break counts on both pages. Hosts that render office
+        files to PDF call this on that PDF so the workbook viewer can show
+        chart pages under the read-only grid.
         """
         document = self._document(data)
         try:
             return [
                 index
                 for index, page in enumerate(document, 1)
-                if self._chart_boxes(page, keep_cut=True)
+                if self._chart_boxes(page)
             ]
         finally:
             document.close()
 
     def chart_images(self, data: bytes, *, path: str) -> list[dict[str, Any]]:
-        """Each chart on the rendered pages as a PNG crop, in page order.
+        """Each marked chart page of a gallery copy as a PNG crop, in page order.
 
-        A chart is found by ``_chart_boxes``. A box that leaves the page is a
-        chart cut by a page break, drawn again on the next page — it is
-        skipped, so the caller sees a whole chart or none (see
-        ``xlsx_fit_to_one_page`` for how a host avoids the break).
-        Returns ``[{"page": n, "box": [x, y, w, h], "png": bytes}, ...]``
-        with the box in points from the page's top-left corner, ordered by
-        page, then top to bottom and left to right — the order charts take
-        in a workbook printed sheet by sheet.
+        The pages come from ``xlsx_chart_gallery``: one chart per page, and on each
+        page a small text ``lcx<salt>chart<k>`` saying which chart it is. A page
+        whose text starts with no such marker is not a gallery page and is skipped,
+        so nothing is guessed from colors or shapes. The crop is the union of every
+        object on the page except that marker; when two pages carry the same
+        marker, the first wins.
+        Returns ``[{"chart": k, "salt": s, "page": n, "box": [x, y, w, h],
+        "png": bytes}, ...]`` with the box in points from the page's top-left corner.
         """
         document = self._document(data)
         crops: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
         try:
             for index, page in enumerate(document, 1):
-                for box in self._chart_boxes(page, keep_cut=False):
-                    crops.append(self._crop_chart(page, index, box))
+                marker = self._page_marker(page)
+                if marker is None or (marker[0], marker[1]) in seen:
+                    continue
+                box = self._marked_chart_box(page)
+                if box is None:
+                    continue
+                seen.add((marker[0], marker[1]))
+                crop = self._crop_chart(page, index, box)
+                crops.append({"chart": marker[1], "salt": marker[0], **crop})
         finally:
             document.close()
         return crops
+
+    @staticmethod
+    def _page_marker(page: Any) -> tuple[str, int] | None:
+        """The ``(salt, chart number)`` of a gallery page, or None for any other page."""
+        textpage = page.get_textpage()
+        try:
+            for token in textpage.get_text_range().split():
+                found = _GALLERY_MARKER.match(token)
+                if found:
+                    return found[1], int(found[2])
+        finally:
+            textpage.close()
+        return None
+
+    @staticmethod
+    def _marked_chart_box(page: Any) -> _Box | None:
+        """Everything drawn on a gallery page but its marker, from the top-left corner."""
+        import ctypes
+
+        import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
+
+        _, page_height = page.get_size()
+        textpage = page.get_textpage()
+        union: _Box | None = None
+        try:
+            for obj in page.get_objects(max_depth=1):
+                if obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT:
+                    # a chart title that only mentions "lcx" is not the marker
+                    size = pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, None, 0)
+                    buffer = (ctypes.c_ushort * max(1, size))()
+                    pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, buffer, size)
+                    text = bytes(buffer).decode("utf-16-le", errors="ignore").split("\x00")[0]
+                    if _GALLERY_MARKER.match(text.strip()):
+                        continue
+                left, bottom, right, top = (ctypes.c_float() for _ in range(4))
+                if not pdfium_c.FPDFPageObj_GetBounds(obj.raw, left, bottom, right, top):
+                    continue
+                box: _Box = (
+                    left.value, page_height - top.value, right.value, page_height - bottom.value
+                )
+                union = box if union is None else (
+                    min(union[0], box[0]), min(union[1], box[1]),
+                    max(union[2], box[2]), max(union[3], box[3]),
+                )
+        finally:
+            textpage.close()
+        if union is None or union[2] <= union[0] or union[3] <= union[1]:
+            return None
+        return union
 
     def _crop_chart(self, page: Any, index: int, box: _Box) -> dict[str, Any]:
         left, top, right, bottom = box
@@ -503,7 +593,7 @@ class PdfSourceConverter:
             "png": out.getvalue(),
         }
 
-    def _chart_boxes(self, page: Any, *, keep_cut: bool) -> list[_Box]:
+    def _chart_boxes(self, page: Any) -> list[_Box]:
         """Chart areas on one page as (left, top, right, bottom) in points from the top.
 
         LibreOffice draws a chart as a box (its chart area, a filled or
@@ -513,8 +603,9 @@ class PdfSourceConverter:
         inside it; no larger qualifying box may hold it (the plot area inside
         a chart is not a second chart), and the border and the white fill of
         one chart area collapse into one box. A box that leaves the page is
-        a chart cut by a page break: dropped unless ``keep_cut``. Cell fills
-        and gridlines sit in no box, so a printed table yields nothing.
+        a chart cut by a page break: it counts while ``chart_cut_min_visible``
+        of it is on the page. Cell fills and gridlines sit in no box, so a
+        printed table yields nothing.
         Boxes come ordered top to bottom, then left to right.
         """
         import ctypes
@@ -559,9 +650,9 @@ class PdfSourceConverter:
                 and box[1] >= -1
                 and box[3] <= page_height + 1
             )
-            shown = on_page or (
-                keep_cut
-                and _visible_share(box, page_width, page_height) >= self.chart_cut_min_visible
+            shown = (
+                on_page
+                or _visible_share(box, page_width, page_height) >= self.chart_cut_min_visible
             )
             if (
                 shown
