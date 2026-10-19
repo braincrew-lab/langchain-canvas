@@ -14,6 +14,7 @@ import hashlib
 import io
 import re
 import struct
+import zlib
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +25,12 @@ MAX_GALLERY_CHARTS = 40
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MIN_GALLERY_PX = (120, 80)
 _MAX_GALLERY_PX = (1600, 1200)
+# The largest crop our renderer makes: a chart is drawn at 1600 px (1200 pt at 96 dpi) a side
+# at most and the converter renders a crop at 8x at most, so a side stays within 9,600 px and
+# the area within 8 megapixels (the tallest narrow chart is 720 x 7,200 px). A crop above
+# 10,000 px a side or 16 megapixels is larger than we could have made and is refused.
+_MAX_CROP_SIDE_PX = 10_000
+_MAX_CROP_PIXELS = 16_000_000
 _CORE_DATE = re.compile(rb"(<dcterms:(created|modified)\b[^>]*>)[^<]*(</dcterms:\2>)")
 _FIXED_CORE_DATE = b"2000-01-01T00:00:00Z"
 
@@ -72,17 +79,41 @@ def gallery_salt(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def png_has_area(png: bytes | bytearray) -> bool:
-    """Whether ``png`` opens with the PNG signature and an IHDR of positive width and height.
+def is_usable_png(png: bytes | bytearray) -> bool:
+    """Whether ``png`` is a whole PNG of a size our own gallery render could produce.
 
-    A host's crop is placed as an image, so bytes that are not a picture must not pass.
+    A host's crop is placed as an image the viewer decodes, so the chunks are walked:
+    each one inside the data with a correct CRC, IHDR first and 13 bytes long, at least
+    one IDAT, IEND last with nothing after it. The size comes from IHDR and must stay
+    within :data:`_MAX_CROP_SIDE_PX` a side and :data:`_MAX_CROP_PIXELS` in all.
     """
-    return (
-        len(png) >= 24
-        and png.startswith(_PNG_SIGNATURE)
-        and png[8:16] == b"\x00\x00\x00\rIHDR"
-        and all(side > 0 for side in struct.unpack(">II", png[16:24]))
-    )
+    if not png.startswith(_PNG_SIGNATURE):
+        return False
+    at, size, data_seen = len(_PNG_SIGNATURE), None, False
+    while at + 12 <= len(png):
+        (length,) = struct.unpack(">I", png[at : at + 4])
+        kind, end = bytes(png[at + 4 : at + 8]), at + 8 + length
+        if end + 4 > len(png) or zlib.crc32(png[at + 4 : end]) != struct.unpack(
+            ">I", png[end : end + 4]
+        )[0]:
+            return False
+        if size is None:
+            if kind != b"IHDR" or length != 13:
+                return False
+            size = struct.unpack(">II", png[at + 8 : at + 16])
+        elif kind == b"IDAT":
+            data_seen = True
+        elif kind == b"IEND":
+            width, height = size
+            return (
+                data_seen
+                and end + 4 == len(png)
+                and 0 < width <= _MAX_CROP_SIDE_PX
+                and 0 < height <= _MAX_CROP_SIDE_PX
+                and width * height <= _MAX_CROP_PIXELS
+            )
+        at = end + 4
+    return False
 
 
 def _gallery_size(box: dict[str, Any]) -> tuple[int, int]:

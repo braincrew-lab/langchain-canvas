@@ -113,13 +113,27 @@ def test_real_pngs_are_placed_as_data_uris() -> None:
 # --- cropping a gallery page --------------------------------------------------------------
 
 _OUTLINE = "0 0 0 RG 1 w 100 300 200 150 re S"
-_WHOLE = f"BT /F1 6 Tf 20 800 Td (lcx0123456789abchart1) Tj ET {_OUTLINE}"
-# The second fragment starts where the first ends (Helvetica 6pt), so the page text
-# still reads as one marker, the way LibreOffice splits a long cell text.
-_SPLIT = (
-    "BT /F1 6 Tf 20 800 Td (lcx0123456789ab) Tj ET "
-    f"BT /F1 6 Tf 67.12 800 Td (chart1) Tj ET {_OUTLINE}"
-)
+_MARKER = "lcx0123456789abchart1"
+# Helvetica advance widths (1/1000 em) of the characters of the marker
+_ADVANCE = {"l": 222, "c": 500, "x": 500, "a": 556, "b": 556, "h": 556, "r": 333, "t": 278}
+_ADVANCE.update({digit: 556 for digit in "0123456789"})
+
+
+def _marker_objects(parts: list[str], *, y: float = 800, overlap: float = 0.0) -> str:
+    """White 6 pt text objects reading ``parts`` in a row, the way LibreOffice splits a marker.
+
+    Each starts where the one before ended, less ``overlap`` pt, so the page text still
+    reads as one marker.
+    """
+    x, objects = 20.0, []
+    for part in parts:
+        objects.append(f"q 1 1 1 rg BT /F1 6 Tf {x:.2f} {y} Td ({part}) Tj ET Q")
+        x += sum(_ADVANCE[char] for char in part) * 6 / 1000 - overlap
+    return " ".join(objects)
+
+
+_WHOLE = f"{_marker_objects([_MARKER])} {_OUTLINE}"
+_SPLIT = f"{_marker_objects(['lcx0123456789ab', 'chart1'])} {_OUTLINE}"
 
 
 def _crop(content: str) -> dict:
@@ -160,3 +174,47 @@ def test_a_rotated_gallery_page_is_not_cropped() -> None:
     for degrees in (90, 180, 270):
         crops = PdfSourceConverter().chart_images(_rotated(_WHOLE, degrees), path="g.pdf")
         assert crops == [], degrees
+
+
+_FIVE = ["lcx", "012345", "6789", "abch", "art1"]
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        _marker_objects(["lcx0123456789ab", "chart1"]),
+        _marker_objects(_FIVE),
+        _marker_objects(_FIVE, overlap=0.3),
+    ],
+    ids=["two objects", "five objects", "five overlapping objects"],
+)
+def test_a_split_marker_leaves_the_crop_as_the_whole_marker_does(marker: str) -> None:
+    whole, split = _crop(_WHOLE), _crop(f"{marker} {_OUTLINE}")
+
+    assert (split["chart"], split["salt"]) == (1, "0123456789ab")
+    assert all(abs(a - b) <= 1 for a, b in zip(whole["box"], split["box"], strict=True))
+
+
+@pytest.mark.parametrize(
+    ("title", "left_of"),
+    [
+        ("BT /F1 40 Tf 6 791 Td 0 g (2026) Tj ET", 10),  # not a piece of the marker string
+        ("BT /F1 40 Tf 70 791 Td 0 g (1) Tj ET", 90),  # a piece of it, but black
+    ],
+    ids=["unrelated title", "black piece of the marker"],
+)
+def test_a_big_title_over_the_marker_stays_in_the_crop(title: str, left_of: float) -> None:
+    # the title's center falls inside the area the marker occupies, and it is the chart's
+    crop = _crop(f"{_marker_objects(['lcx0123456789ab', 'chart1'])} {title} {_OUTLINE}")
+
+    x, y, width, height = crop["box"]
+    assert x < left_of < 99  # the title widens the box past the outline (left edge 99)
+    assert y < 60 and height > 450  # and up to the page top
+
+
+def test_every_occurrence_of_a_split_marker_stays_out_of_the_crop() -> None:
+    twice = f"{_marker_objects(_FIVE)} {_marker_objects(_FIVE, y=780)} {_OUTLINE}"
+
+    crop = _crop(twice)
+
+    assert abs(crop["box"][2] - 202) <= 2 and abs(crop["box"][3] - 152) <= 2

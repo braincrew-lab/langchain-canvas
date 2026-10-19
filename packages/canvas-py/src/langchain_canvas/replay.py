@@ -753,7 +753,7 @@ def _place_workbook_charts(
 
 def _is_gallery_crop(crop: Any, salt: str, count: int) -> bool:
     """Whether a host's crop is well formed and belongs to this workbook's gallery."""
-    from .xlsx_gallery import png_has_area
+    from .xlsx_gallery import is_usable_png
 
     if not isinstance(crop, dict):
         return False
@@ -764,7 +764,7 @@ def _is_gallery_crop(crop: Any, salt: str, count: int) -> bool:
         and not isinstance(number, bool)
         and 0 <= number < count
         and isinstance(crop.get("png"), (bytes, bytearray))
-        and png_has_area(crop["png"])
+        and is_usable_png(crop["png"])
         and isinstance(box, (list, tuple))
         and len(box) == 4
         and all(

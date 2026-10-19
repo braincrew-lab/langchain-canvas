@@ -319,6 +319,7 @@ _Box = tuple[float, float, float, float]  # left, top, right, bottom (from the t
 
 #: The text a gallery page carries: ``lcx<12 hex digits of the workbook's salt>chart<k>``.
 _GALLERY_MARKER = re.compile(r"^lcx([0-9a-f]{12})chart(\d+)$")
+_MAX_MARKER_HITS = 8  # places on one page where the marker text is looked for
 
 
 def _inside(inner: _Box, outer: _Box) -> bool:
@@ -542,26 +543,63 @@ class PdfSourceConverter:
         return None
 
     @staticmethod
-    def _marker_area(textpage: Any, text: str, page_height: float) -> _Box | None:
-        """Where the page's text reads ``text``, as the union of its characters' boxes."""
-        found = textpage.search(text, match_case=True).get_next()
-        if found is None:
-            return None
-        first, count = found
-        chars = [textpage.get_charbox(first + k, loose=True) for k in range(count)]
-        return (
-            min(c[0] for c in chars), page_height - max(c[3] for c in chars),
-            max(c[2] for c in chars), page_height - min(c[1] for c in chars),
-        )
+    def _marker_areas(textpage: Any, text: str, page_height: float) -> list[_Box]:
+        """Where the page's text reads ``text``, one box per occurrence (at most 8).
+
+        Each box is the union of the characters' boxes, from the top-left corner.
+        """
+        searcher = textpage.search(text, match_case=True)
+        areas: list[_Box] = []
+        while len(areas) < _MAX_MARKER_HITS and (found := searcher.get_next()) is not None:
+            first, count = found
+            chars = [textpage.get_charbox(first + k, loose=True) for k in range(count)]
+            areas.append((
+                min(c[0] for c in chars), page_height - max(c[3] for c in chars),
+                max(c[2] for c in chars), page_height - min(c[1] for c in chars),
+            ))
+        return areas
+
+    @staticmethod
+    def _text_of(obj: Any, textpage: Any) -> str:
+        import ctypes
+
+        import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
+
+        size = pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, None, 0)
+        buffer = (ctypes.c_ushort * max(1, size))()
+        pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, buffer, size)
+        return bytes(buffer).decode("utf-16-le", errors="ignore").split("\x00")[0]
+
+    @staticmethod
+    def _is_marker_piece(
+        obj: Any, textpage: Any, marker_text: str, box: _Box, areas: list[_Box]
+    ) -> bool:
+        """Whether a text object is one of the pieces the marker was split into.
+
+        A piece lies where the page's text reads the marker, says a non-empty part of the
+        marker string, and is drawn in the marker's white (when its color can be read).
+        Lying there alone is not enough: a big title may overlap the small marker.
+        """
+        import ctypes
+
+        import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
+
+        text = PdfSourceConverter._text_of(obj, textpage).strip()
+        if not text or text not in marker_text or not any(_center_in(box, a) for a in areas):
+            return False
+        red, green, blue, alpha = (ctypes.c_uint() for _ in range(4))
+        if not pdfium_c.FPDFPageObj_GetFillColor(obj.raw, red, green, blue, alpha):
+            return True
+        return (red.value, green.value, blue.value) == (255, 255, 255)
 
     @staticmethod
     def _marked_chart_box(page: Any, marker_text: str) -> _Box | None:
         """Everything drawn on a gallery page but its marker, from the top-left corner.
 
         The marker is the text object that reads ``marker_text`` whole and, when the
-        renderer split it over several text objects, every text object whose center lies
-        where the page's text reads the marker. Text elsewhere on the page stays in the
-        box, even a piece of the marker string such as an axis label ``1``.
+        renderer split it over several text objects, each piece of it (see
+        ``_is_marker_piece``) at every place the page's text reads it. Anything else stays in
+        the box, even text that says part of the marker string, such as an axis label ``1``.
         """
         import ctypes
 
@@ -571,24 +609,22 @@ class PdfSourceConverter:
         textpage = page.get_textpage()
         union: _Box | None = None
         try:
-            area = PdfSourceConverter._marker_area(textpage, marker_text, page_height)
+            areas = PdfSourceConverter._marker_areas(textpage, marker_text, page_height)
             for obj in page.get_objects(max_depth=1):
                 is_text = obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT
-                if is_text:
-                    # a chart title that only mentions "lcx" is not the marker
-                    size = pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, None, 0)
-                    buffer = (ctypes.c_ushort * max(1, size))()
-                    pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, buffer, size)
-                    text = bytes(buffer).decode("utf-16-le", errors="ignore").split("\x00")[0]
-                    if _GALLERY_MARKER.match(text.strip()):
-                        continue
+                # a chart title that only mentions "lcx" is not the marker
+                says = PdfSourceConverter._text_of(obj, textpage).strip() if is_text else ""
+                if _GALLERY_MARKER.match(says):
+                    continue
                 left, bottom, right, top = (ctypes.c_float() for _ in range(4))
                 if not pdfium_c.FPDFPageObj_GetBounds(obj.raw, left, bottom, right, top):
                     continue
                 box: _Box = (
                     left.value, page_height - top.value, right.value, page_height - bottom.value
                 )
-                if is_text and area and _center_in(box, area):
+                if is_text and PdfSourceConverter._is_marker_piece(
+                    obj, textpage, marker_text, box, areas
+                ):
                     continue
                 union = box if union is None else (
                     min(union[0], box[0]), min(union[1], box[1]),
