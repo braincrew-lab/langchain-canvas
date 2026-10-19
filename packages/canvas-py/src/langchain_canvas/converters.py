@@ -97,6 +97,11 @@ def ensure_archive_within_limits(data: bytes, *, path: str) -> None:
         # Not a ZIP at all is a formatting problem, not an attack — leave it
         # to each caller's own failure path (a parser error, a skin degrade).
         return
+    _ensure_infos_within_limits(infos, path=path)
+
+
+def _ensure_infos_within_limits(infos: list[zipfile.ZipInfo], *, path: str) -> None:
+    """The limits check on a central directory already read (any zip source)."""
     if len(infos) > MAX_ARCHIVE_PARTS:
         raise UnsafeArchiveError(
             f"{path} holds {len(infos)} parts — more than the "
