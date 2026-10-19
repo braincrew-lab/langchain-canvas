@@ -330,6 +330,11 @@ def _inside(inner: _Box, outer: _Box) -> bool:
     )
 
 
+def _center_in(inner: _Box, outer: _Box) -> bool:
+    x, y = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2
+    return outer[0] <= x <= outer[2] and outer[1] <= y <= outer[3]
+
+
 def _same(a: _Box, b: _Box) -> bool:
     return all(abs(x - y) <= 2 for x, y in zip(a, b, strict=True))
 
@@ -498,8 +503,10 @@ class PdfSourceConverter:
         page a small text ``lcx<salt>chart<k>`` saying which chart it is. A page
         whose text starts with no such marker is not a gallery page and is skipped,
         so nothing is guessed from colors or shapes. The crop is the union of every
-        object on the page except that marker; when two pages carry the same
-        marker, the first wins.
+        object on the page except that marker (all of its text objects, however the
+        renderer split it); when two pages carry the same marker, the first wins. A
+        rotated page is not cropped: its objects are placed in the unrotated page's
+        coordinates, so the box would not match what the page shows.
         Returns ``[{"chart": k, "salt": s, "page": n, "box": [x, y, w, h],
         "png": bytes}, ...]`` with the box in points from the page's top-left corner.
         """
@@ -509,9 +516,9 @@ class PdfSourceConverter:
         try:
             for index, page in enumerate(document, 1):
                 marker = self._page_marker(page)
-                if marker is None or (marker[0], marker[1]) in seen:
+                if marker is None or (marker[0], marker[1]) in seen or page.get_rotation():
                     continue
-                box = self._marked_chart_box(page)
+                box = self._marked_chart_box(page, f"lcx{marker[0]}chart{marker[1]}")
                 if box is None:
                     continue
                 seen.add((marker[0], marker[1]))
@@ -535,8 +542,27 @@ class PdfSourceConverter:
         return None
 
     @staticmethod
-    def _marked_chart_box(page: Any) -> _Box | None:
-        """Everything drawn on a gallery page but its marker, from the top-left corner."""
+    def _marker_area(textpage: Any, text: str, page_height: float) -> _Box | None:
+        """Where the page's text reads ``text``, as the union of its characters' boxes."""
+        found = textpage.search(text, match_case=True).get_next()
+        if found is None:
+            return None
+        first, count = found
+        chars = [textpage.get_charbox(first + k, loose=True) for k in range(count)]
+        return (
+            min(c[0] for c in chars), page_height - max(c[3] for c in chars),
+            max(c[2] for c in chars), page_height - min(c[1] for c in chars),
+        )
+
+    @staticmethod
+    def _marked_chart_box(page: Any, marker_text: str) -> _Box | None:
+        """Everything drawn on a gallery page but its marker, from the top-left corner.
+
+        The marker is the text object that reads ``marker_text`` whole and, when the
+        renderer split it over several text objects, every text object whose center lies
+        where the page's text reads the marker. Text elsewhere on the page stays in the
+        box, even a piece of the marker string such as an axis label ``1``.
+        """
         import ctypes
 
         import pypdfium2.raw as pdfium_c  # type: ignore[import-untyped]
@@ -545,8 +571,10 @@ class PdfSourceConverter:
         textpage = page.get_textpage()
         union: _Box | None = None
         try:
+            area = PdfSourceConverter._marker_area(textpage, marker_text, page_height)
             for obj in page.get_objects(max_depth=1):
-                if obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT:
+                is_text = obj.type == pdfium_c.FPDF_PAGEOBJ_TEXT
+                if is_text:
                     # a chart title that only mentions "lcx" is not the marker
                     size = pdfium_c.FPDFTextObj_GetText(obj.raw, textpage.raw, None, 0)
                     buffer = (ctypes.c_ushort * max(1, size))()
@@ -560,6 +588,8 @@ class PdfSourceConverter:
                 box: _Box = (
                     left.value, page_height - top.value, right.value, page_height - bottom.value
                 )
+                if is_text and area and _center_in(box, area):
+                    continue
                 union = box if union is None else (
                     min(union[0], box[0]), min(union[1], box[1]),
                     max(union[2], box[2]), max(union[3], box[3]),

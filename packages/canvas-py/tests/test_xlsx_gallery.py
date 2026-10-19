@@ -12,8 +12,10 @@ import hashlib
 import io
 import re
 import shutil
+import struct
 import subprocess
 import zipfile
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,6 +90,22 @@ def _two_chart_workbook() -> bytes:
     return _save(wb)
 
 
+def _png(width: int = 2, height: int = 2, *, pad: int = 0) -> bytes:
+    """A real PNG of ``width`` x ``height`` black pixels; ``pad`` bytes of text ride in a chunk."""
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        crc = zlib.crc32(kind + body)
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", crc)
+
+    rows = b"".join(b"\x00" + b"\x00\x00\x00" * width for _ in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    padding = chunk(b"tEXt", b"pad\x00" + b"x" * pad) if pad else b""
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + padding
+        + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    )
+
+
 def _chart_title(chart) -> str:
     if chart.title is None:
         return ""
@@ -140,7 +158,7 @@ class _GalleryHost(_XlsxPages):
                 "salt": self.salt or found[1],
                 "page": number + 1,
                 "box": [50, 100, 300, 200],
-                "png": self.png if self.png is not None else b"\x89PNG-%d" % number,
+                "png": self.png if self.png is not None else _png(),
             })
         return crops
 
@@ -465,7 +483,7 @@ def test_a_missing_crop_still_places_the_others() -> None:
     first, second = data["workbook"]["sheet"]
     assert not first.get("images")
     assert [i["id"] for i in second["images"]] == ["chart_1"]
-    assert data["chartPages"] is None
+    assert data["chartPages"] == [2]  # the chart without a picture keeps its page listed
 
 
 def test_crop_without_png_is_not_placed() -> None:
@@ -481,6 +499,15 @@ def test_crop_without_png_is_not_placed() -> None:
         {"png": "notbytes"},
         {"png": 5},
         {"png": b""},
+        {"png": b"not PNG"},
+        {"png": b"\x89PNG\r\n\x1a\n"},  # the signature and nothing else
+        {"png": _png(0, 2)},
+        {"png": _png(2, 0)},
+        {"png": b"\x89PNG\r\n\x1a\n" + _png()[8:].replace(b"IHDR", b"IDAT", 1)},
+        {"box": [50, 100, -300, 0]},
+        {"box": [50, 100, 0, 200]},
+        {"box": [50, 100, 300, -5]},
+        {"box": [50, 100, float("inf"), 200]},
         {"box": "wide"},
         {"box": [50, 100, 300]},
         {"box": [50, 100, float("nan"), 200]},
@@ -587,7 +614,7 @@ def test_picture_bytes_stop_at_the_payload_cap(caplog) -> None:
     _fill(ws)
     for row in (15, 40, 65, 90):
         ws.add_chart(_bar_chart(ws), f"A{row}")
-    host = _GalleryHost(png=b"x" * 3_000_000)
+    host = _GalleryHost(png=_png(pad=3_000_000))
 
     with caplog.at_level("WARNING", logger="langchain_canvas.replay"):
         data = _preview(_save(wb), host)
@@ -595,7 +622,7 @@ def test_picture_bytes_stop_at_the_payload_cap(caplog) -> None:
     assert [i["id"] for i in data["workbook"]["sheet"][0]["images"]] == ["chart_0", "chart_1"]
     capped = [r.getMessage() for r in caplog.records if "chart_pictures_capped" in r.getMessage()]
     assert capped == ["xlsx_preview.chart_pictures_capped path=report.xlsx omitted=2"]
-    assert data["chartPages"] is None
+    assert data["chartPages"] == [2]  # the two charts left out are listed by page
 
 
 def test_more_than_forty_charts_fall_back_to_chart_pages() -> None:

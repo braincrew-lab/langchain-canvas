@@ -166,14 +166,46 @@ def test_anchors_past_the_workbook_budget_are_left_unplaced(monkeypatch) -> None
     monkeypatch.setattr(xlsx_import, "_MAX_BOXED_ANCHORS", 2)
     # the sized-and-folded workbook holds two charts and two pictures: pictures come
     # first on a sheet, so the budget goes to them and the charts have no box
-    parsed, charts = xlsx_import.xlsx_sheets_and_charts(_geometry_workbook())
+    parsed, charts = xlsx_import.xlsx_sheets_and_charts(_geometry_workbook(), read_only=True)
 
     assert len(parsed["sheets"][0]["images"]) == 2
     assert charts == [{"sheet": 0, "kind": "unboxed"}, {"sheet": 0, "kind": "unboxed"}]
 
     monkeypatch.setattr(xlsx_import, "_MAX_BOXED_ANCHORS", 1)
-    parsed, _ = xlsx_import.xlsx_sheets_and_charts(_geometry_workbook())
+    parsed, _ = xlsx_import.xlsx_sheets_and_charts(_geometry_workbook(), read_only=True)
     assert len(parsed["sheets"][0]["images"]) == 1
+
+
+def test_the_editable_import_has_no_anchor_budget(monkeypatch) -> None:
+    import langchain_canvas.xlsx_import as xlsx_import
+
+    monkeypatch.setattr(xlsx_import, "_MAX_BOXED_ANCHORS", 1)
+
+    parsed, charts = xlsx_import.xlsx_sheets_and_charts(_geometry_workbook())
+
+    assert len(parsed["sheets"][0]["images"]) == 2
+    assert [chart["kind"] for chart in charts] == ["chart", "chart"]
+
+
+def _many_pictures(count: int) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for row in range(1, count + 1):
+        png = io.BytesIO()
+        Image.new("RGB", (4, 4), "red").save(png, format="PNG")
+        png.seek(0)
+        ws.add_image(XlImage(png), f"A{row}")
+    return _save(wb)
+
+
+def test_the_import_keeps_every_picture_and_the_preview_places_five_hundred() -> None:
+    from langchain_canvas.xlsx_import import xlsx_sheets_and_charts, xlsx_to_sheets
+
+    data = _many_pictures(501)
+
+    assert len(xlsx_to_sheets(data)["sheets"][0]["images"]) == 501  # as before the budget
+    parsed, _ = xlsx_sheets_and_charts(data, read_only=True)
+    assert len(parsed["sheets"][0]["images"]) == 500
 
 
 def _boxes_of(data: bytes, *, read_only: bool) -> dict:

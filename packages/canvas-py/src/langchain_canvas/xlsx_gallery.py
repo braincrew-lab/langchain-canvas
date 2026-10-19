@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import struct
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,7 @@ from .xlsx_import import _EMU_PER_PX
 
 #: Charts one workbook's gallery copy may hold; a workbook with more is not galleried.
 MAX_GALLERY_CHARTS = 40
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MIN_GALLERY_PX = (120, 80)
 _MAX_GALLERY_PX = (1600, 1200)
 _CORE_DATE = re.compile(rb"(<dcterms:(created|modified)\b[^>]*>)[^<]*(</dcterms:\2>)")
@@ -68,6 +70,19 @@ def gallery_salt(data: bytes) -> str:
     gallery it came from.
     """
     return hashlib.sha256(data).hexdigest()[:12]
+
+
+def png_has_area(png: bytes | bytearray) -> bool:
+    """Whether ``png`` opens with the PNG signature and an IHDR of positive width and height.
+
+    A host's crop is placed as an image, so bytes that are not a picture must not pass.
+    """
+    return (
+        len(png) >= 24
+        and png.startswith(_PNG_SIGNATURE)
+        and png[8:16] == b"\x00\x00\x00\rIHDR"
+        and all(side > 0 for side in struct.unpack(">II", png[16:24]))
+    )
 
 
 def _gallery_size(box: dict[str, Any]) -> tuple[int, int]:

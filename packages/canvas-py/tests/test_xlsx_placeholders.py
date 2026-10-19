@@ -363,7 +363,7 @@ def test_unsupported_placeholder_lands_at_its_anchor() -> None:
     assert _box(image) == (entry["left"], entry["top"], entry["width"], entry["height"])
 
 
-def test_chartex_only_workbook_never_lists_chart_pages(monkeypatch) -> None:
+def test_chartex_only_workbook_lists_chart_pages_only_without_its_notice(monkeypatch) -> None:
     data = (_FIXTURES / "chartex_waterfall.xlsx").read_bytes()
 
     placed = _preview(data, _GalleryHost())
@@ -377,7 +377,8 @@ def test_chartex_only_workbook_never_lists_chart_pages(monkeypatch) -> None:
     monkeypatch.setattr(xlsx_gallery, "xlsx_chart_gallery", _boom)
     _PREVIEW_CACHE.clear()
     failed = _preview(data, _GalleryHost())
-    assert not failed["workbook"]["sheet"][0]["images"] and failed["chartPages"] is None
+    # no notice picture was placed, so the pages that carry the chart are listed
+    assert not failed["workbook"]["sheet"][0]["images"] and failed["chartPages"] == [2]
 
 
 def test_a_placeholder_alone_does_not_stand_for_a_missing_chart() -> None:

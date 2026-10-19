@@ -65,7 +65,7 @@ _DEFAULT_COL_PX = 73  # Fortune's default column width / row height, used to
 _DEFAULT_ROW_PX = 19  # place an image anchored to a cell with no explicit size
 _MAX_COLUMN_INDEX = 16383  # Excel's last column (XFD) and row, 0-based; an anchor
 _MAX_ROW_INDEX = 1048575  # past them is cut back so one cannot cost a whole sheet of math
-_MAX_BOXED_ANCHORS = 500  # pictures and charts placed per workbook
+_MAX_BOXED_ANCHORS = 500  # pictures and charts a read-only preview places per workbook
 
 _MONTHS_LONG = ["January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"]
@@ -348,7 +348,7 @@ class _SheetGeometry:
 class _AnchorBudget:
     """How many more anchors a workbook may place; a drawing past it is left unplaced."""
 
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: float) -> None:
         self._left = limit
 
     def take(self) -> bool:
@@ -598,7 +598,8 @@ def xlsx_sheets_and_charts(
 
     sheets: list[dict[str, Any]] = []
     charts: list[dict[str, Any]] = []
-    budget = _AnchorBudget(_MAX_BOXED_ANCHORS)
+    # Only the read-only preview needs the cap; the editable import keeps every picture.
+    budget = _AnchorBudget(_MAX_BOXED_ANCHORS if read_only else math.inf)
     unsupported = _unsupported_chart_objects(data) if read_only else {}
     for index, worksheet in enumerate(workbook.worksheets):
         cached = values.worksheets[index]

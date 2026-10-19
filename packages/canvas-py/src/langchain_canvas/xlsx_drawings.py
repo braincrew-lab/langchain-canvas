@@ -54,7 +54,9 @@ _ANCHORS = frozenset(
 _NV_TAGS = frozenset(
     f"{{{_XDR}}}{name}" for name in ("nvSpPr", "nvCxnSpPr", "nvGrpSpPr", "nvGraphicFramePr")
 )
-_NOT_READ = frozenset({f"{{{_MC}}}Fallback"})  # never read: Excel draws the Choice
+_FALLBACK = f"{{{_MC}}}Fallback"
+_NOT_READ = frozenset({_FALLBACK})  # never read: Excel draws the Choice
+_CHOICE = frozenset({f"{{{_MC}}}Choice"})
 _DOCTYPE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 _WORKBOOK_PART = "xl/workbook.xml"
 
@@ -126,12 +128,17 @@ def _part_text(archive: zipfile.ZipFile, name: str) -> str | None:
 
 
 def _finished(
-    text: str, wanted: frozenset[str], skip_under: frozenset[str] = frozenset()
-) -> Iterator[ElementTree.Element]:
+    text: str,
+    wanted: frozenset[str],
+    skip_under: frozenset[str] = frozenset(),
+    mark_under: frozenset[str] = frozenset(),
+) -> Iterator[tuple[ElementTree.Element, bool]]:
     """Each element of a tag in ``wanted`` as soon as it ends, then dropped from the tree.
 
-    An element inside one of the ``skip_under`` tags is not yielded. Every finished
-    direct child of the root is dropped too, so what the tree holds is one chunk's worth
+    Each comes with whether it sits inside one of the ``mark_under`` tags: the ancestry
+    is gone once the element is dropped. An element inside one of the ``skip_under`` tags
+    is not yielded. Every finished direct child of the root is dropped too, so what the
+    tree holds is one chunk's worth
     of elements plus the one being built, however much the part carries. Malformed XML
     ends the stream quietly: what ended before the fault was already yielded. The
     consumer must read an element before asking for the next.
@@ -141,25 +148,28 @@ def _finished(
     )
     stack: list[ElementTree.Element] = []
     skipping = 0  # open elements of a skip_under tag
+    marked = 0  # open elements of a mark_under tag
     too_deep = False
 
-    def drain() -> Iterator[ElementTree.Element]:
-        nonlocal skipping, too_deep
+    def drain() -> Iterator[tuple[ElementTree.Element, bool]]:
+        nonlocal skipping, marked, too_deep
         for item in parser.read_events():
             # start and end events carry (event name, element)
             event, element = cast("tuple[str, ElementTree.Element]", item)
             if event == "start":
                 stack.append(element)
                 skipping += element.tag in skip_under
+                marked += element.tag in mark_under
                 if len(stack) > _MAX_XML_DEPTH:
                     too_deep = True
                     return
                 continue
             stack.pop()
             skipping -= element.tag in skip_under
+            marked -= element.tag in mark_under
             is_wanted = element.tag in wanted
             if is_wanted and not skipping:
-                yield element
+                yield element, marked > 0
             if stack and (is_wanted or len(stack) == 1):
                 element.clear()
                 del stack[-1][-1]
@@ -194,7 +204,7 @@ def _relationships(
     if text is None:
         return []
     found: list[_Relationship] = []
-    for element in _finished(text, frozenset({f"{{{_PKG}}}Relationship"})):
+    for element, _ in _finished(text, frozenset({f"{{{_PKG}}}Relationship"})):
         if (element.get("TargetMode") or "").lower() == "external":
             continue
         part = resolve_part_target(source_part, element.get("Target") or "", members)
@@ -217,7 +227,7 @@ def _worksheets(archive: zipfile.ZipFile, members: set[str]) -> list[tuple[str, 
         if rel.kind == "worksheet"
     }
     sheets: list[tuple[str, str]] = []
-    for element in _finished(text, frozenset({f"{{{_MAIN}}}sheet"})):
+    for element, _ in _finished(text, frozenset({f"{{{_MAIN}}}sheet"})):
         part = part_by_id.get(element.get(f"{{{_R}}}id") or "")
         if part is not None:
             sheets.append((element.get("name") or "", part))
@@ -262,16 +272,14 @@ def read_drawing_objects(
             return []
         members = {info.orig_filename for info in infos}
         sink = _Sink()
-        drawings = _DrawingParts(archive)
+        parts = _Parts(archive, members)
         for index, (sheet_name, part) in enumerate(_worksheets(archive, members)):
-            for rel in _relationships(archive, part, members):
-                if rel.kind == "drawing" and rel.part.startswith("xl/drawings/"):
-                    for obj in drawings.objects(rel.part):
-                        if sink.full:
-                            return sink.objects
-                        sink.add({**obj, "sheet": index, "sheet_name": sheet_name})
+            for obj in parts.sheet_objects(part):
                 if sink.full:
                     return sink.objects
+                sink.add({**obj, "sheet": index, "sheet_name": sheet_name})
+            if sink.full:
+                return sink.objects
         return sink.objects
 
 
@@ -305,29 +313,60 @@ class _Sink:
         self._chars += len(obj["text"])
 
 
-class _DrawingParts:
-    """Each drawing part parsed at most once per read, within a total byte budget.
+class _Parts:
+    """Each worksheet's drawing objects, read at most once per read, within a byte budget.
 
-    Many sheets may point at one drawing part and the archive limits do not count the
-    repeats, so the objects of a part are kept and every sheet that references it gets
-    its own copy. Once the parsed bytes would pass :data:`MAX_TOTAL_PART_BYTES`, this
-    and every later new part is skipped.
+    Many sheet entries may name one worksheet part, and many worksheets one drawing part;
+    the archive limits do not count the repeats. So the objects of a worksheet and of a
+    drawing are kept, and every sheet that names them gets its own copy. The relationships
+    part of a worksheet and each drawing part count against :data:`MAX_TOTAL_PART_BYTES`
+    when first parsed; once the next one would pass it, that part and every later new part
+    is skipped.
     """
 
-    def __init__(self, archive: zipfile.ZipFile) -> None:
+    def __init__(self, archive: zipfile.ZipFile, members: set[str]) -> None:
         self._archive = archive
-        self._parsed: dict[str, list[DrawingObject]] = {}
-        self._bytes = 0
+        self._members = members
+        self._drawings: dict[str, list[DrawingObject]] = {}
+        self._sheets: dict[str, list[DrawingObject]] = {}
+        self._left = MAX_TOTAL_PART_BYTES
         self._spent = False
 
-    def objects(self, part: str) -> list[DrawingObject]:
-        if part not in self._parsed:
-            size = self._archive.getinfo(part).file_size
-            self._spent = self._spent or self._bytes + size > MAX_TOTAL_PART_BYTES
-            self._parsed[part] = [] if self._spent else _read_drawing(self._archive, part)
-            if not self._spent:
-                self._bytes += size
-        return self._parsed[part]
+    def _admit(self, part: str) -> bool:
+        """Whether ``part`` fits what is left of the budget; it is then spent."""
+        size = self._archive.getinfo(part).file_size
+        self._spent = self._spent or size > self._left
+        if not self._spent:
+            self._left -= size
+        return not self._spent
+
+    def sheet_objects(self, sheet_part: str) -> list[DrawingObject]:
+        """The objects of every drawing a worksheet part points at, at most :data:`MAX_OBJECTS`."""
+        if sheet_part not in self._sheets:
+            found: list[DrawingObject] = []
+            for part in self._drawing_parts(sheet_part):
+                found.extend(self._drawing(part))
+                if len(found) >= MAX_OBJECTS:
+                    break
+            self._sheets[sheet_part] = found[:MAX_OBJECTS]
+        return self._sheets[sheet_part]
+
+    def _drawing_parts(self, sheet_part: str) -> list[str]:
+        directory, base = posixpath.split(sheet_part)
+        rels_part = posixpath.join(directory, "_rels", f"{base}.rels")
+        if rels_part not in self._members or not self._admit(rels_part):
+            return []
+        return [
+            rel.part
+            for rel in _relationships(self._archive, sheet_part, self._members)
+            if rel.kind == "drawing" and rel.part.startswith("xl/drawings/")
+        ]
+
+    def _drawing(self, part: str) -> list[DrawingObject]:
+        if part not in self._drawings:
+            admitted = self._admit(part)
+            self._drawings[part] = _read_drawing(self._archive, part) if admitted else []
+        return self._drawings[part]
 
 
 def _read_drawing(archive: zipfile.ZipFile, part: str) -> list[DrawingObject]:
@@ -337,11 +376,15 @@ def _read_drawing(archive: zipfile.ZipFile, part: str) -> list[DrawingObject]:
     if text is None:
         return sink.objects
     ctx = _Ctx(0, "")
-    for anchor in _finished(text, _ANCHORS, _NOT_READ):
+    for anchor, in_choice in _finished(text, _ANCHORS, _NOT_READ, _CHOICE):
         geometry = _anchor_geometry(anchor)
         if geometry is None:
             continue
-        _walk(anchor, ctx._replace(anchor=geometry, cell=_cell_label(geometry["from"])), sink, 0)
+        # an anchor wrapped in mc:Choice is a chart openpyxl cannot read, like one inside it
+        anchored = ctx._replace(
+            anchor=geometry, cell=_cell_label(geometry["from"]), in_choice=in_choice
+        )
+        _walk(anchor, anchored, sink, 0)
         if sink.full:
             break
     return sink.objects
@@ -436,11 +479,17 @@ def _paragraphs(shape: ElementTree.Element) -> str:
     body = shape.find(f"{{{_XDR}}}txBody")
     if body is None:
         return ""
-    text_tag = f"{{{_A}}}t"
-    lines = (
-        "".join(run.text or "" for run in p.iter(text_tag)) for p in body.findall(f"{{{_A}}}p")
-    )
+    lines = ("".join(_runs(p)) for p in body.findall(f"{{{_A}}}p"))
     return "\n".join(lines)[:MAX_OBJECT_CHARS]
+
+
+def _runs(element: ElementTree.Element) -> Iterator[str]:
+    """The ``a:t`` text under ``element`` in order, skipping every ``mc:Fallback``."""
+    for child in element:
+        if child.tag == f"{{{_A}}}t":
+            yield child.text or ""
+        elif child.tag != _FALLBACK:
+            yield from _runs(child)
 
 
 def _frame_kind(

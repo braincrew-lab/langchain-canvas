@@ -523,7 +523,11 @@ def test_the_total_of_parsed_drawing_bytes_is_budgeted(monkeypatch) -> None:
     assert MAX_TOTAL_PART_BYTES == 4 * MAX_PART_BYTES
     data = _package([_wsdr(_one_cell(_sp(name))) for name in ("A", "B", "C")])
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        size = archive.getinfo("xl/drawings/drawing1.xml").file_size
+        # a sheet costs its relationships part and its drawing part
+        size = (
+            archive.getinfo("xl/drawings/drawing1.xml").file_size
+            + archive.getinfo("xl/worksheets/_rels/sheet1.xml.rels").file_size
+        )
     monkeypatch.setattr(xlsx_drawings, "MAX_TOTAL_PART_BYTES", 2 * size + size // 2)
 
     assert _names(read_drawing_objects(data)) == ["A", "B"]  # the third would pass the budget
@@ -562,6 +566,44 @@ def test_an_anchor_under_mc_fallback_is_never_read() -> None:
     )
 
     assert _names(read_drawing_objects(_package([_wsdr(alternate)]))) == ["CHOICE"]
+
+
+def test_a_chart_anchor_wrapped_in_a_drawing_level_choice_is_a_choice_chart() -> None:
+    wrapped = (
+        '<mc:AlternateContent><mc:Choice Requires="c14">'
+        f"{_one_cell(_chart_frame('Whole anchor'))}</mc:Choice>"
+        f"<mc:Fallback>{_one_cell(_chart_frame('Old chart'))}</mc:Fallback></mc:AlternateContent>"
+    )
+
+    objects = read_drawing_objects(_package([_wsdr(wrapped)]))
+
+    assert [(o["kind"], o["name"], o["cell"]) for o in objects] == [
+        ("choice_chart", "Whole anchor", "A1")
+    ]
+
+
+def test_a_chart_anchor_outside_any_choice_stays_with_openpyxl() -> None:
+    plain = f"<mc:AlternateContent><mc:Fallback>{_one_cell(_chart_frame())}</mc:Fallback>"
+    plain += "</mc:AlternateContent>" + _one_cell(_chart_frame("Top level"))
+
+    assert read_drawing_objects(_package([_wsdr(plain)])) == []
+
+
+def test_shape_text_inside_mc_fallback_is_not_read() -> None:
+    run = lambda text: f"<a:r><a:t>{text}</a:t></a:r>"  # noqa: E731
+    paragraph = (
+        "<a:p><mc:AlternateContent><mc:Choice Requires=\"x\">"
+        f"{run('VISIBLE')}</mc:Choice><mc:Fallback>{run('HIDDEN-FALLBACK')}</mc:Fallback>"
+        f"</mc:AlternateContent>{run(' tail')}</a:p>"
+    )
+    shape = _sp("Rich", None).replace(
+        "<xdr:spPr/>",
+        f"<xdr:spPr/><xdr:txBody><a:bodyPr/><a:lstStyle/>{paragraph}</xdr:txBody>",
+    )
+
+    (obj,) = read_drawing_objects(_package([_wsdr(_one_cell(shape))]))
+
+    assert obj["text"] == "VISIBLE tail"
 
 
 # --- caps ---------------------------------------------------------------------------

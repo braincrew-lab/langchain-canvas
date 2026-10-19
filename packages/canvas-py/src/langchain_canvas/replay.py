@@ -733,23 +733,28 @@ def _place_workbook_charts(
 
     Each chart gets a picture at its anchor when the host crops them from a gallery
     copy (one marked page per chart). The rendered pages that carry charts are listed
-    under the grid when no chart picture could be placed, and always when a chart has
-    no anchor cell to place a picture at (a chart sheet, a free-floating chart).
+    under the grid whenever a visible chart or notice box got no picture (no crop, a
+    crop that was refused, or one left out by the byte cap; the pictures already placed
+    stay), and when a chart has no anchor cell to place a picture at (a chart sheet, a
+    free-floating chart). A workbook whose every box got its picture lists none.
     """
     workbook = preview["workbook"]
     charts = workbook.pop("_charts", [])
+    sheets = workbook.get("sheet") or []
     boxes = [c for c in charts if c["kind"] in ("chart", "unsupported")]
     unboxed = sum(c["kind"] == "unboxed" for c in charts)
-    placed = _derive_chart_gallery(path, original, workbook, boxes, converters) if boxes else None
-    kinds = _place_gallery_images(workbook, placed, path=path) if placed else set()
-    pictured = "chart" in kinds
-    wanted = not boxes or any(b["kind"] == "chart" for b in boxes)
-    if (wanted and not pictured) or unboxed:
+    # A hidden sheet's charts are hidden in the grid too
+    entries = [b for b in boxes if not sheets[b["sheet"]].get("hide")]
+    placed = _derive_chart_gallery(path, original, entries, converters) if entries else None
+    pictures = _place_gallery_images(workbook, placed, path=path) if placed else 0
+    if not boxes or pictures < len(entries) or unboxed:
         preview["chartPages"] = _derive_chart_pages(path, original, converters)
 
 
 def _is_gallery_crop(crop: Any, salt: str, count: int) -> bool:
     """Whether a host's crop is well formed and belongs to this workbook's gallery."""
+    from .xlsx_gallery import png_has_area
+
     if not isinstance(crop, dict):
         return False
     number, box = crop.get("chart"), crop.get("box")
@@ -759,27 +764,28 @@ def _is_gallery_crop(crop: Any, salt: str, count: int) -> bool:
         and not isinstance(number, bool)
         and 0 <= number < count
         and isinstance(crop.get("png"), (bytes, bytearray))
-        and len(crop["png"]) > 0
+        and png_has_area(crop["png"])
         and isinstance(box, (list, tuple))
         and len(box) == 4
         and all(
             isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
             for v in box
         )
+        and box[2] > 0
+        and box[3] > 0
     )
 
 
 def _derive_chart_gallery(
     path: str,
     data: bytes,
-    workbook: dict[str, Any],
-    boxes: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
     converters: list[SourceConverter],
 ) -> dict[int, tuple[dict[str, Any], dict[str, Any]]] | None:
-    """Each chart's crop from a gallery copy, as ``{k: (box, crop)}``; None when unavailable.
+    """Each box's crop from a gallery copy, as ``{k: (box, crop)}``; None when unavailable.
 
     The host crops the copy with its converter's ``chart_images``. A crop belongs to
-    the k-th visible box only when it carries this workbook's salt, so a crop from
+    the k-th box of ``entries`` only when it carries this workbook's salt, so a crop from
     anywhere else is never placed. Any failure is None: the charts are a bonus on the grid.
     """
     from .xlsx_gallery import MAX_GALLERY_CHARTS, gallery_salt, xlsx_chart_gallery
@@ -789,10 +795,7 @@ def _derive_chart_gallery(
     if converter is None or cropper is None:
         return None
     try:
-        sheets = workbook.get("sheet") or []
-        # A hidden sheet's charts are hidden in the grid too
-        entries = [b for b in boxes if not sheets[b["sheet"]].get("hide")]
-        if not entries or len(entries) > MAX_GALLERY_CHARTS:
+        if len(entries) > MAX_GALLERY_CHARTS:
             return None
         salt = gallery_salt(data)
         crops = cropper(xlsx_chart_gallery(data, entries), path=path)
@@ -810,15 +813,14 @@ def _place_gallery_images(
     placed: dict[int, tuple[dict[str, Any], dict[str, Any]]],
     *,
     path: str,
-) -> set[str]:
-    """Add each cropped chart to its sheet's pictures; the kinds of box that got one.
+) -> int:
+    """Add each cropped chart to its sheet's pictures; how many were added.
 
     Pictures go in chart order until the PNG bytes would pass the payload cap; the
     rest are left out and counted in one warning. If any picture cannot be built,
     none is added and the result is empty.
     """
     sheets = workbook.get("sheet") or []
-    kinds: set[str] = set()
     total = omitted = 0
     try:
         # Every picture is built before any is added, so a failure leaves the grid as it was
@@ -830,15 +832,14 @@ def _place_gallery_images(
                 continue
             total += len(crop["png"])
             pictures.append((sheets[box["sheet"]], _chart_picture(number, crop, box)))
-            kinds.add(box["kind"])
     except Exception:  # noqa: BLE001 — charts are a bonus on the grid
         logger.warning("xlsx_preview.chart_pictures_failed path=%s", path)
-        return set()
+        return 0
     for sheet, picture in pictures:
         sheet.setdefault("images", []).append(picture)
     if omitted:
         logger.warning("xlsx_preview.chart_pictures_capped path=%s omitted=%d", path, omitted)
-    return kinds
+    return len(pictures)
 
 
 def _chart_picture(number: int, crop: dict[str, Any], box: dict[str, Any]) -> dict[str, Any]:
