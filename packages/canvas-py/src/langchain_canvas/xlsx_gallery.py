@@ -31,6 +31,8 @@ _MAX_GALLERY_PX = (1600, 1200)
 # 10,000 px a side or 16 megapixels is larger than we could have made and is refused.
 _PNG_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}  # color type -> samples per pixel (no palette)
 _PNG_DEPTHS = {0: (1, 2, 4, 8, 16), 2: (8, 16), 4: (8, 16), 6: (8, 16)}
+_PNG_CRITICAL_CHUNKS = (b"IHDR", b"IDAT", b"IEND")  # palette images are refused, so no PLTE
+_PNG_MAX_FILTER = 4  # row filter types: none, sub, up, average, paeth
 _INFLATE_STEP = 1 << 20
 _MAX_CROP_SIDE_PX = 10_000
 _MAX_CROP_PIXELS = 16_000_000
@@ -106,11 +108,24 @@ def _png_chunks(png: bytes | bytearray) -> list[tuple[bytes, bytes]] | None:
     return None
 
 
-def _inflates_to(stream: bytes, size: int) -> bool:
-    """Whether ``stream`` is a whole zlib stream of exactly ``size`` bytes.
+def _is_known_chunk_type(kind: bytes) -> bool:
+    """Whether a chunk type is four ASCII letters and, if critical, one a decoder knows.
+
+    A critical chunk is one whose first letter is uppercase; a decoder must refuse an image
+    that holds a critical chunk it does not know. Ancillary (lowercase) chunks may be skipped.
+    """
+    if not (kind.isascii() and kind.isalpha() and len(kind) == 4):
+        return False
+    return kind[:1].islower() or kind in _PNG_CRITICAL_CHUNKS
+
+
+def _inflates_to(stream: bytes, size: int, row: int) -> bool:
+    """Whether ``stream`` is a whole zlib stream of exactly ``size`` bytes of ``row``-byte rows.
 
     It is inflated a step at a time and given up on as soon as it passes ``size``, so a
-    stream that expands without end costs no more than ``size`` bytes of work.
+    stream that expands without end costs no more than ``size`` bytes of work. The first
+    byte of every row is its filter type, which the PNG standard keeps within 0-4; a
+    decoder refuses anything else, so it is checked on the way through.
     """
     decoder = zlib.decompressobj()
     produced, pending = 0, stream
@@ -118,6 +133,8 @@ def _inflates_to(stream: bytes, size: int) -> bool:
         while not decoder.eof:
             chunk = decoder.decompress(pending, _INFLATE_STEP)
             pending = decoder.unconsumed_tail
+            if any(kind > _PNG_MAX_FILTER for kind in chunk[(-produced) % row :: row]):
+                return False
             produced += len(chunk)
             if produced > size or not (chunk or pending):
                 break
@@ -141,6 +158,8 @@ def is_usable_png(png: bytes | bytearray) -> bool:
     if not chunks or chunks[0][0] != b"IHDR" or len(chunks[0][1]) != 13:
         return False
     kinds = [kind for kind, _ in chunks]
+    if not all(_is_known_chunk_type(kind) for kind in kinds):
+        return False
     idat = [at for at, kind in enumerate(kinds) if kind == b"IDAT"]
     if kinds.count(b"IHDR") != 1 or not idat or idat[-1] - idat[0] != len(idat) - 1:
         return False
@@ -158,7 +177,7 @@ def is_usable_png(png: bytes | bytearray) -> bool:
     ):
         return False
     row = 1 + (width * _PNG_CHANNELS[ctype] * depth + 7) // 8
-    return _inflates_to(b"".join(chunks[at][1] for at in idat), row * height)
+    return _inflates_to(b"".join(chunks[at][1] for at in idat), row * height, row)
 
 
 def _gallery_size(box: dict[str, Any]) -> tuple[int, int]:

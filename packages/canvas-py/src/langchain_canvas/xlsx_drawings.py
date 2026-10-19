@@ -54,6 +54,10 @@ _ANCHORS = frozenset(
 _NV_TAGS = frozenset(
     f"{{{_XDR}}}{name}" for name in ("nvSpPr", "nvCxnSpPr", "nvGrpSpPr", "nvGraphicFramePr")
 )
+_OBJECT_TAGS = frozenset(
+    [f"{{{_XDR}}}{name}" for name in ("sp", "cxnSp", "grpSp", "graphicFrame")]
+    + [f"{{{_MC}}}AlternateContent"]
+)
 _FALLBACK = f"{{{_MC}}}Fallback"
 _NOT_READ = frozenset({_FALLBACK})  # never read: Excel draws the Choice
 _CHOICE = frozenset({f"{{{_MC}}}Choice"})
@@ -262,25 +266,41 @@ def read_drawing_objects(
     :data:`MAX_TOTAL_CHARS`. A source that is no zip, or whose zip holds an unsafe entry
     name, yields ``[]``; a zip over the archive limits raises
     :class:`~langchain_canvas.converters.UnsafeArchiveError`.
+
+    :func:`read_drawing_objects_checked` also says whether a limit cut the read short.
+    """
+    return read_drawing_objects_checked(source, path=path)[0]
+
+
+def read_drawing_objects_checked(
+    source: bytes | str | os.PathLike[str] | BinaryIO, *, path: str = "workbook.xlsx"
+) -> tuple[list[DrawingObject], bool]:
+    """:func:`read_drawing_objects` plus whether the read was complete.
+
+    The flag is False when a limit left drawing content unread: the object or text cap
+    of a drawing, of a worksheet or of the whole read, or a part skipped because the
+    byte budget was spent. Objects after the cut are missing from the list, so a caller
+    that must know every object of a kind was seen (every chart, say) cannot rely on it.
     """
     archive = _open(source, path)
     if archive is None:
-        return []
+        return [], True
     with archive:
         infos = archive.infolist()
         if not _names_are_safe(infos):
-            return []
+            return [], True
         members = {info.orig_filename for info in infos}
         sink = _Sink()
         parts = _Parts(archive, members)
-        for index, (sheet_name, part) in enumerate(_worksheets(archive, members)):
+        sheets = _worksheets(archive, members)
+        for index, (sheet_name, part) in enumerate(sheets):
             for obj in parts.sheet_objects(part):
                 if sink.full:
-                    return sink.objects
+                    return sink.objects, False
                 sink.add({**obj, "sheet": index, "sheet_name": sheet_name})
-            if sink.full:
-                return sink.objects
-        return sink.objects
+            if sink.full and index + 1 < len(sheets):
+                return sink.objects, False
+        return sink.objects, not parts.incomplete
 
 
 # --- the drawing part ----------------------------------------------------------------
@@ -302,6 +322,7 @@ class _Sink:
 
     def __init__(self) -> None:
         self.objects: list[DrawingObject] = []
+        self.truncated = False  # an object was left unread because the sink was full
         self._chars = 0
 
     @property
@@ -321,7 +342,7 @@ class _Parts:
     drawing are kept, and every sheet that names them gets its own copy. The relationships
     part of a worksheet and each drawing part count against :data:`MAX_TOTAL_PART_BYTES`
     when first parsed; once the next one would pass it, that part and every later new part
-    is skipped.
+    is skipped. ``incomplete`` turns True when any of these limits left content unread.
     """
 
     def __init__(self, archive: zipfile.ZipFile, members: set[str]) -> None:
@@ -331,6 +352,7 @@ class _Parts:
         self._sheets: dict[str, list[DrawingObject]] = {}
         self._left = MAX_TOTAL_PART_BYTES
         self._spent = False
+        self.incomplete = False
 
     def _admit(self, part: str) -> bool:
         """Whether ``part`` fits what is left of the budget; it is then spent."""
@@ -344,9 +366,11 @@ class _Parts:
         """The objects of every drawing a worksheet part points at, at most :data:`MAX_OBJECTS`."""
         if sheet_part not in self._sheets:
             found: list[DrawingObject] = []
-            for part in self._drawing_parts(sheet_part):
+            drawing_parts = self._drawing_parts(sheet_part)
+            for at, part in enumerate(drawing_parts):
                 found.extend(self._drawing(part))
                 if len(found) >= MAX_OBJECTS:
+                    self.incomplete |= len(found) > MAX_OBJECTS or at + 1 < len(drawing_parts)
                     break
             self._sheets[sheet_part] = found[:MAX_OBJECTS]
         return self._sheets[sheet_part]
@@ -354,7 +378,10 @@ class _Parts:
     def _drawing_parts(self, sheet_part: str) -> list[str]:
         directory, base = posixpath.split(sheet_part)
         rels_part = posixpath.join(directory, "_rels", f"{base}.rels")
-        if rels_part not in self._members or not self._admit(rels_part):
+        if rels_part not in self._members:
+            return []
+        if not self._admit(rels_part):
+            self.incomplete = True
             return []
         return [
             rel.part
@@ -364,19 +391,29 @@ class _Parts:
 
     def _drawing(self, part: str) -> list[DrawingObject]:
         if part not in self._drawings:
-            admitted = self._admit(part)
-            self._drawings[part] = _read_drawing(self._archive, part) if admitted else []
+            if self._admit(part):
+                self._drawings[part], truncated = _read_drawing(self._archive, part)
+                self.incomplete |= truncated
+            else:
+                self._drawings[part] = []
+                self.incomplete = True
         return self._drawings[part]
 
 
-def _read_drawing(archive: zipfile.ZipFile, part: str) -> list[DrawingObject]:
-    """The objects of one drawing part, with sheet 0 as a stand-in for the sheet."""
+def _read_drawing(archive: zipfile.ZipFile, part: str) -> tuple[list[DrawingObject], bool]:
+    """The objects of one drawing part, with sheet 0 as a stand-in for the sheet.
+
+    The flag is True when a cap left objects of the part unread.
+    """
     text = _part_text(archive, part)
     sink = _Sink()
     if text is None:
-        return sink.objects
+        return sink.objects, False
     ctx = _Ctx(0, "")
     for anchor, in_choice in _finished(text, _ANCHORS, _NOT_READ, _CHOICE):
+        if sink.full:  # an anchor is still to be read
+            sink.truncated = True
+            break
         geometry = _anchor_geometry(anchor)
         if geometry is None:
             continue
@@ -385,9 +422,7 @@ def _read_drawing(archive: zipfile.ZipFile, part: str) -> list[DrawingObject]:
             anchor=geometry, cell=_cell_label(geometry["from"]), in_choice=in_choice
         )
         _walk(anchor, anchored, sink, 0)
-        if sink.full:
-            break
-    return sink.objects
+    return sink.objects, sink.truncated
 
 
 def _int_attr(value: str | None, low: int, high: int) -> int:
@@ -441,9 +476,10 @@ def _walk(parent: ElementTree.Element, ctx: _Ctx, sink: _Sink, depth: int) -> No
     if depth > _MAX_GROUP_DEPTH:
         return
     for child in parent:
-        if sink.full:
-            return
         tag = child.tag
+        if sink.full:
+            sink.truncated |= tag in _OBJECT_TAGS
+            return
         if tag == f"{{{_XDR}}}sp":
             _add(sink, ctx, "shape", child, _paragraphs(child))
         elif tag == f"{{{_XDR}}}cxnSp":

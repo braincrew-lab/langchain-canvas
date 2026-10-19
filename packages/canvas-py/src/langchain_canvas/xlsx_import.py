@@ -447,21 +447,25 @@ def _sheet_chart_boxes(
 _UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
 
 
-def _unsupported_chart_objects(data: bytes) -> dict[int, list[Any]]:
+def _unsupported_chart_objects(data: bytes) -> tuple[dict[int, list[Any]], bool]:
     """Charts openpyxl cannot read, by worksheet: Excel 2016+ charts and charts inside a
     group or an ``mc:Choice``. A hidden one, or one in a hidden group, is left out. A
-    drawing that cannot be read gives none: the grid does not depend on it."""
-    from .xlsx_drawings import read_drawing_objects
+    drawing that cannot be read gives none: the grid does not depend on it.
+
+    The flag is False when the reader stopped at one of its limits: charts after the
+    cut are unknown, so the workbook may hold more than were found.
+    """
+    from .xlsx_drawings import read_drawing_objects_checked
 
     try:
-        objects = read_drawing_objects(data)
+        objects, complete = read_drawing_objects_checked(data)
     except Exception:  # noqa: BLE001 — placeholders are a bonus on the grid
-        return {}
+        return {}, True
     found: dict[int, list[Any]] = {}
     for obj in objects:
         if obj["kind"] in _UNSUPPORTED_KINDS and not obj["hidden"]:
             found.setdefault(obj["sheet"], []).append(obj)
-    return found
+    return found, complete
 
 
 def _anchor_of(anchor: dict[str, Any]) -> SimpleNamespace:
@@ -480,24 +484,30 @@ def _anchor_of(anchor: dict[str, Any]) -> SimpleNamespace:
 
 def _unsupported_chart_boxes(
     objects: list[Any], geometry: _SheetGeometry, budget: _AnchorBudget
-) -> list[dict[str, Any]]:
-    """Where the placeholders of a worksheet's unreadable charts go, in anchor order.
+) -> tuple[list[dict[str, Any]], int]:
+    """Where the placeholders of a worksheet's unreadable charts go, in anchor order, and
+    how many of its chartex frames got no box.
 
     ``slot`` is the object's place among the worksheet's drawing objects of those kinds.
-    An object with no anchor cell, or one that cannot be placed, is skipped on its own.
+    An object with no anchor cell, one past the anchor budget, or one that cannot be
+    placed is skipped on its own. A chartex frame is drawn nowhere else, so it is counted
+    when skipped; a grouped or choice chart is listed on its own (see the caller).
     """
     boxes: list[dict[str, Any]] = []
+    unboxed = 0
     for slot, obj in enumerate(objects):
-        if not budget.take():
-            break
-        try:
-            box = _anchor_box(_anchor_of(obj["anchor"]), geometry)
-        except Exception:  # noqa: BLE001 — one broken object must not cost the whole grid
-            continue
+        box = None
+        if budget.take():
+            try:
+                box = _anchor_box(_anchor_of(obj["anchor"]), geometry)
+            except Exception:  # noqa: BLE001 — one broken object must not cost the whole grid
+                box = None
         if box is not None:
             boxes.append({"slot": slot, "kind": "unsupported", **box})
+        elif obj["kind"] == "chartex":
+            unboxed += 1
     boxes.sort(key=lambda box: (box["top"], box["left"]))
-    return boxes
+    return boxes, unboxed
 
 
 def _column_letter(index: int) -> str:
@@ -600,7 +610,7 @@ def xlsx_sheets_and_charts(
     charts: list[dict[str, Any]] = []
     # Only the read-only preview needs the cap; the editable import keeps every picture.
     budget = _AnchorBudget(_MAX_BOXED_ANCHORS if read_only else math.inf)
-    unsupported = _unsupported_chart_objects(data) if read_only else {}
+    unsupported, drawings_complete = _unsupported_chart_objects(data) if read_only else ({}, True)
     for index, worksheet in enumerate(workbook.worksheets):
         cached = values.worksheets[index]
         height, width = worksheet.max_row, worksheet.max_column
@@ -716,16 +726,19 @@ def xlsx_sheets_and_charts(
         boxes, unboxed = _sheet_chart_boxes(worksheet, chart_geometry, budget)
         charts.extend({"sheet": index, **box} for box in boxes)
         unreadable = unsupported.get(index, [])
-        charts.extend(
-            {"sheet": index, **box}
-            for box in _unsupported_chart_boxes(unreadable, chart_geometry, budget)
-        )
-        charts.extend({"sheet": index, "kind": "unboxed"} for _ in range(unboxed))
+        notices, unplaced = _unsupported_chart_boxes(unreadable, chart_geometry, budget)
+        charts.extend({"sheet": index, **box} for box in notices)
+        charts.extend({"sheet": index, "kind": "unboxed"} for _ in range(unboxed + unplaced))
         # openpyxl cannot read a chart inside a group or an mc:Choice, so the page that
-        # draws it stays listed; a chartex frame is a placeholder only
+        # draws it stays listed; a chartex frame is listed only when its notice has no box
         charts.extend(
             {"sheet": index, "kind": "unboxed"} for o in unreadable if o["kind"] != "chartex"
         )
+
+    # A drawing read that a limit cut short may have hidden charts from us: the pages
+    # that carry charts stay listed.
+    if not drawings_complete:
+        charts.append({"sheet": None, "kind": "unboxed"})
 
     # A chart sheet has no cells to anchor a chart to: listed, never boxed.
     for chartsheet in workbook.chartsheets:

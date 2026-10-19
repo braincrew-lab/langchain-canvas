@@ -29,6 +29,7 @@ from langchain_canvas.xlsx_drawings import (
     MAX_TOTAL_PART_BYTES,
     model_safe_text,
     read_drawing_objects,
+    read_drawing_objects_checked,
     resolve_part_target,
 )
 
@@ -733,3 +734,75 @@ def test_model_safe_text_is_idempotent(text: str) -> None:
     assert model_safe_text(once) == once
     assert "</filecontext" not in once.lower()
     assert "-->" not in once
+
+
+# --- a read says whether a cap cut it short ---------------------------------------------
+
+
+def _text_boxes(count: int, text: str = "x") -> list[str]:
+    return [_one_cell(_sp(f"S{n}", text)) for n in range(count)]
+
+
+def test_a_read_under_every_cap_is_complete() -> None:
+    data = _package([_wsdr(*_text_boxes(5), _one_cell(_grp("G", _chart_frame())))])
+
+    objects, complete = read_drawing_objects_checked(data)
+
+    assert complete and len(objects) == 6
+    assert read_drawing_objects(data) == objects
+
+
+def test_a_drawing_that_fills_the_object_cap_exactly_is_complete() -> None:
+    _, complete = read_drawing_objects_checked(_package([_wsdr(*_text_boxes(MAX_OBJECTS))]))
+    assert complete
+
+
+def test_the_object_cap_cuts_the_read_short() -> None:
+    chart = _one_cell(_grp("G", _chart_frame()))
+    data = _package([_wsdr(*_text_boxes(MAX_OBJECTS), chart)])
+
+    objects, complete = read_drawing_objects_checked(data)
+
+    assert not complete and len(objects) == MAX_OBJECTS
+
+
+def test_the_text_cap_cuts_the_read_short() -> None:
+    wordy = _text_boxes(MAX_TOTAL_CHARS // MAX_OBJECT_CHARS + 1, "t" * MAX_OBJECT_CHARS)
+    data = _package([_wsdr(*wordy, _one_cell(_grp("G", _chart_frame())))])
+
+    objects, complete = read_drawing_objects_checked(data)
+
+    assert not complete
+    assert "group_chart" not in [o["kind"] for o in objects]
+
+
+def test_sheets_that_share_the_room_of_one_read_leave_it_incomplete() -> None:
+    many = _wsdr(*_text_boxes(MAX_OBJECTS))
+
+    objects, complete = read_drawing_objects_checked(_shared_drawing_package(4, many))
+
+    assert not complete and len(objects) == MAX_OBJECTS
+
+
+def test_a_part_skipped_for_the_byte_budget_leaves_the_read_incomplete(monkeypatch) -> None:
+    import langchain_canvas.xlsx_drawings as xlsx_drawings
+
+    data = _package([_wsdr(_one_cell(_sp(name))) for name in ("A", "B", "C")])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        size = (
+            archive.getinfo("xl/drawings/drawing1.xml").file_size
+            + archive.getinfo("xl/worksheets/_rels/sheet1.xml.rels").file_size
+        )
+    assert read_drawing_objects_checked(data)[1]
+    monkeypatch.setattr(xlsx_drawings, "MAX_TOTAL_PART_BYTES", 2 * size + size // 2)
+
+    objects, complete = read_drawing_objects_checked(data)
+
+    assert _names(objects) == ["A", "B"] and not complete
+
+
+def test_read_drawing_objects_still_returns_a_plain_list() -> None:
+    objects = read_drawing_objects(_package([_wsdr(_one_cell(_sp("A")))]))
+
+    assert type(objects) is list and _names(objects) == ["A"]
+    assert read_drawing_objects_checked(b"not a zip") == ([], True)

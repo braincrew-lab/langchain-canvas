@@ -183,12 +183,12 @@ def test_a_chartex_frame_adds_no_unboxed_entry() -> None:
     assert _kinds(_entries(data)) == ["unsupported"]
 
 
-def test_absolute_anchor_chartex_is_skipped() -> None:
+def test_absolute_anchor_chartex_has_no_box_but_is_counted() -> None:
     absolute = _declared(
         '<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="3000000" cy="2000000"/>'
         f"{_chartex_frame()}<xdr:clientData/></xdr:absoluteAnchor>"
     )
-    assert _entries(_placeholder_book(absolute)) == []
+    assert _entries(_placeholder_book(absolute)) == [{"sheet": 0, "kind": "unboxed"}]
 
 
 def test_one_cell_anchor_chartex_gets_its_box() -> None:
@@ -236,13 +236,14 @@ def test_a_broken_drawing_object_is_skipped_not_fatal(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        xlsx_drawings, "read_drawing_objects",
-        lambda source, **kwargs: [_object("broken", "x"), _object("fine", 2)],
+        xlsx_drawings, "read_drawing_objects_checked",
+        lambda source, **kwargs: ([_object("broken", "x"), _object("fine", 2)], True),
     )
 
     entries = _entries(_chart_workbook())
 
-    assert _kinds(entries) == ["chart", "unsupported"]  # the broken one is gone, the chart stays
+    # the broken one gets no box and is counted, the fine one and the chart are placed
+    assert _kinds(entries) == ["chart", "unsupported", "unboxed"]
     assert (entries[1]["width"], entries[1]["height"]) == (200, 100)
 
 
@@ -252,7 +253,7 @@ def test_a_reader_failure_leaves_the_grid_alone(monkeypatch) -> None:
     def _boom(source, **kwargs):
         raise RuntimeError("cannot read drawings")
 
-    monkeypatch.setattr(xlsx_drawings, "read_drawing_objects", _boom)
+    monkeypatch.setattr(xlsx_drawings, "read_drawing_objects_checked", _boom)
 
     assert _kinds(_entries(_chart_workbook())) == ["chart"]
 
