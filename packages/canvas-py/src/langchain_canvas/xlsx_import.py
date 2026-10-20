@@ -448,24 +448,6 @@ _UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
 _HIDDEN_STATES = ("hidden", "veryHidden")
 
 
-def _hidden_chartsheet_titles(data: bytes) -> set[str]:
-    """Titles of the hidden chart sheets. openpyxl reads no state for a chart sheet, so
-    this reads it from ``xl/workbook.xml``; any failure gives none (the page is listed).
-    """
-    import zipfile
-
-    from openpyxl.packaging.workbook import WorkbookPackage  # type: ignore[import-untyped]
-    from openpyxl.xml.constants import ARC_WORKBOOK  # type: ignore[import-untyped]
-    from openpyxl.xml.functions import fromstring  # type: ignore[import-untyped]
-
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            package = WorkbookPackage.from_tree(fromstring(archive.read(ARC_WORKBOOK)))
-        return {sheet.name for sheet in package.sheets if sheet.state in _HIDDEN_STATES}
-    except Exception:  # noqa: BLE001 — a listed page is the safe side
-        return set()
-
-
 def _unsupported_chart_objects(data: bytes) -> tuple[dict[int, list[Any]], bool]:
     """Charts openpyxl cannot read, by worksheet: Excel 2016+ charts and charts inside a
     group or an ``mc:Choice``. A hidden one, or one in a hidden group, is left out. A
@@ -603,8 +585,8 @@ def xlsx_sheets_and_charts(
     ``{"sheet", "slot", "kind": "chart", "left", "top", "width", "height"}``
     (``slot`` is the chart's place in its worksheet's chart list); a chart that
     cannot be boxed — on a chart sheet (``sheet`` None) or with no anchor cell —
-    is listed as ``{"sheet", "kind": "unboxed"}``. A hidden sheet or chart sheet lists
-    none: it is not printed.
+    is listed as ``{"sheet", "kind": "unboxed"}``. A hidden worksheet lists
+    none: it is not printed. A chart sheet always lists its charts, whatever its state.
     ``read_only=True`` is for a grid that is only looked at: it adds what the
     file shows on top of the editable shape — hidden sheets, rows and columns,
     number-format sections, conditional formats, fills, notes and links (see
@@ -762,10 +744,8 @@ def xlsx_sheets_and_charts(
         charts.append({"sheet": None, "kind": "unboxed"})
 
     # A chart sheet has no cells to anchor a chart to: listed, never boxed.
-    hidden_chartsheets = _hidden_chartsheet_titles(data) if workbook.chartsheets else set()
     for chartsheet in workbook.chartsheets:
-        if chartsheet.title not in hidden_chartsheets:
-            charts.extend({"sheet": None, "kind": "unboxed"} for _ in chartsheet._charts)
+        charts.extend({"sheet": None, "kind": "unboxed"} for _ in chartsheet._charts)
 
     if read_only:
         from .xlsx_fidelity import open_first_visible

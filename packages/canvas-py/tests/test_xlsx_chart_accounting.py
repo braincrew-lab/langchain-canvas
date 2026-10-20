@@ -99,12 +99,22 @@ def test_a_placed_chartex_adds_no_unboxed_entry() -> None:
     assert _preview(data, _GalleryHost())["chartPages"] is None
 
 
-def test_a_group_chart_is_counted_once_even_when_it_has_no_box() -> None:
+def test_a_group_chart_is_counted_once_when_it_has_no_box() -> None:
+    absolute = _declared(
+        '<xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="3000000" cy="2000000"/>'
+        f"{_grp('G', _chart_frame())}<xdr:clientData/></xdr:absoluteAnchor>"
+    )
+    data = _with_drawing(_chart_workbook(), _adding(absolute))
+
+    assert _kinds(_entries(data)) == ["chart", "unboxed"]
+
+
+def test_a_placed_group_chart_gets_a_notice_box_and_one_unboxed_entry() -> None:
     data = _with_drawing(
         _chart_workbook(), _adding(_two_cell(_grp("G", _chart_frame()), (0, 40), (4, 46)))
     )
 
-    assert _kinds(_entries(data)).count("unboxed") == 1
+    assert _kinds(_entries(data)) == ["chart", "unsupported", "unboxed"]
 
 
 # --- a drawing the reader stopped reading ------------------------------------------------
@@ -263,22 +273,64 @@ def test_an_unplaced_chartex_on_a_visible_sheet_still_adds_an_unboxed_entry() ->
     assert _kinds(_entries(data)).count("unboxed") == 1
 
 
-def test_a_hidden_chart_sheet_adds_no_unboxed_entry() -> None:
+def _with_chart_sheet(state: str = "visible", sheet_title: str = "Big") -> bytes:
     book = openpyxl.load_workbook(io.BytesIO(_chart_workbook()))
-    sheet = book.create_chartsheet("Big")
+    sheet = book.create_chartsheet(sheet_title)
     sheet.add_chart(_bar_chart(book.worksheets[0]))
-    sheet.sheet_state = "hidden"
-    data = _save(book)
-
-    assert "unboxed" not in _kinds(_entries(data))
-    assert _preview(data, _GalleryHost())["chartPages"] is None
+    sheet.sheet_state = state
+    return _save(book)
 
 
-def test_a_shown_chart_sheet_still_adds_an_unboxed_entry() -> None:
-    book = openpyxl.load_workbook(io.BytesIO(_chart_workbook()))
-    book.create_chartsheet("Big").add_chart(_bar_chart(book.worksheets[0]))
+@pytest.mark.parametrize("state", ["visible", "hidden"])
+def test_a_chart_sheet_adds_its_unboxed_entry_whatever_its_state(state: str) -> None:
+    data = _with_chart_sheet(state)
 
-    assert _kinds(_entries(_save(book))).count("unboxed") == 1
+    assert _kinds(_entries(data)).count("unboxed") == 1
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
+
+
+def _edit_parts(data: bytes, edits) -> bytes:
+    """``data`` with ``edits(name, body) -> [(name, body), ...]`` applied to every part."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            for name, body in edits(item.filename, src.read(item)):
+                dst.writestr(name, body)
+    return out.getvalue()
+
+
+def test_a_chart_sheet_whose_title_a_worksheet_repeats_still_adds_its_entry() -> None:
+    # openpyxl loads the second "Big" as "Big1"; the chart sheet must not be lost with it
+    book = openpyxl.load_workbook(io.BytesIO(_with_chart_sheet()))
+    book.create_sheet("Big2").sheet_state = "hidden"
+
+    def rename(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/workbook.xml":
+            body = body.replace(b'name="Big2"', b'name="Big"')
+        return [(name, body)]
+
+    data = _edit_parts(_save(book), rename)
+
+    assert _kinds(_entries(data)).count("unboxed") == 1
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
+
+
+def test_a_stale_workbook_xml_does_not_hide_a_chart_sheet() -> None:
+    # the real workbook part is xl/actual.xml; xl/workbook.xml is a stale copy that hides it
+    def move(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/workbook.xml":
+            stale = body.replace(b'state="visible"', b'state="hidden"')
+            return [("xl/actual.xml", body), (name, stale)]
+        if name == "xl/_rels/workbook.xml.rels":
+            return [("xl/_rels/actual.xml.rels", body)]
+        if name in ("_rels/.rels", "[Content_Types].xml"):
+            return [(name, body.replace(b"xl/workbook.xml", b"xl/actual.xml"))]
+        return [(name, body)]
+
+    data = _edit_parts(_with_chart_sheet(), move)
+
+    assert _kinds(_entries(data)).count("unboxed") == 1
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
 
 
 def test_an_incomplete_drawing_read_still_adds_its_entry_beside_a_hidden_sheet() -> None:
