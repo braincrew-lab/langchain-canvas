@@ -171,9 +171,9 @@ def test_reads_text_boxes_rounded_rectangles_and_grouped_shapes() -> None:
         (0, "업무흐름", "shape", "TextBox 1", "SHAPE-TEXTBOX 승인 절차 메모", "E2", None),
         (0, "업무흐름", "shape", "TextBox 2", "SHAPE-ROUNDRECT 결재 필요", "E7", None),
         (1, "흐름도", "shape", "TextBox 1", "SHAPE-GROUP-A 접수", "B3", "Group 1"),
-        (1, "흐름도", "shape", "TextBox 2", "SHAPE-GROUP-B 검토", "B3", "Group 1"),
+        (1, "흐름도", "shape", "TextBox 2", "SHAPE-GROUP-B 검토", "B6", "Group 1"),
     ]
-    # a grouped child sits where its group's anchor sits
+    # a grouped child is labelled with its own cell; its anchor is its group's
     group_anchor = {
         "from": {"col": 1, "row": 2, "colOff": 0, "rowOff": 0},
         "to": {"col": 3, "row": 7, "colOff": 209550, "rowOff": 0},
@@ -200,6 +200,92 @@ def test_reports_a_chart_inside_a_group() -> None:
 
     assert [(o["kind"], o["name"], o["group"]) for o in objects] == [
         ("group_chart", "In group", "G")
+    ]
+
+
+def _xfrm(
+    x: int, y: int, cx: int, cy: int, *, group: tuple[int, int, int, int] | None = None
+) -> str:
+    child = "" if group is None else (
+        f'<a:chOff x="{group[0]}" y="{group[1]}"/><a:chExt cx="{group[2]}" cy="{group[3]}"/>'
+    )
+    return f'<a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/>{child}</a:xfrm>'
+
+
+def _placed_sp(name: str, text: str, x: int, y: int, cx: int, cy: int) -> str:
+    return _sp(name, text).replace("<xdr:spPr/>", f"<xdr:spPr>{_xfrm(x, y, cx, cy)}</xdr:spPr>")
+
+
+def _placed_grp(name: str, frame: str, *children: str) -> str:
+    return _grp(name, *children).replace("<xdr:grpSpPr/>", f"<xdr:grpSpPr>{frame}</xdr:grpSpPr>")
+
+
+def _two_cell(body: str, start: tuple[int, int, int, int], end: tuple[int, int, int, int]) -> str:
+    return (
+        f"<xdr:twoCellAnchor><xdr:from>{_marker(*start)}</xdr:from>"
+        f"<xdr:to>{_marker(*end)}</xdr:to>{body}<xdr:clientData/></xdr:twoCellAnchor>"
+    )
+
+
+_COL = 609600  # a default 64 px column
+_ROW = 190500  # a default 15 pt row
+
+
+def test_a_grouped_shape_is_labelled_with_the_cell_it_sits_in() -> None:
+    # an approval box: three 64 px boxes side by side in H1, I1, J1, grouped
+    x0, y0 = 7 * _COL, 0
+    boxes = [_placed_sp(f"B{k}", label, x0 + k * _COL, y0, _COL, 4 * _ROW)
+             for k, label in enumerate(["담당", "팀장", "지점장"])]
+    frame = _xfrm(x0, y0, 3 * _COL, 4 * _ROW, group=(x0, y0, 3 * _COL, 4 * _ROW))
+    data = _package([_wsdr(_two_cell(_placed_grp("결재란", frame, *boxes),
+                                     (7, 0, 0, 0), (10, 4, 0, 0)))])
+
+    objects = read_drawing_objects(data)
+
+    assert [(o["text"], o["cell"]) for o in objects] == [
+        ("담당", "H1"), ("팀장", "I1"), ("지점장", "J1"),
+    ]
+    # the anchor stays the group's: it is where the whole group sits
+    assert {o["anchor"]["from"]["col"] for o in objects} == {7}
+
+
+def test_a_scaled_and_nested_group_maps_child_coordinates_to_cells() -> None:
+    # the outer group is drawn at half its child scale; the inner group sits in its right half
+    inner = _placed_grp(
+        "inner", _xfrm(4000, 0, 4000, 2000, group=(0, 0, 4000, 2000)),
+        _placed_sp("left", "in C3", 0, 0, 2000, 2000),
+        _placed_sp("right", "in D3", 2000, 0, 2000, 2000),
+    )
+    outer = _placed_grp(
+        "outer", _xfrm(0, 0, 4 * _COL, _ROW, group=(0, 0, 8000, 2000)),
+        _placed_sp("first", "in A3", 0, 0, 4000, 2000), inner,
+    )
+    data = _package([_wsdr(_two_cell(outer, (0, 2, 0, 0), (4, 3, 0, 0)))])
+
+    objects = read_drawing_objects(data)
+
+    assert [(o["text"], o["cell"]) for o in objects] == [
+        ("in A3", "A3"), ("in C3", "C3"), ("in D3", "D3"),
+    ]
+
+
+def test_a_grouped_shape_without_coordinates_keeps_the_group_cell() -> None:
+    # no xfrm on the child, a one-cell anchor (no end cell) and a broken number all fall back
+    frame = _xfrm(0, 0, _COL, _ROW, group=(0, 0, _COL, _ROW))
+    plain = _placed_grp("G", frame, _sp("bare", "no xfrm"))
+    one_cell = _one_cell(_placed_grp("G", frame, _placed_sp("s", "one cell", _COL, 0, 9, 9)),
+                         col=2, row=1)
+    broken = _placed_grp("G", frame.replace('cx="609600"', 'cx="x"'),
+                         _placed_sp("s", "broken", _COL, 0, 9, 9))
+    data = _package([_wsdr(
+        _two_cell(plain, (1, 1, 0, 0), (3, 2, 0, 0)), one_cell,
+        _two_cell(broken, (4, 4, 0, 0), (6, 5, 0, 0)),
+    )])
+
+    objects = read_drawing_objects(data)
+
+    assert [(o["text"], o["cell"]) for o in objects] == [
+        ("no xfrm", "B2"), ("one cell", "C2"), ("broken", "E5"),
     ]
 
 

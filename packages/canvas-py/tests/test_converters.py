@@ -109,7 +109,7 @@ def test_xlsx_text_view_appends_shape_text_per_sheet() -> None:
     assert second.endswith(
         "\n\n#### shapes (text in drawing shapes)\n"
         "- B3 TextBox 1: SHAPE-GROUP-A 접수\n"
-        "- B3 TextBox 2: SHAPE-GROUP-B 검토"
+        "- B6 TextBox 2: SHAPE-GROUP-B 검토"
     )
     assert got.metadata["shapes"] == "4"
     assert got.metadata["sheets"] == "업무흐름, 흐름도"

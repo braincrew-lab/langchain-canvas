@@ -84,7 +84,7 @@ class DrawingObject(TypedDict):
     hidden: bool  # cNvPr@hidden in {"1", "true"} on the object or any enclosing group
     group: str | None  # enclosing grpSp name
     anchor: dict[str, Any]  # {"from": {...} | None, "to": {...} | None, "ext": {...} | None}
-    cell: str  # "E2" from anchor["from"]; "" for absoluteAnchor
+    cell: str  # "E2": the cell the object's top-left sits in; "" for absoluteAnchor
 
 
 # --- the package ---------------------------------------------------------------------
@@ -397,6 +397,10 @@ class _Ctx(NamedTuple):
     hidden: bool = False
     in_group: bool = False
     in_choice: bool = False
+    # Inside a group: child coordinates -> EMU from the anchor's top-left, as
+    # (scale_x, scale_y, shift_x, shift_y), and the outermost group's size in EMU.
+    frame: tuple[float, float, float, float] | None = None
+    span: tuple[int, int] | None = None
 
 
 class _Sink:
@@ -575,7 +579,7 @@ def _walk(parent: ElementTree.Element, ctx: _Ctx, sink: _Sink, depth: int) -> No
         elif tag == f"{{{_XDR}}}grpSp":
             name, hidden = _identity(child)
             inner = ctx._replace(group=name, hidden=ctx.hidden or hidden, in_group=True)
-            _walk(child, inner, sink, depth + 1)
+            _walk(child, _enter_group(child, inner), sink, depth + 1)
         elif tag == f"{{{_XDR}}}graphicFrame":
             kind = _frame_kind(child, ctx)
             if kind is not None:
@@ -584,6 +588,95 @@ def _walk(parent: ElementTree.Element, ctx: _Ctx, sink: _Sink, depth: int) -> No
             for branch in child:
                 if branch.tag == f"{{{_MC}}}Choice":  # never mc:Fallback
                     _walk(branch, ctx._replace(in_choice=True), sink, depth + 1)
+
+
+def _xfrm(element: ElementTree.Element) -> dict[str, int] | None:
+    """An object's ``a:xfrm`` numbers (``x y cx cy`` and, on a group, ``chx chy chcx chcy``).
+
+    None when the object has no transform or a number is missing or out of range.
+    """
+    holder = element.find(f"{{{_XDR}}}grpSpPr")
+    if holder is None:
+        holder = element.find(f"{{{_XDR}}}spPr")
+    xfrm = (
+        element.find(f"{{{_XDR}}}xfrm")  # a graphicFrame keeps its own
+        if holder is None
+        else holder.find(f"{{{_A}}}xfrm")
+    )
+    if xfrm is None:
+        return None
+    numbers: dict[str, int] = {}
+    fields = (("off", "", True), ("ext", "", False), ("chOff", "ch", True), ("chExt", "ch", False))
+    try:
+        for tag, prefix, is_offset in fields:
+            part = xfrm.find(f"{{{_A}}}{tag}")
+            if part is None:
+                if prefix:  # only a group has a child space
+                    continue
+                return None
+            keys, low = (("x", "y"), -MAX_EMU) if is_offset else (("cx", "cy"), 0)
+            for key in keys:
+                numbers[prefix + key] = _int_attr(part.get(key), low, MAX_EMU)
+    except ValueError:
+        return None
+    return numbers
+
+
+def _enter_group(group: ElementTree.Element, ctx: _Ctx) -> _Ctx:
+    """``ctx`` for a group's children: where their coordinates land in the anchor.
+
+    A group draws its child space (``chOff``/``chExt``) into its own box (``off``/``ext``);
+    the outermost group's box is the anchor's, so its top-left is the anchor's top-left.
+    A group without usable numbers leaves its children at the group's cell.
+    """
+    numbers = _xfrm(group)
+    if numbers is None or "chcx" not in numbers:
+        return ctx._replace(frame=None, span=None)
+    if ctx.frame is None:
+        if ctx.span is not None:  # an enclosing group had no usable numbers
+            return ctx
+        parent, span = (1.0, 1.0, -numbers["x"], -numbers["y"]), (numbers["cx"], numbers["cy"])
+    else:
+        parent, span = ctx.frame, ctx.span
+    sx = numbers["cx"] / numbers["chcx"] if numbers["chcx"] else 1.0
+    sy = numbers["cy"] / numbers["chcy"] if numbers["chcy"] else 1.0
+    px, py, tx, ty = parent
+    frame = (
+        sx * px,
+        sy * py,
+        (numbers["x"] - numbers["chx"] * sx) * px + tx,
+        (numbers["y"] - numbers["chy"] * sy) * py + ty,
+    )
+    return ctx._replace(frame=frame, span=span)
+
+
+def _spread(start: int, start_off: int, end: int, end_off: int, size: int, at: float) -> int:
+    """The column (or row) ``at`` EMU past the anchor's start falls in.
+
+    Only the anchor's two corners are known, so the columns between them are taken to be
+    of equal width; a box of equal columns (an approval box) is labelled exactly.
+    """
+    if end <= start:
+        return start
+    width = (size + start_off - end_off) / (end - start)
+    if width <= 0:
+        return start
+    return min(end, start + int((start_off + min(max(at, 0.0), size)) // width))
+
+
+def _member_cell(element: ElementTree.Element, ctx: _Ctx) -> str:
+    """The cell a grouped object's top-left sits in, else its group's cell."""
+    anchor = ctx.anchor or {}
+    start, end = anchor.get("from"), anchor.get("to")
+    numbers = _xfrm(element)
+    if ctx.frame is None or ctx.span is None or start is None or end is None or numbers is None:
+        return ctx.cell
+    sx, sy, tx, ty = ctx.frame
+    column = _spread(start["col"], start["colOff"], end["col"], end["colOff"], ctx.span[0],
+                     numbers["x"] * sx + tx)
+    row = _spread(start["row"], start["rowOff"], end["row"], end["rowOff"], ctx.span[1],
+                  numbers["y"] * sy + ty)
+    return _cell_label({"col": column, "row": row})
 
 
 def _identity(element: ElementTree.Element) -> tuple[str, bool]:
@@ -650,7 +743,7 @@ def _add(
         "hidden": ctx.hidden or hidden,
         "group": ctx.group,
         "anchor": ctx.anchor or {"from": None, "to": None, "ext": None},
-        "cell": ctx.cell,
+        "cell": _member_cell(element, ctx) if ctx.in_group else ctx.cell,
     })
 
 
