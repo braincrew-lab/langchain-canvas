@@ -445,18 +445,19 @@ def _sheet_chart_boxes(
 
 
 _UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
+#: The drawing relationship type, matched whole as openpyxl matches it when it reads a
+#: worksheet's drawings: a relationship of any other type gives openpyxl no charts.
+_DRAWING_RELATIONSHIP = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+)
 
 
 def _drawing_targets(worksheet: Any) -> list[str]:
-    """The drawing parts openpyxl resolved for a worksheet it loaded, in its own order.
+    """The drawing parts openpyxl read for a worksheet it loaded, in its own order.
 
     Raises :class:`AttributeError` when this openpyxl keeps no relationships on the sheet.
     """
-    return [
-        rel.target
-        for rel in worksheet._rels
-        if (rel.Type or "").rsplit("/", 1)[-1] == "drawing" and rel.target
-    ]
+    return [rel.target for rel in worksheet._rels.find(_DRAWING_RELATIONSHIP) if rel.target]
 
 
 def _unsupported_chart_objects(

@@ -520,3 +520,28 @@ def test_an_openpyxl_without_worksheet_relationships_lists_the_chart_pages(monke
 
     assert _kinds(_entries(data)) == ["chart", "unboxed"]
     assert _preview(data, _GalleryHost())["chartPages"] == [2]
+
+
+def test_a_drawing_relationship_openpyxl_does_not_read_adds_no_notice() -> None:
+    # openpyxl matches the drawing relationship type whole, so a strict-namespace one on A
+    # gives A none of B's charts; the notice must not follow it onto A either
+    data = _chart_on_second_sheet_with_chartex()
+    drawing = _drawing_part_of(data, 2)
+    relationship = (
+        f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rIdS" '
+        'Type="http://purl.oclc.org/ooxml/officeDocument/relationships/drawing" '
+        f'Target="{drawing}" TargetMode="External"/></Relationships>'
+    )
+
+    def link(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/worksheets/sheet1.xml":
+            return [(name, body), ("xl/worksheets/_rels/sheet1.xml.rels", relationship.encode())]
+        return [(name, body)]
+
+    data = _edit_parts(data, link)
+    book = openpyxl.load_workbook(io.BytesIO(data))
+    assert [len(sheet._charts) for sheet in book.worksheets] == [0, 1]
+
+    assert _located(data) == [(1, "chart"), (1, "unsupported")]
+    assert _preview(data, _GalleryHost())["chartPages"] is None
