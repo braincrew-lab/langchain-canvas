@@ -15,9 +15,17 @@ import zipfile
 import openpyxl
 import pytest
 from openpyxl.drawing.image import Image
-from test_xlsx_drawings import _chart_frame, _grp, _sp
+from test_xlsx_drawings import _MAIN, _R, _chart_frame, _grp, _sp
 from test_xlsx_drawings_caps import _pic
-from test_xlsx_gallery import _bar_chart, _chart_workbook, _GalleryHost, _png, _preview, _save
+from test_xlsx_gallery import (
+    _bar_chart,
+    _chart_workbook,
+    _fill,
+    _GalleryHost,
+    _png,
+    _preview,
+    _save,
+)
 from test_xlsx_placeholders import (
     _adding,
     _chartex_frame,
@@ -236,7 +244,7 @@ def test_a_picture_only_anchor_after_the_exact_cap_keeps_the_chart_pages_unliste
     assert preview["chartPages"] is None
 
 
-# --- a hidden sheet is not printed -------------------------------------------------------
+# --- hidden sheets and chart sheets ------------------------------------------------------
 
 
 def _with_hidden_sheet(state: str, *anchors: str) -> bytes:
@@ -250,21 +258,17 @@ def _with_hidden_sheet(state: str, *anchors: str) -> bytes:
 
 
 @pytest.mark.parametrize("state", ["hidden", "veryHidden"])
-def test_an_unplaced_chartex_on_a_hidden_sheet_adds_no_unboxed_entry(state: str) -> None:
-    data = _with_hidden_sheet(state, _absolute_chartex())
+@pytest.mark.parametrize(
+    "anchor",
+    [_absolute_chartex(), _two_cell(_grp("G", _chart_frame()), (0, 40), (4, 46))],
+    ids=["unplaced chartex", "group chart"],
+)
+def test_a_chart_on_a_hidden_sheet_still_adds_its_unboxed_entry(state: str, anchor: str) -> None:
+    # listing the pages for a hidden chart is the safe side; dropping a visible one is not
+    data = _with_hidden_sheet(state, anchor)
 
-    preview = _preview(data, _GalleryHost())
-
-    assert _image_ids(preview) == ["chart_0"]
-    assert preview["chartPages"] is None
-
-
-@pytest.mark.parametrize("state", ["hidden", "veryHidden"])
-def test_a_group_chart_on_a_hidden_sheet_adds_no_unboxed_entry(state: str) -> None:
-    data = _with_hidden_sheet(state, _two_cell(_grp("G", _chart_frame()), (0, 40), (4, 46)))
-
-    assert "unboxed" not in _kinds(_entries(data))
-    assert _preview(data, _GalleryHost())["chartPages"] is None
+    assert _kinds(_entries(data)).count("unboxed") == 1
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
 
 
 def test_an_unplaced_chartex_on_a_visible_sheet_still_adds_an_unboxed_entry() -> None:
@@ -337,3 +341,79 @@ def test_an_incomplete_drawing_read_still_adds_its_entry_beside_a_hidden_sheet()
     data = _with_hidden_sheet("hidden", *_shapes(MAX_OBJECTS + 1, ""))
 
     assert _kinds(_entries(data)) == ["chart", "unboxed"]
+
+
+# --- the reader and openpyxl number the sheets alike -------------------------------------
+
+
+def _located(data: bytes) -> list[tuple[int | None, str]]:
+    return [(entry["sheet"], entry["kind"]) for entry in _entries(data)]
+
+
+def _with_dialog_sheet_first(data: bytes) -> bytes:
+    """``data`` with a hidden dialog sheet ahead of its sheets; openpyxl reads it as a worksheet."""
+
+    def insert(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/workbook.xml":
+            entry = f'<sheet xmlns:r="{_R}" name="Dlg" sheetId="9" state="hidden" r:id="rId90"/>'
+            return [(name, body.replace(b"<sheets>", b"<sheets>" + entry.encode()))]
+        if name == "xl/_rels/workbook.xml.rels":
+            rel = (
+                f'<Relationship Type="{_R}/dialogsheet" '
+                'Target="/xl/dialogsheets/sheet1.xml" Id="rId90"/>'
+            )
+            return [(name, body.replace(b"</Relationships>", rel.encode() + b"</Relationships>"))]
+        if name == "[Content_Types].xml":
+            override = (
+                '<Override PartName="/xl/dialogsheets/sheet1.xml" ContentType='
+                '"application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml"/>'
+            )
+            return [
+                (name, body.replace(b"</Types>", override.encode() + b"</Types>")),
+                ("xl/dialogsheets/sheet1.xml", f'<dialogsheet xmlns="{_MAIN}"/>'.encode()),
+            ]
+        return [(name, body)]
+
+    return _edit_parts(data, insert)
+
+
+def test_a_dialog_sheet_ahead_of_a_worksheet_does_not_shift_its_charts() -> None:
+    group = _two_cell(_grp("G", _chart_frame()), (0, 40), (4, 46))
+    data = _with_dialog_sheet_first(_with_drawing(_chart_workbook(), _adding(group)))
+    assert [sheet.title for sheet in openpyxl.load_workbook(io.BytesIO(data)).worksheets] == [
+        "Dlg",
+        "피벗",
+    ]
+
+    assert _located(data) == [(1, "chart"), (1, "unsupported"), (1, "unboxed")]
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
+
+
+def _chart_on_second_sheet_with_chartex() -> bytes:
+    book = openpyxl.Workbook()
+    book.active.title = "A"
+    second = book.create_sheet("B")
+    _fill(second)
+    second.add_chart(_bar_chart(second), "A15")
+    data = _save(book)
+    notice = _two_cell(_chartex_frame(), (0, 40), (4, 46))
+    return _with_part(data, _drawing_part_of(data, 2), _adding(notice))
+
+
+def test_the_workbook_part_the_content_types_name_decides_the_sheet_numbers() -> None:
+    # the real workbook part is xl/actual.xml; a stale xl/workbook.xml lists B before A
+    def move(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/workbook.xml":
+            entries = re.findall(rb"<sheet [^>]*/>", body)
+            stale = body.replace(b"".join(entries), b"".join(reversed(entries)))
+            return [("xl/actual.xml", body), (name, stale)]
+        if name == "xl/_rels/workbook.xml.rels":
+            return [("xl/_rels/actual.xml.rels", body), (name, body)]
+        if name in ("_rels/.rels", "[Content_Types].xml"):
+            return [(name, body.replace(b"xl/workbook.xml", b"xl/actual.xml"))]
+        return [(name, body)]
+
+    data = _edit_parts(_chart_on_second_sheet_with_chartex(), move)
+
+    assert _located(data) == [(1, "chart"), (1, "unsupported")]
+    assert _preview(data, _GalleryHost())["chartPages"] is None

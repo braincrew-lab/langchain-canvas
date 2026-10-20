@@ -445,7 +445,6 @@ def _sheet_chart_boxes(
 
 
 _UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
-_HIDDEN_STATES = ("hidden", "veryHidden")
 
 
 def _unsupported_chart_objects(data: bytes) -> tuple[dict[int, list[Any]], bool]:
@@ -585,8 +584,7 @@ def xlsx_sheets_and_charts(
     ``{"sheet", "slot", "kind": "chart", "left", "top", "width", "height"}``
     (``slot`` is the chart's place in its worksheet's chart list); a chart that
     cannot be boxed — on a chart sheet (``sheet`` None) or with no anchor cell —
-    is listed as ``{"sheet", "kind": "unboxed"}``. A hidden worksheet lists
-    none: it is not printed. A chart sheet always lists its charts, whatever its state.
+    is listed as ``{"sheet", "kind": "unboxed"}``.
     ``read_only=True`` is for a grid that is only looked at: it adds what the
     file shows on top of the editable shape — hidden sheets, rows and columns,
     number-format sections, conditional formats, fills, notes and links (see
@@ -730,13 +728,12 @@ def xlsx_sheets_and_charts(
         unreadable = unsupported.get(index, [])
         notices, unplaced = _unsupported_chart_boxes(unreadable, chart_geometry, budget)
         charts.extend({"sheet": index, **box} for box in notices)
-        if worksheet.sheet_state not in _HIDDEN_STATES:  # a hidden sheet is not printed
-            charts.extend({"sheet": index, "kind": "unboxed"} for _ in range(unboxed + unplaced))
-            # openpyxl cannot read a chart inside a group or an mc:Choice, so the page that
-            # draws it stays listed; a chartex frame is listed only when its notice has no box
-            charts.extend(
-                {"sheet": index, "kind": "unboxed"} for o in unreadable if o["kind"] != "chartex"
-            )
+        charts.extend({"sheet": index, "kind": "unboxed"} for _ in range(unboxed + unplaced))
+        # openpyxl cannot read a chart inside a group or an mc:Choice, so the page that
+        # draws it stays listed; a chartex frame is listed only when its notice has no box
+        charts.extend(
+            {"sheet": index, "kind": "unboxed"} for o in unreadable if o["kind"] != "chartex"
+        )
 
     # A drawing read that a limit cut short may have hidden charts from us: the pages
     # that carry charts stay listed.

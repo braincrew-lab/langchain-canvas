@@ -63,12 +63,20 @@ _NOT_READ = frozenset({_FALLBACK})  # never read: Excel draws the Choice
 _CHOICE = frozenset({f"{{{_MC}}}Choice"})
 _DOCTYPE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 _WORKBOOK_PART = "xl/workbook.xml"
+_CONTENT_TYPES_PART = "[Content_Types].xml"
+_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
+_WORKBOOK_TYPES = (  # openpyxl's order of preference
+    "application/vnd.ms-excel.template.macroEnabled.main+xml",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+    "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+)
 
 
 class DrawingObject(TypedDict):
     """One drawing object: where it sits and what it says."""
 
-    sheet: int  # openpyxl worksheet index (chartsheets skipped)
+    sheet: int  # openpyxl worksheet index (chartsheets skipped, dialog sheets counted)
     sheet_name: str
     kind: Literal["shape", "connector", "chartex", "group_chart", "choice_chart"]
     name: str  # cNvPr@name
@@ -194,6 +202,7 @@ class _Relationship(NamedTuple):
     id: str
     kind: str  # last path segment of the relationship Type, e.g. "drawing"
     part: str
+    type: str = ""  # the whole relationship Type
 
 
 def _relationships(
@@ -213,22 +222,51 @@ def _relationships(
             continue
         part = resolve_part_target(source_part, element.get("Target") or "", members)
         if part is not None:
-            kind = (element.get("Type") or "").rsplit("/", 1)[-1]
-            found.append(_Relationship(element.get("Id") or "", kind, part))
+            rel_type = element.get("Type") or ""
+            kind = rel_type.rsplit("/", 1)[-1]
+            found.append(_Relationship(element.get("Id") or "", kind, part, rel_type))
     return found
 
 
+def _workbook_part(archive: zipfile.ZipFile, members: set[str]) -> str:
+    """The workbook part, found the way openpyxl finds it.
+
+    It is the ``[Content_Types].xml`` override whose type is one of the four workbook
+    types (template macro, template, macro, plain: the first that is present wins), else
+    ``xl/workbook.xml``, which is also the answer when the types part cannot be read.
+    """
+    text = _part_text(archive, _CONTENT_TYPES_PART) if _CONTENT_TYPES_PART in members else None
+    if text is None:
+        return _WORKBOOK_PART
+    wanted = frozenset({f"{{{_CT}}}Override", "Override"})
+    parts: dict[str, str] = {}
+    for element, _ in _finished(text, wanted):
+        content_type = element.get("ContentType") or ""
+        if content_type in _WORKBOOK_TYPES:
+            parts.setdefault(content_type, element.get("PartName") or "")
+    for content_type in _WORKBOOK_TYPES:
+        if content_type in parts:
+            return parts[content_type].removeprefix("/")
+    return _WORKBOOK_PART
+
+
 def _worksheets(archive: zipfile.ZipFile, members: set[str]) -> list[tuple[str, str]]:
-    """``(sheet name, worksheet part)`` in workbook order; chartsheets are left out."""
-    if _WORKBOOK_PART not in members:
+    """``(sheet name, sheet part)`` in the order openpyxl numbers its worksheets.
+
+    Like openpyxl, a sheet without ``r:id`` or whose part is not in the archive is
+    skipped, and a chartsheet takes no number. A dialog sheet or a macro sheet is a
+    worksheet to openpyxl, so it takes one.
+    """
+    workbook = _workbook_part(archive, members)
+    if workbook not in members:
         return []
-    text = _part_text(archive, _WORKBOOK_PART)
+    text = _part_text(archive, workbook)
     if text is None:
         return []
     part_by_id = {
         rel.id: rel.part
-        for rel in _relationships(archive, _WORKBOOK_PART, members)
-        if rel.kind == "worksheet"
+        for rel in _relationships(archive, workbook, members)
+        if "chartsheet" not in rel.type
     }
     sheets: list[tuple[str, str]] = []
     for element, _ in _finished(text, frozenset({f"{{{_MAIN}}}sheet"})):
