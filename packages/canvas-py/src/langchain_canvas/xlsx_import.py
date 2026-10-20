@@ -447,18 +447,39 @@ def _sheet_chart_boxes(
 _UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
 
 
-def _unsupported_chart_objects(data: bytes) -> tuple[dict[int, list[Any]], bool]:
+def _drawing_targets(worksheet: Any) -> list[str]:
+    """The drawing parts openpyxl resolved for a worksheet it loaded, in its own order.
+
+    Raises :class:`AttributeError` when this openpyxl keeps no relationships on the sheet.
+    """
+    return [
+        rel.target
+        for rel in worksheet._rels
+        if (rel.Type or "").rsplit("/", 1)[-1] == "drawing" and rel.target
+    ]
+
+
+def _unsupported_chart_objects(
+    data: bytes, worksheets: list[Any]
+) -> tuple[dict[int, list[Any]], bool]:
     """Charts openpyxl cannot read, by worksheet: Excel 2016+ charts and charts inside a
     group or an ``mc:Choice``. A hidden one, or one in a hidden group, is left out. A
     drawing that cannot be read gives none: the grid does not depend on it.
 
-    The flag is False when the reader stopped at one of its limits: charts after the
-    cut are unknown, so the workbook may hold more than were found.
+    The drawings read are the ones openpyxl resolved for each of ``worksheets`` (the
+    worksheets it loaded), so a chart lands on openpyxl's own worksheet number however
+    the package is put together. The flag is False when the reader stopped at one of its
+    limits, or when openpyxl kept no relationships to find the drawings by: charts may
+    then be unknown, so the workbook may hold more than were found.
     """
-    from .xlsx_drawings import read_drawing_objects_checked
+    from .xlsx_drawings import read_sheet_drawings_checked
 
     try:
-        objects, complete = read_drawing_objects_checked(data)
+        sheets = [(worksheet.title, _drawing_targets(worksheet)) for worksheet in worksheets]
+    except AttributeError:
+        return {}, False
+    try:
+        objects, complete = read_sheet_drawings_checked(data, sheets)
     except Exception:  # noqa: BLE001 — placeholders are a bonus on the grid
         return {}, True
     found: dict[int, list[Any]] = {}
@@ -610,7 +631,9 @@ def xlsx_sheets_and_charts(
     charts: list[dict[str, Any]] = []
     # Only the read-only preview needs the cap; the editable import keeps every picture.
     budget = _AnchorBudget(_MAX_BOXED_ANCHORS if read_only else math.inf)
-    unsupported, drawings_complete = _unsupported_chart_objects(data) if read_only else ({}, True)
+    unsupported, drawings_complete = (
+        _unsupported_chart_objects(data, workbook.worksheets) if read_only else ({}, True)
+    )
     for index, worksheet in enumerate(workbook.worksheets):
         cached = values.worksheets[index]
         height, width = worksheet.max_row, worksheet.max_column

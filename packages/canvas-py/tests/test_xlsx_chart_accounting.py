@@ -417,3 +417,106 @@ def test_the_workbook_part_the_content_types_name_decides_the_sheet_numbers() ->
 
     assert _located(data) == [(1, "chart"), (1, "unsupported")]
     assert _preview(data, _GalleryHost())["chartPages"] is None
+
+
+# --- the notices land on the worksheet openpyxl loaded, however the package is made ------
+
+_WORKSHEET_TYPE = f"{_R}/worksheet"
+_GHOST_PART = "xl/worksheets/ghost.xml"
+
+
+def _with_ghost_ahead(data: bytes, sheet_entry: str, relationships: str) -> bytes:
+    """``data`` with ``sheet_entry`` ahead of its sheets, ``relationships`` added to the
+    workbook's, and an empty worksheet part ``xl/worksheets/ghost.xml``."""
+
+    def insert(name: str, body: bytes) -> list[tuple[str, bytes]]:
+        if name == "xl/workbook.xml":
+            return [(name, body.replace(b"<sheets>", b"<sheets>" + sheet_entry.encode()))]
+        if name == "xl/_rels/workbook.xml.rels":
+            closing = b"</Relationships>"
+            return [(name, body.replace(closing, relationships.encode() + closing))]
+        if name == "[Content_Types].xml":
+            override = (
+                f'<Override PartName="/{_GHOST_PART}" ContentType='
+                '"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            )
+            return [
+                (name, body.replace(b"</Types>", override.encode() + b"</Types>")),
+                (_GHOST_PART, f'<worksheet xmlns="{_MAIN}"><sheetData/></worksheet>'.encode()),
+            ]
+        return [(name, body)]
+
+    return _edit_parts(data, insert)
+
+
+def _ghost_entry(rel_id: str | None) -> str:
+    attribute = "" if rel_id is None else f' r:id="{rel_id}"'
+    return f'<sheet xmlns:r="{_R}" name="Ghost" sheetId="90"{attribute}/>'
+
+
+def _relationship(rel_id: str, target: str, mode: str = "") -> str:
+    target_mode = f' TargetMode="{mode}"' if mode else ""
+    return f'<Relationship Id="{rel_id}" Type="{_WORKSHEET_TYPE}" Target="{target}"{target_mode}/>'
+
+
+_GHOSTS = {
+    # openpyxl keys the relationships by id, so the second (missing) target wins
+    "a repeated id whose last target is missing": (
+        _ghost_entry("rIdG"),
+        _relationship("rIdG", "worksheets/ghost.xml")
+        + _relationship("rIdG", "worksheets/missing.xml"),
+        ["피벗"],
+    ),
+    # openpyxl drops the leading slash of an absolute target and nothing else
+    "an absolute target with a dot segment": (
+        _ghost_entry("rIdG"),
+        _relationship("rIdG", "/xl/./worksheets/ghost.xml"),
+        ["피벗"],
+    ),
+    # openpyxl skips a sheet entry without r:id, whatever an empty id points at
+    "a sheet without r:id beside an empty relationship id": (
+        _ghost_entry(None),
+        _relationship("", "worksheets/ghost.xml"),
+        ["피벗"],
+    ),
+    # openpyxl keeps an external target as written and reads it when the archive holds it
+    "an external target naming a worksheet part": (
+        _ghost_entry("rIdG"),
+        _relationship("rIdG", _GHOST_PART, "External"),
+        ["Ghost", "피벗"],
+    ),
+}
+
+
+@pytest.mark.filterwarnings("ignore:File contains an invalid specification")
+@pytest.mark.parametrize("case", list(_GHOSTS), ids=list(_GHOSTS))
+def test_the_notices_land_on_the_worksheet_openpyxl_loaded(case: str) -> None:
+    sheet_entry, relationships, titles = _GHOSTS[case]
+    group = _two_cell(_grp("G", _chart_frame()), (0, 40), (4, 46))
+    chartex = _two_cell(_chartex_frame(), (6, 40), (10, 46))
+    base = _with_drawing(_chart_workbook(), _adding(group, chartex))
+    data = _with_ghost_ahead(base, sheet_entry, relationships)
+    loaded = [sheet.title for sheet in openpyxl.load_workbook(io.BytesIO(data)).worksheets]
+    assert loaded == titles
+    index = titles.index("피벗")
+
+    assert _located(data) == [
+        (index, "chart"),
+        (index, "unsupported"),
+        (index, "unsupported"),
+        (index, "unboxed"),
+    ]
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]
+
+
+def test_an_openpyxl_without_worksheet_relationships_lists_the_chart_pages(monkeypatch) -> None:
+    from langchain_canvas import xlsx_import
+
+    def _none(worksheet):
+        raise AttributeError("_rels")
+
+    monkeypatch.setattr(xlsx_import, "_drawing_targets", _none)
+    data = _with_drawing(_chart_workbook(), _adding(_two_cell(_chartex_frame(), (0, 40), (4, 46))))
+
+    assert _kinds(_entries(data)) == ["chart", "unboxed"]
+    assert _preview(data, _GalleryHost())["chartPages"] == [2]

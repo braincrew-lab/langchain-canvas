@@ -236,8 +236,8 @@ def test_a_broken_drawing_object_is_skipped_not_fatal(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        xlsx_drawings, "read_drawing_objects_checked",
-        lambda source, **kwargs: ([_object("broken", "x"), _object("fine", 2)], True),
+        xlsx_drawings, "read_sheet_drawings_checked",
+        lambda source, sheets, **kwargs: ([_object("broken", "x"), _object("fine", 2)], True),
     )
 
     entries = _entries(_chart_workbook())

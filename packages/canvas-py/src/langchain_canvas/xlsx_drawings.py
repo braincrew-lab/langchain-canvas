@@ -22,7 +22,7 @@ import posixpath
 import re
 import stat
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, BinaryIO, Literal, NamedTuple, TypedDict, cast
 from xml.etree import ElementTree
 
@@ -76,7 +76,7 @@ _WORKBOOK_TYPES = (  # openpyxl's order of preference
 class DrawingObject(TypedDict):
     """One drawing object: where it sits and what it says."""
 
-    sheet: int  # openpyxl worksheet index (chartsheets skipped, dialog sheets counted)
+    sheet: int  # the sheet's place in the reader's sheet list (see the read functions)
     sheet_name: str
     kind: Literal["shape", "connector", "chartex", "group_chart", "choice_chart"]
     name: str  # cNvPr@name
@@ -251,11 +251,15 @@ def _workbook_part(archive: zipfile.ZipFile, members: set[str]) -> str:
 
 
 def _worksheets(archive: zipfile.ZipFile, members: set[str]) -> list[tuple[str, str]]:
-    """``(sheet name, sheet part)`` in the order openpyxl numbers its worksheets.
+    """``(sheet name, sheet part)`` in the order openpyxl numbers the worksheets of a
+    package laid out the usual way.
 
     Like openpyxl, a sheet without ``r:id`` or whose part is not in the archive is
     skipped, and a chartsheet takes no number. A dialog sheet or a macro sheet is a
-    worksheet to openpyxl, so it takes one.
+    worksheet to openpyxl, so it takes one. A hand-made package can still be numbered
+    differently (openpyxl does not normalise an absolute target, for one); a caller that
+    needs openpyxl's own numbers passes the drawings openpyxl found to
+    :func:`read_sheet_drawings_checked`.
     """
     workbook = _workbook_part(archive, members)
     if workbook not in members:
@@ -319,7 +323,50 @@ def read_drawing_objects_checked(
     of a drawing, of a worksheet or of the whole read, or a part skipped because the
     byte budget was spent. Objects after the cut are missing from the list, so a caller
     that must know every object of a kind was seen (every chart, say) cannot rely on it.
+    An object's ``sheet`` is its worksheet's place in the order :func:`_worksheets` gives.
     """
+
+    def sheets(archive: zipfile.ZipFile, members: set[str], parts: _Parts) -> _SheetObjects:
+        for sheet_name, part in _worksheets(archive, members):
+            yield sheet_name, parts.sheet_objects(part)
+
+    return _collect(source, path, sheets)
+
+
+def read_sheet_drawings_checked(
+    source: bytes | str | os.PathLike[str] | BinaryIO,
+    sheets: Sequence[tuple[str, Sequence[str]]],
+    *,
+    path: str = "workbook.xlsx",
+) -> tuple[list[DrawingObject], bool]:
+    """The objects of the drawings each sheet shows, as the caller found them.
+
+    ``sheets`` holds, in the caller's sheet order, each sheet's name and the package
+    members of its drawings. An object's ``sheet`` is its sheet's place in that list, so
+    a caller that lists what openpyxl resolved for each worksheet it loaded gets
+    openpyxl's numbers however the package is put together. The limits and the flag are
+    those of :func:`read_drawing_objects_checked`; a listed part the archive does not
+    hold also leaves the read incomplete.
+    """
+
+    def listed(_archive: zipfile.ZipFile, members: set[str], parts: _Parts) -> _SheetObjects:
+        for sheet_name, drawing_parts in sheets:
+            present = [part for part in drawing_parts if part in members]
+            parts.incomplete |= len(present) < len(drawing_parts)
+            yield sheet_name, parts.drawing_objects(present)
+
+    return _collect(source, path, listed)
+
+
+_SheetObjects = Iterator[tuple[str, list[DrawingObject]]]
+
+
+def _collect(
+    source: bytes | str | os.PathLike[str] | BinaryIO,
+    path: str,
+    sheets: Callable[[zipfile.ZipFile, set[str], _Parts], _SheetObjects],
+) -> tuple[list[DrawingObject], bool]:
+    """The objects ``sheets`` yields, sheet by sheet within the caps, and whether all were read."""
     archive = _open(source, path)
     if archive is None:
         return [], True
@@ -330,9 +377,8 @@ def read_drawing_objects_checked(
         members = {info.orig_filename for info in infos}
         sink = _Sink()
         parts = _Parts(archive, members)
-        sheets = _worksheets(archive, members)
-        for index, (sheet_name, part) in enumerate(sheets):
-            for obj in parts.sheet_objects(part):
+        for index, (sheet_name, objects) in enumerate(sheets(archive, members, parts)):
+            for obj in objects:
                 if sink.full:
                     return sink.objects, False
                 sink.add({**obj, "sheet": index, "sheet_name": sheet_name})
@@ -401,17 +447,20 @@ class _Parts:
     def sheet_objects(self, sheet_part: str) -> list[DrawingObject]:
         """The objects of every drawing a worksheet part points at, at most :data:`MAX_OBJECTS`."""
         if sheet_part not in self._sheets:
-            found: list[DrawingObject] = []
-            drawing_parts = self._drawing_parts(sheet_part)
-            for part in drawing_parts:
-                objects = self._drawing(part)
-                if len(found) >= MAX_OBJECTS:  # full: only one more object is a loss
-                    self.incomplete |= bool(objects)
-                    continue
-                found.extend(objects)
-                self.incomplete |= len(found) > MAX_OBJECTS
-            self._sheets[sheet_part] = found[:MAX_OBJECTS]
+            self._sheets[sheet_part] = self.drawing_objects(self._drawing_parts(sheet_part))
         return self._sheets[sheet_part]
+
+    def drawing_objects(self, drawing_parts: list[str]) -> list[DrawingObject]:
+        """The objects of these drawing parts in order, at most :data:`MAX_OBJECTS`."""
+        found: list[DrawingObject] = []
+        for part in drawing_parts:
+            objects = self._drawing(part)
+            if len(found) >= MAX_OBJECTS:  # full: only one more object is a loss
+                self.incomplete |= bool(objects)
+                continue
+            found.extend(objects)
+            self.incomplete |= len(found) > MAX_OBJECTS
+        return found[:MAX_OBJECTS]
 
     def _drawing_parts(self, sheet_part: str) -> list[str]:
         directory, base = posixpath.split(sheet_part)

@@ -1,9 +1,10 @@
-"""The drawing reader numbers sheets the way openpyxl does.
+"""How the drawing reader numbers sheets.
 
-A caller joins the reader's ``sheet`` index to ``workbook.worksheets``, so both must skip
-and count the same sheets: a dialog sheet is a worksheet to openpyxl, a chart sheet and a
-sheet with no usable part are not, and the workbook part is the one ``[Content_Types].xml``
-names.
+``read_drawing_objects`` numbers the worksheets of a package laid out the usual way as
+openpyxl does: a dialog sheet is a worksheet to openpyxl, a chart sheet and a sheet with no
+usable part are not, and the workbook part is the one ``[Content_Types].xml`` names.
+``read_sheet_drawings_checked`` reads the drawings a caller lists and numbers each sheet by
+its place in that list, so a caller that lists openpyxl's own drawings gets its numbers.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import zipfile
 import pytest
 from test_xlsx_drawings import _MAIN, _PKG, _R, _one_cell, _sp, _wsdr
 
-from langchain_canvas.xlsx_drawings import read_drawing_objects
+from langchain_canvas.xlsx_drawings import read_drawing_objects, read_sheet_drawings_checked
 
 _CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 _SHEET_MAIN = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
@@ -175,3 +176,48 @@ def test_unreadable_content_types_fall_back_to_the_default_part() -> None:
     parts["[Content_Types].xml"] = "<!DOCTYPE t []><Types/>"
 
     assert _located(_zip(parts)) == [(0, "B")]
+
+
+# --- drawings the caller lists -----------------------------------------------------------
+
+
+def _two_drawings() -> bytes:
+    return _zip(
+        _parts(
+            [("First", "worksheet", _shape("A"), True), ("Second", "worksheet", _shape("B"), True)]
+        )
+    )
+
+
+def test_listed_drawings_are_numbered_by_the_callers_list() -> None:
+    sheets = [("Second", ["xl/drawings/drawing2.xml"]), ("First", ["xl/drawings/drawing1.xml"])]
+
+    objects, complete = read_sheet_drawings_checked(_two_drawings(), sheets)
+
+    assert [(o["sheet"], o["sheet_name"], o["name"]) for o in objects] == [
+        (0, "Second", "B"),
+        (1, "First", "A"),
+    ]
+    assert complete
+
+
+def test_a_listed_part_the_archive_lacks_leaves_the_read_incomplete() -> None:
+    sheets = [("First", ["xl/drawings/drawing1.xml", "xl/drawings/drawing9.xml"])]
+
+    objects, complete = read_sheet_drawings_checked(_two_drawings(), sheets)
+
+    assert [o["name"] for o in objects] == ["A"]
+    assert not complete
+
+
+def test_a_listed_drawing_outside_the_drawings_folder_is_read() -> None:
+    # openpyxl reads whatever part a drawing relationship names, so the reader does too
+    parts = _parts([("Data", "worksheet", None, True)])
+    parts["xl/elsewhere/drawing.xml"] = _shape("Odd")
+
+    objects, complete = read_sheet_drawings_checked(
+        _zip(parts), [("Data", ["xl/elsewhere/drawing.xml"])]
+    )
+
+    assert [(o["sheet"], o["name"]) for o in objects] == [(0, "Odd")]
+    assert complete
