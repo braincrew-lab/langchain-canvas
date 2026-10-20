@@ -269,6 +269,19 @@ def test_a_scaled_and_nested_group_maps_child_coordinates_to_cells() -> None:
     ]
 
 
+def test_a_nested_group_under_a_group_without_coordinates_keeps_the_group_cell() -> None:
+    # the outer group has no xfrm, so the inner group's numbers cannot be placed in the anchor
+    inner = _placed_grp(
+        "inner", _xfrm(5 * _COL, 0, _COL, _ROW, group=(0, 0, _COL, _ROW)),
+        _placed_sp("s", "inside", 0, 0, _COL, _ROW),
+    )
+    data = _package([_wsdr(_two_cell(_grp("outer", inner), (1, 1, 0, 0), (8, 2, 0, 0)))])
+
+    objects = read_drawing_objects(data)
+
+    assert [(o["text"], o["cell"]) for o in objects] == [("inside", "B2")]
+
+
 def test_a_grouped_shape_without_coordinates_keeps_the_group_cell() -> None:
     # no xfrm on the child, a one-cell anchor (no end cell) and a broken number all fall back
     frame = _xfrm(0, 0, _COL, _ROW, group=(0, 0, _COL, _ROW))

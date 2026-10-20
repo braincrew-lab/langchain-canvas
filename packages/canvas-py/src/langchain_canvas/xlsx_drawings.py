@@ -579,7 +579,7 @@ def _walk(parent: ElementTree.Element, ctx: _Ctx, sink: _Sink, depth: int) -> No
         elif tag == f"{{{_XDR}}}grpSp":
             name, hidden = _identity(child)
             inner = ctx._replace(group=name, hidden=ctx.hidden or hidden, in_group=True)
-            _walk(child, _enter_group(child, inner), sink, depth + 1)
+            _walk(child, _enter_group(child, inner, nested=ctx.in_group), sink, depth + 1)
         elif tag == f"{{{_XDR}}}graphicFrame":
             kind = _frame_kind(child, ctx)
             if kind is not None:
@@ -622,7 +622,7 @@ def _xfrm(element: ElementTree.Element) -> dict[str, int] | None:
     return numbers
 
 
-def _enter_group(group: ElementTree.Element, ctx: _Ctx) -> _Ctx:
+def _enter_group(group: ElementTree.Element, ctx: _Ctx, *, nested: bool) -> _Ctx:
     """``ctx`` for a group's children: where their coordinates land in the anchor.
 
     A group draws its child space (``chOff``/``chExt``) into its own box (``off``/``ext``);
@@ -630,12 +630,14 @@ def _enter_group(group: ElementTree.Element, ctx: _Ctx) -> _Ctx:
     A group without usable numbers leaves its children at the group's cell.
     """
     numbers = _xfrm(group)
-    if numbers is None or "chcx" not in numbers:
+    if numbers is None or "chcx" not in numbers or (nested and ctx.frame is None):
+        # no numbers here, or an enclosing group had none: its children keep the group cell
         return ctx._replace(frame=None, span=None)
-    if ctx.frame is None:
-        if ctx.span is not None:  # an enclosing group had no usable numbers
-            return ctx
-        parent, span = (1.0, 1.0, -numbers["x"], -numbers["y"]), (numbers["cx"], numbers["cy"])
+    parent: tuple[float, float, float, float]
+    span: tuple[int, int]
+    if ctx.frame is None or ctx.span is None:
+        parent = (1.0, 1.0, float(-numbers["x"]), float(-numbers["y"]))
+        span = (numbers["cx"], numbers["cy"])
     else:
         parent, span = ctx.frame, ctx.span
     sx = numbers["cx"] / numbers["chcx"] if numbers["chcx"] else 1.0
