@@ -298,8 +298,6 @@ def read_drawing_objects_checked(
                 if sink.full:
                     return sink.objects, False
                 sink.add({**obj, "sheet": index, "sheet_name": sheet_name})
-            if sink.full and index + 1 < len(sheets):
-                return sink.objects, False
         return sink.objects, not parts.incomplete
 
 
@@ -367,11 +365,13 @@ class _Parts:
         if sheet_part not in self._sheets:
             found: list[DrawingObject] = []
             drawing_parts = self._drawing_parts(sheet_part)
-            for at, part in enumerate(drawing_parts):
-                found.extend(self._drawing(part))
-                if len(found) >= MAX_OBJECTS:
-                    self.incomplete |= len(found) > MAX_OBJECTS or at + 1 < len(drawing_parts)
-                    break
+            for part in drawing_parts:
+                objects = self._drawing(part)
+                if len(found) >= MAX_OBJECTS:  # full: only one more object is a loss
+                    self.incomplete |= bool(objects)
+                    continue
+                found.extend(objects)
+                self.incomplete |= len(found) > MAX_OBJECTS
             self._sheets[sheet_part] = found[:MAX_OBJECTS]
         return self._sheets[sheet_part]
 
@@ -411,9 +411,9 @@ def _read_drawing(archive: zipfile.ZipFile, part: str) -> tuple[list[DrawingObje
         return sink.objects, False
     ctx = _Ctx(0, "")
     for anchor, in_choice in _finished(text, _ANCHORS, _NOT_READ, _CHOICE):
-        if sink.full:  # an anchor is still to be read
-            sink.truncated = True
-            break
+        if sink.full:  # only an anchor that holds an object is a loss
+            sink.truncated |= any(child.tag in _OBJECT_TAGS for child in anchor)
+            continue
         geometry = _anchor_geometry(anchor)
         if geometry is None:
             continue
@@ -475,10 +475,11 @@ def _walk(parent: ElementTree.Element, ctx: _Ctx, sink: _Sink, depth: int) -> No
     """The objects among ``parent``'s children, in drawing order."""
     if depth > _MAX_GROUP_DEPTH:
         return
-    for child in parent:
+    children = list(parent)
+    for at, child in enumerate(children):
         tag = child.tag
-        if sink.full:
-            sink.truncated |= tag in _OBJECT_TAGS
+        if sink.full:  # a picture is never read, so only a later object is lost
+            sink.truncated |= any(later.tag in _OBJECT_TAGS for later in children[at:])
             return
         if tag == f"{{{_XDR}}}sp":
             _add(sink, ctx, "shape", child, _paragraphs(child))
