@@ -19,7 +19,9 @@ import base64
 import io
 import math
 import re
+from bisect import bisect_left
 from datetime import date, datetime, time
+from types import SimpleNamespace
 from typing import Any
 
 #: Excel's default (Office) theme palette, indexed as the file reports it.
@@ -61,6 +63,9 @@ _BORDER_STYLE = {
 _EMU_PER_PX = 9525
 _DEFAULT_COL_PX = 73  # Fortune's default column width / row height, used to
 _DEFAULT_ROW_PX = 19  # place an image anchored to a cell with no explicit size
+_MAX_COLUMN_INDEX = 16383  # Excel's last column (XFD) and row, 0-based; an anchor
+_MAX_ROW_INDEX = 1048575  # past them is cut back so one cannot cost a whole sheet of math
+_MAX_BOXED_ANCHORS = 500  # pictures and charts a read-only preview places per workbook
 
 _MONTHS_LONG = ["January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"]
@@ -290,52 +295,100 @@ def _parse_merge(merged: Any) -> tuple[str, dict[str, int]]:
     )
 
 
-def _anchor_box(
-    anchor: Any,
-    columnlen: dict[int, int],
-    rowlen: dict[int, int],
-    *,
-    border: int = 0,
-    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
-) -> dict[str, int] | None:
+class _Axis:
+    """Where each line (column or row) of a sheet starts, from its sized and folded lines only.
+
+    A line is its size plus ``border``; a line the sheet did not size takes the default. Only
+    the sorted sized and folded lines are kept, with running sums, so an offset costs two
+    ``bisect`` calls however far down the sheet the line is.
+    """
+
+    def __init__(
+        self, sizes: dict[int, int], default: int, border: int, folded: frozenset[int]
+    ) -> None:
+        self._line = default + border
+        self._folded = sorted(i for i in folded if i >= 0)
+        self._sized = sorted(i for i in sizes if i >= 0 and i not in folded)
+        # _extra[k]: what the first k sized lines add over the default line
+        self._extra = [0]
+        for index in self._sized:
+            self._extra.append(self._extra[-1] + sizes[index] - default)
+
+    def offset(self, index: int) -> int:
+        """Px from the sheet's edge to the start of line ``index``, folded lines left out."""
+        if index <= 0:
+            return 0
+        shown = index - bisect_left(self._folded, index)
+        return shown * self._line + self._extra[bisect_left(self._sized, index)]
+
+
+class _SheetGeometry:
+    """A sheet's column and row offsets, the geometry its grid draws with.
+
+    Fortune lays each row out as its height plus a 1px border, and each column as
+    its width plus 1px (core: ``rh_height += rowlen + 1``); ``border=1`` counts that.
+    Pictures keep ``border=0`` because the TypeScript twin and its golden still do — the
+    two readers move together when that drift is fixed. ``hidden`` holds the (rows,
+    columns) a read-only grid folds away; they take no space, so a drawing below or
+    right of them moves up or left with the grid.
+    """
+
+    def __init__(
+        self,
+        columnlen: dict[int, int],
+        rowlen: dict[int, int],
+        border: int = 0,
+        hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
+    ) -> None:
+        hidden_rows, hidden_columns = hidden
+        self.columns = _Axis(columnlen, _DEFAULT_COL_PX, border, hidden_columns)
+        self.rows = _Axis(rowlen, _DEFAULT_ROW_PX, border, hidden_rows)
+
+
+class _AnchorBudget:
+    """How many more anchors a workbook may place; a drawing past it is left unplaced."""
+
+    def __init__(self, limit: float) -> None:
+        self._left = limit
+
+    def take(self) -> bool:
+        if self._left <= 0:
+            return False
+        self._left -= 1
+        return True
+
+
+def _cell_index(value: Any, last: int) -> int:
+    """An anchor's column or row held inside the sheet Excel allows."""
+    return min(max(value or 0, 0), last)
+
+
+def _anchor_box(anchor: Any, geometry: _SheetGeometry) -> dict[str, int] | None:
     """A drawing anchor as a Fortune px box (left/top/width/height), or None.
 
     Columns and rows the sheet did not size use Fortune's defaults, the same
     geometry the grid draws with, so a picture or chart lands where its
-    anchor cell is on screen. Fortune lays each row out as its height plus a
-    1px border, and each column as its width plus 1px (core:
-    ``rh_height += rowlen + 1``); ``border=1`` counts that. Pictures keep
-    ``border=0`` because the TypeScript twin and its golden still do — the
-    two readers move together when that drift is fixed. ``hidden`` holds the
-    (rows, columns) a read-only grid folds away; they take no space, so a
-    drawing below or right of them moves up or left with the grid.
+    anchor cell is on screen (see :class:`_SheetGeometry`). A column or row
+    past Excel's last one is cut back to it.
     """
-    hidden_rows, hidden_columns = hidden
     start = getattr(anchor, "_from", None)
     if start is None:
         return None
 
-    def col_left(column: int) -> int:
-        return sum(
-            columnlen.get(i, _DEFAULT_COL_PX) + border
-            for i in range(column) if i not in hidden_columns
-        )
-
-    def row_top(row: int) -> int:
-        return sum(
-            rowlen.get(i, _DEFAULT_ROW_PX) + border for i in range(row) if i not in hidden_rows
-        )
-
-    left = col_left(start.col) + _round((start.colOff or 0) / _EMU_PER_PX)
-    top = row_top(start.row) + _round((start.rowOff or 0) / _EMU_PER_PX)
+    left = geometry.columns.offset(_cell_index(start.col, _MAX_COLUMN_INDEX)) + _round(
+        (start.colOff or 0) / _EMU_PER_PX
+    )
+    top = geometry.rows.offset(_cell_index(start.row, _MAX_ROW_INDEX)) + _round(
+        (start.rowOff or 0) / _EMU_PER_PX
+    )
     extent = getattr(anchor, "ext", None)
     width = _round(extent.cx / _EMU_PER_PX) if extent else 0
     height = _round(extent.cy / _EMU_PER_PX) if extent else 0
     end = getattr(anchor, "to", None)
     if (not width or not height) and end is not None:
         # A two-cell anchor sizes the drawing by the span from start to end.
-        width = col_left(end.col) - left
-        height = row_top(end.row) - top
+        width = geometry.columns.offset(_cell_index(end.col, _MAX_COLUMN_INDEX)) - left
+        height = geometry.rows.offset(_cell_index(end.row, _MAX_ROW_INDEX)) - top
     return {
         "left": max(0, _round(left)),
         "top": max(0, _round(top)),
@@ -345,16 +398,15 @@ def _anchor_box(
 
 
 def _sheet_images(
-    worksheet: Any,
-    columnlen: dict[int, int],
-    rowlen: dict[int, int],
-    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
+    worksheet: Any, geometry: _SheetGeometry, budget: _AnchorBudget
 ) -> list[dict[str, Any]]:
     """A worksheet's floating images as Fortune images (px position + data URL)."""
     placed = list(getattr(worksheet, "_images", []) or [])
     images: list[dict[str, Any]] = []
     for index, image in enumerate(placed):
-        box = _anchor_box(getattr(image, "anchor", None), columnlen, rowlen, hidden=hidden)
+        if not budget.take():
+            break
+        box = _anchor_box(getattr(image, "anchor", None), geometry)
         if box is None:
             continue
         try:
@@ -367,91 +419,117 @@ def _sheet_images(
     return images
 
 
-def xlsx_fit_to_one_page(data: bytes) -> bytes:
-    """A copy of the workbook whose every sheet prints on a single page.
-
-    LibreOffice prints a wide or tall sheet across several pages and draws
-    a chart on every page its cells touch — partly, and with the same chart
-    repeated — so no single page may carry the whole picture. Fit-to-page
-    (``fitToWidth=1``, ``fitToHeight=1``) makes each sheet one page, where
-    every chart is whole; the renderer scales the crop back up. The bytes
-    are deterministic for the same input (fixed document dates and zip
-    timestamps) so a host's content-hash render cache holds.
-    """
-    import io
-    import zipfile
-    from datetime import datetime
-
-    import openpyxl  # type: ignore[import-untyped]
-    from openpyxl.worksheet.properties import (  # type: ignore[import-untyped]
-        PageSetupProperties,
-    )
-
-    workbook = openpyxl.load_workbook(io.BytesIO(data))
-    for worksheet in workbook.worksheets:
-        worksheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-        worksheet.page_setup.fitToWidth = 1
-        worksheet.page_setup.fitToHeight = 1
-    fixed = datetime(2000, 1, 1)
-    workbook.properties.created = fixed
-    workbook.properties.modified = fixed
-    saved = io.BytesIO()
-    workbook.save(saved)
-    source = zipfile.ZipFile(io.BytesIO(saved.getvalue()))
-    out = io.BytesIO()
-    with source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
-        for info in source.infolist():
-            stamped = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
-            stamped.compress_type = zipfile.ZIP_DEFLATED
-            target.writestr(stamped, source.read(info))
-    return out.getvalue()
-
-
-def xlsx_printed_sheets(data: bytes) -> list[int] | None:
-    """Worksheet indexes in the order LibreOffice prints them, or None.
-
-    LibreOffice prints a visible sheet that holds a value, a chart or a
-    picture, and skips a hidden or empty one; so page ``k`` of the fit-to-page
-    copy belongs to the k-th index returned here. A workbook with a chart
-    sheet returns None: LibreOffice prints that as a page too, but the
-    worksheet indexes do not count it, so the page map cannot be predicted.
-    """
-    import openpyxl  # type: ignore[import-untyped]
-
-    workbook = openpyxl.load_workbook(io.BytesIO(data))
-    if workbook.chartsheets:
-        return None
-    printed: list[int] = []
-    for index, worksheet in enumerate(workbook.worksheets):
-        if worksheet.sheet_state != "visible":
-            continue
-        has_value = any(cell.value is not None for row in worksheet.iter_rows() for cell in row)
-        if has_value or worksheet._charts or worksheet._images:
-            printed.append(index)
-    return printed
-
-
 def _sheet_chart_boxes(
-    worksheet: Any,
-    columnlen: dict[int, int],
-    rowlen: dict[int, int],
-    hidden: tuple[frozenset[int], frozenset[int]] = (frozenset(), frozenset()),
-) -> list[dict[str, int]]:
-    """Where a worksheet's charts sit, as Fortune px boxes in anchor order.
+    worksheet: Any, geometry: _SheetGeometry, budget: _AnchorBudget
+) -> tuple[list[dict[str, Any]], int]:
+    """Where a worksheet's charts sit, as Fortune px boxes in anchor order, and how many
+    charts have no box.
 
     The grid cannot draw a chart, so the host renders each one to a picture
     and places it here (see ``replay``); the boxes are ordered top to bottom,
-    left to right — the order a printed sheet shows them in.
+    left to right. Each carries the chart's ``slot`` — its place in the worksheet's
+    chart list, which is how the gallery finds the chart again. A chart with
+    no anchor cell (a free-floating one) or past the workbook's anchor budget has no
+    box and is counted instead.
     """
-    boxes: list[dict[str, int]] = []
-    for chart in list(getattr(worksheet, "_charts", []) or []):
-        box = _anchor_box(
-            getattr(chart, "anchor", None), columnlen, rowlen, border=1, hidden=hidden
-        )
-        if box is not None:
-            boxes.append(box)
+    boxes: list[dict[str, Any]] = []
+    unboxed = 0
+    for slot, chart in enumerate(list(getattr(worksheet, "_charts", []) or [])):
+        box = _anchor_box(getattr(chart, "anchor", None), geometry) if budget.take() else None
+        if box is None:
+            unboxed += 1
+        else:
+            boxes.append({"slot": slot, "kind": "chart", **box})
     boxes.sort(key=lambda box: (box["top"], box["left"]))
-    return boxes
+    return boxes, unboxed
+
+
+_UNSUPPORTED_KINDS = ("chartex", "group_chart", "choice_chart")
+#: The drawing relationship type, matched whole as openpyxl matches it when it reads a
+#: worksheet's drawings: a relationship of any other type gives openpyxl no charts.
+_DRAWING_RELATIONSHIP = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+)
+
+
+def _drawing_targets(worksheet: Any) -> list[str]:
+    """The drawing parts openpyxl read for a worksheet it loaded, in its own order.
+
+    Raises :class:`AttributeError` when this openpyxl keeps no relationships on the sheet.
+    """
+    return [rel.target for rel in worksheet._rels.find(_DRAWING_RELATIONSHIP) if rel.target]
+
+
+def _unsupported_chart_objects(
+    data: bytes, worksheets: list[Any]
+) -> tuple[dict[int, list[Any]], bool]:
+    """Charts openpyxl cannot read, by worksheet: Excel 2016+ charts and charts inside a
+    group or an ``mc:Choice``. A hidden one, or one in a hidden group, is left out. A
+    drawing that cannot be read gives none: the grid does not depend on it.
+
+    The drawings read are the ones openpyxl resolved for each of ``worksheets`` (the
+    worksheets it loaded), so a chart lands on openpyxl's own worksheet number however
+    the package is put together. The flag is False when the reader stopped at one of its
+    limits, or when openpyxl kept no relationships to find the drawings by: charts may
+    then be unknown, so the workbook may hold more than were found.
+    """
+    from .xlsx_drawings import read_sheet_drawings_checked
+
+    try:
+        sheets = [(worksheet.title, _drawing_targets(worksheet)) for worksheet in worksheets]
+    except AttributeError:
+        return {}, False
+    try:
+        objects, complete = read_sheet_drawings_checked(data, sheets)
+    except Exception:  # noqa: BLE001 — placeholders are a bonus on the grid
+        return {}, True
+    found: dict[int, list[Any]] = {}
+    for obj in objects:
+        if obj["kind"] in _UNSUPPORTED_KINDS and not obj["hidden"]:
+            found.setdefault(obj["sheet"], []).append(obj)
+    return found, complete
+
+
+def _anchor_of(anchor: dict[str, Any]) -> SimpleNamespace:
+    """A drawing-reader anchor in the shape ``_anchor_box`` reads."""
+
+    def cell(marker: dict[str, int] | None) -> SimpleNamespace | None:
+        return None if marker is None else SimpleNamespace(**marker)
+
+    extent = anchor["ext"]
+    return SimpleNamespace(
+        _from=cell(anchor["from"]),
+        to=cell(anchor["to"]),
+        ext=None if extent is None else SimpleNamespace(**extent),
+    )
+
+
+def _unsupported_chart_boxes(
+    objects: list[Any], geometry: _SheetGeometry, budget: _AnchorBudget
+) -> tuple[list[dict[str, Any]], int]:
+    """Where the placeholders of a worksheet's unreadable charts go, in anchor order, and
+    how many of its chartex frames got no box.
+
+    ``slot`` is the object's place among the worksheet's drawing objects of those kinds.
+    An object with no anchor cell, one past the anchor budget, or one that cannot be
+    placed is skipped on its own. A chartex frame is drawn nowhere else, so it is counted
+    when skipped; a grouped or choice chart is listed on its own (see the caller).
+    """
+    boxes: list[dict[str, Any]] = []
+    unboxed = 0
+    for slot, obj in enumerate(objects):
+        box = None
+        if budget.take():
+            try:
+                box = _anchor_box(_anchor_of(obj["anchor"]), geometry)
+            except Exception:  # noqa: BLE001 — one broken object must not cost the whole grid
+                box = None
+        if box is not None:
+            boxes.append({"slot": slot, "kind": "unsupported", **box})
+        elif obj["kind"] == "chartex":
+            unboxed += 1
+    boxes.sort(key=lambda box: (box["top"], box["left"]))
+    return boxes, unboxed
 
 
 def _column_letter(index: int) -> str:
@@ -524,7 +602,11 @@ def xlsx_sheets_and_charts(
     """``xlsx_to_sheets`` plus where the charts sit (px boxes, sheet by sheet).
 
     The sheets dict is the wire shape the TypeScript twin also produces;
-    the chart boxes travel beside it so that shape stays untouched.
+    the chart boxes travel beside it so that shape stays untouched. A box is
+    ``{"sheet", "slot", "kind": "chart", "left", "top", "width", "height"}``
+    (``slot`` is the chart's place in its worksheet's chart list); a chart that
+    cannot be boxed — on a chart sheet (``sheet`` None) or with no anchor cell —
+    is listed as ``{"sheet", "kind": "unboxed"}``.
     ``read_only=True`` is for a grid that is only looked at: it adds what the
     file shows on top of the editable shape — hidden sheets, rows and columns,
     number-format sections, conditional formats, fills, notes and links (see
@@ -548,6 +630,11 @@ def xlsx_sheets_and_charts(
 
     sheets: list[dict[str, Any]] = []
     charts: list[dict[str, Any]] = []
+    # Only the read-only preview needs the cap; the editable import keeps every picture.
+    budget = _AnchorBudget(_MAX_BOXED_ANCHORS if read_only else math.inf)
+    unsupported, drawings_complete = (
+        _unsupported_chart_objects(data, workbook.worksheets) if read_only else ({}, True)
+    )
     for index, worksheet in enumerate(workbook.worksheets):
         cached = values.worksheets[index]
         height, width = worksheet.max_row, worksheet.max_column
@@ -648,17 +735,38 @@ def xlsx_sheets_and_charts(
             "celldata": celldata,
             "config": {"merge": merge, "columnlen": columnlen,
                        "rowlen": rowlen, "borderInfo": border_info},
-            # A read-only sheet places its pictures after its rows are final
-            # (rotated text grows rows), so pictures and charts share one geometry.
-            "images": [] if read_only else _sheet_images(worksheet, columnlen, rowlen),
+            "images": [],
         })
         if read_only:
             from .xlsx_fidelity import apply_read_only_fidelity
 
             apply_read_only_fidelity(sheets[-1], worksheet, cached)
-            sheets[-1]["images"] = _sheet_images(worksheet, columnlen, rowlen, folded)
-        for box in _sheet_chart_boxes(worksheet, columnlen, rowlen, folded):
-            charts.append({"sheet": index, **box})
+        # Pictures and charts are placed after the rows are final (rotated text grows
+        # them), so both share the sheet's geometry — charts with the grid's row border.
+        sheets[-1]["images"] = _sheet_images(
+            worksheet, _SheetGeometry(columnlen, rowlen, hidden=folded), budget
+        )
+        chart_geometry = _SheetGeometry(columnlen, rowlen, border=1, hidden=folded)
+        boxes, unboxed = _sheet_chart_boxes(worksheet, chart_geometry, budget)
+        charts.extend({"sheet": index, **box} for box in boxes)
+        unreadable = unsupported.get(index, [])
+        notices, unplaced = _unsupported_chart_boxes(unreadable, chart_geometry, budget)
+        charts.extend({"sheet": index, **box} for box in notices)
+        charts.extend({"sheet": index, "kind": "unboxed"} for _ in range(unboxed + unplaced))
+        # openpyxl cannot read a chart inside a group or an mc:Choice, so the page that
+        # draws it stays listed; a chartex frame is listed only when its notice has no box
+        charts.extend(
+            {"sheet": index, "kind": "unboxed"} for o in unreadable if o["kind"] != "chartex"
+        )
+
+    # A drawing read that a limit cut short may have hidden charts from us: the pages
+    # that carry charts stay listed.
+    if not drawings_complete:
+        charts.append({"sheet": None, "kind": "unboxed"})
+
+    # A chart sheet has no cells to anchor a chart to: listed, never boxed.
+    for chartsheet in workbook.chartsheets:
+        charts.extend({"sheet": None, "kind": "unboxed"} for _ in chartsheet._charts)
 
     if read_only:
         from .xlsx_fidelity import open_first_visible
