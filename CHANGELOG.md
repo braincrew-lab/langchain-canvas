@@ -4,6 +4,12 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.55] — 2026-10-27
+
+### Fixed
+
+- A Word preview no longer flickers at some panel widths. The preview fits its pages to the box width, and with a classic scrollbar (Windows, or macOS set to always show scrollbars) the fitted height decided whether the box scrolled; the scrollbar then took 17px of width and the fit changed again, so the page jumped between two sizes many times a second. The preview box now always keeps the scrollbar's space (`scrollbar-gutter: stable`), so its width no longer depends on the fit. Overlay scrollbars are unchanged.
+
 ## [0.7.54] — 2026-10-20
 
 ### Fixed
