@@ -1385,6 +1385,10 @@
 .cv-docx__page {
   max-height: 68vh;
   overflow: auto;
+  /* Keep the scrollbar's space reserved: the fit zoom reads this box's width,
+     and a scrollbar that comes and goes with the zoomed height would make the
+     width (and the zoom) flip back and forth. */
+  scrollbar-gutter: stable;
   border: 1px solid var(--cv-border);
   border-radius: 12px;
   background: var(--cv-bg);
