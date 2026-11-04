@@ -18,10 +18,15 @@ const { sendMessage, messages, canvas } = useCanvasStream({ endpoint: "/api/chat
 npm i @braincrew-lab/langchain-canvas
 ```
 
-`docx`, `docx-preview` and `fast-formula-parser` come along with the package. If
-one is missing, that single feature says what to add and the rest keeps working:
-an export tells the user, and a Word upload falls back to the file card it showed
-before.
+`docx`, `docx-preview` and `fast-formula-parser` come along with the package.
+Missing export or formula engines report which dependency to add without
+breaking the remaining features. `docx-preview` is used by the export parity
+tests, not by the stored-file viewer.
+
+**Stored Word documents use server-rendered page images**, through `PageViewer`
+when both `pageBaseUrl` and a positive `pageCount` are available. Otherwise they
+show the existing grid images, cover image, or file card. There is no Word
+text-selection mode or extracted-text fallback, and no preview-disclaimer bar.
 
 **A spreadsheet is opened and written from the Python side**, through
 `xlsx_import` and `TableXlsxExporter` in `langchain-canvas[xlsx]`. Reading a
@@ -55,6 +60,19 @@ function App() {
 - `/api/chat` streams SSE using the wire protocol (`canvas.create` / `append` / `patch` / `replace`). The companion Python package emits these from a LangChain/LangGraph agent; any backend sending the same JSON frames works.
 
 That's the whole setup. The rest of this README is **how to use each feature** — all of it is direct manipulation the user does on the rendered artifact, with no extra code from you.
+
+### Read-only file viewers and closable tabs
+
+Stored Office files use read-only viewers: server-rendered pages for Word and presentations, and cell/formula inspection for Excel. Word has no selectable-text mode; without server pages it uses image/file fallbacks. Slides initially fit the whole page, Word fits width, and the page counter accepts direct navigation. Zoom preserves the reading position. Page/zoom/scroll and workbook sheet/selection state survive tab changes within the same Canvas store, but reset for new revisions or a reset store; up to 32 document views are retained without mounting hidden viewers. Workbooks offer keyboard sheet switching, A1 navigation, copy actions and numeric range summaries excluding formula caches. Viewer controls follow the host theme and never write the original document.
+
+```tsx
+<Canvas readOnly chrome={{ tabClose: true }} />
+```
+
+`tabClose` is opt-in. Closing a tab preserves its artifact, history and position in `canvas.order`; it only records the id in the store's view-local `closedArtifactIds`. `store.getState().setActiveArtifact(id)` reopens it, and `closeArtifact(id)` closes it without firing an edit/save callback. Closing the active tab selects a neighbor; closing the last tab sets `activeId` to `null`. `reset()` clears closed-tab state. A host inventory should continue listing the full artifact order so closed files remain discoverable.
+
+Read-only HTML frames keep the `allow-scripts` sandbox without same-origin access. They reject edit messages and forward Escape to the host so an expanded viewer can close without enabling editing.
+
 
 ---
 

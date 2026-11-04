@@ -4,6 +4,23 @@ All notable changes to `@braincrew-lab/langchain-canvas` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Paged file previews use continuous vertical scrolling with a synchronized thumbnail rail, fit/zoom controls, lazy images, slide-shaped placeholders, and visible page failures. Current-page tracking remains stable on short slides and host width changes; zoomed pages retain native keyboard panning.
+- Word files use server-rendered page images with one compact navigation/zoom row. The selectable-text mode, mode-switch row and pagination disclaimer have been removed; unavailable pages offer retry and files without page metadata retain image/file fallbacks.
+- Office previews fit the available Canvas height instead of clipping their controls below the viewport. Read-only workbooks use a compact formula bar that preserves multiline values and distinguishes saved results from recalculation. Editable workbooks are unchanged.
+- `chrome.tabClose` optionally shows non-destructive tab close buttons. Closing preserves files and history, selecting a closed artifact reopens it, and remote updates do not silently reopen closed tabs.
+- Office viewer chrome is localizable through `CanvasLabels`; distributed styles include compact page and workbook controls. Read-only HTML frames forward Escape from the active iframe and reject edit messages.
+- Document tabs remain in one horizontally scrollable row on narrow panels. Scroll tracking waits for resize re-anchoring so returning from an expanded host view preserves the selected slide.
+- Document tabs are 33px high; page controls share one 37px row. Read-only workbook metadata and formula inspection share one strip; cached-value guidance is available on the result tooltip instead of occupying a footer.
+- Page raster requests follow rendered width and device pixel ratio, then apply a 1.2× fidelity multiplier: 1920/2400/2880px instead of 1600/2000/2400px. Display size and zoom remain unchanged; thumbnails stay at 480px. The host page endpoint must accept widths up to 2880px. Responsive fit padding is also used for scroll anchoring, with symmetric scrollbar gutters.
+- Page viewers use minus/percentage/plus zoom controls with a baseline 100% reset, whole-page and width-fit actions, direct page entry and toolbar-safe keyboard navigation. Slides initially fit the whole page; narrow viewers initially collapse thumbnails. Hosts can supply `renderTabIcon` to reuse their file icon palette.
+- Read-only workbook sheet tabs vertically center their names, highlight the active sheet and hide inert editing menus while retaining native sheet switching, overflow navigation and zoom.
+- Reading state is retained per Canvas store and document revision across tab changes without keeping hidden viewers mounted. Zoom preserves the selected page's reading center; short fitted pages retain their page alignment.
+- Read-only workbooks support keyboard sheet switching, validated cell-address navigation, value/formula copying, and sparse numeric range summaries in the existing footer. Summaries exclude formula caches. Scroll capture does not serialize the workbook or write document data.
+
 ## [0.7.55] — 2026-10-27
 
 ### Fixed

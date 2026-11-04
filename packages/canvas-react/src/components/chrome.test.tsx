@@ -130,3 +130,19 @@ describe("Canvas labels + chrome", () => {
     expect(typeof getter!()).toBe("string");
   });
 });
+
+it("closes a tab without deleting it and keeps the remaining tab keyboard-accessible", () => {
+  const store = createCanvasStore();
+  store.getState().applyEvent({ type: "canvas.create", artifact: { ...doc, id: "a", title: "First" } });
+  store.getState().applyEvent({ type: "canvas.create", artifact: { ...doc, id: "b", title: "Second" } });
+  mount(<CanvasProvider store={store}><Canvas readOnly chrome={{ tabClose: true, header: false }} /></CanvasProvider>);
+  act(() => host!.querySelector<HTMLButtonElement>('[aria-label="Close Second"]')!.click());
+  const remaining = host!.querySelector<HTMLButtonElement>('[role="tab"]')!;
+  expect(remaining.textContent).toBe("First");
+  expect(remaining.getAttribute("aria-selected")).toBe("true");
+  expect(document.activeElement).toBe(remaining);
+  expect(store.getState().canvas.artifacts.b.title).toBe("Second");
+  act(() => store.getState().setActiveArtifact("b"));
+  expect(host!.querySelectorAll('[role="tab"]')).toHaveLength(2);
+  expect(host!.querySelector('[data-artifact-id="b"]')?.getAttribute("aria-selected")).toBe("true");
+});

@@ -1,6 +1,6 @@
 /**
  * A read-only host shows a page to look at: the edit toolbar is left out and
- * the frame is flagged so the inspector wires nothing but asset resolution.
+ * the frame is flagged so selection and editing remain disabled.
  * Rendered with react-dom directly (no testing library in this package).
  */
 import { act } from "react";
@@ -59,21 +59,20 @@ function mount(
       </CanvasProvider>,
     ),
   );
+  return store;
 }
 
 describe("HtmlRenderer readOnly", () => {
-  it("draws the edit toolbar and wires the inspector by default", () => {
+  it("draws the edit toolbar by default", () => {
     mount(false);
     expect(host!.querySelectorAll(".cv-html-add").length).toBeGreaterThan(0);
     expect(host!.textContent).toContain(DEFAULT_LABELS.modeCode);
-    expect(host!.querySelector("iframe")?.getAttribute("srcdoc")).not.toContain("window.__LCX_READONLY=true");
   });
 
-  it("read-only leaves out the toolbar and flags the frame", () => {
+  it("read-only leaves out editing controls", () => {
     mount(true);
     expect(host!.querySelectorAll(".cv-html-add").length).toBe(0);
     expect(host!.textContent).not.toContain(DEFAULT_LABELS.modeCode);
-    expect(host!.querySelector("iframe")?.getAttribute("srcdoc")).toContain("window.__LCX_READONLY=true");
     // the device-width switch is the one control that stays
     expect(host!.querySelectorAll(".cv-html-seg button").length).toBe(3);
   });
@@ -157,4 +156,29 @@ describe("HtmlRenderer preview width switch", () => {
     expect(host!.querySelector(".cv-html-bar")).toBeNull();
     expect(host!.querySelector("iframe")).not.toBeNull();
   });
+});
+
+it("rejects frame edits in read-only mode and forwards Escape only from its own frame", () => {
+  const store = mount(true);
+  const frame = host!.querySelector("iframe")!;
+  const edited = vi.fn();
+  store.getState().setOnUserEdit(edited);
+  const keys: string[] = [];
+  host!.addEventListener("keydown", (event) => keys.push(event.key));
+  act(() => window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow,
+    data: { source: "langchain-canvas", type: "doc_edit", html: "<p>Changed</p>" },
+  })));
+  expect(store.getState().canvas.artifacts[page.id].data).toEqual(page.data);
+  expect(edited).not.toHaveBeenCalled();
+  act(() => window.dispatchEvent(new MessageEvent("message", {
+    source: window,
+    data: { source: "langchain-canvas", type: "viewer_escape" },
+  })));
+  expect(keys).toEqual([]);
+  act(() => window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow,
+    data: { source: "langchain-canvas", type: "viewer_escape" },
+  })));
+  expect(keys).toEqual(["Escape"]);
 });

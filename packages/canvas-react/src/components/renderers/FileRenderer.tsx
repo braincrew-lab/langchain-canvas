@@ -8,19 +8,11 @@
  * download), so a file the canvas cannot preview is still honestly present.
  * Read-only by design: `sources/` uploads are the user's originals.
  *
- * A Word file gets its own preview instead of a cover: `DocxPreview` draws the
- * real layout and lets the user point at a paragraph, which the card cannot.
- * That component is split out and optional — without its renderer installed,
- * or before it loads, this card is what shows.
- *
- * Any other paged file (a deck, a PDF) whose `pageCount` is known opens as a
- * `PageViewer` when the host provides a page endpoint (`pageBaseUrl`): pages
- * are fetched one at a time at reading size instead of tiled into a sheet.
- * The viewer is the whole tab: the file card below it only stays when it has
- * a download link to offer.
+ * Paged files, including Word documents, use a continuous `PageViewer` when
+ * a page endpoint is available. Its synchronized thumbnail rail and lazy
+ * page images preserve the source layout without exposing a text-editing
+ * or text-selection mode. Word files without pages use the image/file fallback.
  */
-
-import { Suspense, lazy } from "react";
 
 import type { FileData } from "../../protocol/artifacts";
 import { resolveCanvasFileUrl, resolveCanvasPageUrl } from "../../io/canvasAssets";
@@ -37,10 +29,6 @@ function formatSize(size: number | undefined): string | null {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
-
-const DocxPreview = lazy(() =>
-  import("./DocxPreview").then((m) => ({ default: m.DocxPreview })),
-);
 
 function iconFor(mediaType: string | undefined, name: string): string {
   if (mediaType?.startsWith("image/")) return "🖼️";
@@ -69,11 +57,11 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const stamp = (artifact.meta as { revision?: string } | undefined)?.revision ?? artifact.version;
   const previewHref = href ? `${href}&v=${encodeURIComponent(String(stamp))}` : null;
   const isImage = Boolean(mediaType?.startsWith("image/"));
-  const isWord = `${path} ${name}`.toLowerCase().includes(".docx");
+  const isWord = /\.docx$/i.test(path) || /\.docx$/i.test(name) ||
+    mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   const isWorkbook = Boolean(workbook);
   const paged =
     !isImage &&
-    !isWord &&
     !isWorkbook &&
     Boolean(pageBaseUrl) &&
     typeof pageCount === "number" &&
@@ -129,24 +117,13 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
         src={cover}
         alt={labels.firstPage(name)}
       />
-    ) : excerpt ? (
+    ) : excerpt && !isWord ? (
       <pre className="cv-file__excerpt">{excerpt}</pre>
     ) : null;
 
   return (
     <div className={"cv-file" + (paged || isWorkbook ? " cv-file--pages" : "")}>
-      {isWord && previewHref ? (
-        <Suspense fallback={preview}>
-          <DocxPreview
-            artifactId={artifact.id}
-            href={previewHref}
-            name={name}
-            fallback={preview}
-          />
-        </Suspense>
-      ) : (
-        preview
-      )}
+      {preview}
       {(!(paged || isWorkbook) || (chrome.fileDownload && href)) && (
       <div className="cv-file__card">
         <span className="cv-file__icon" aria-hidden>

@@ -12,19 +12,25 @@
  * rendered after mount (never during SSR).
  */
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+// @ts-expect-error — react-dom is a peer dependency; this package does not ship its types.
+import { createPortal } from "react-dom";
 
 // Fortune-sheet's grid styles. In source/dev consumers this resolves from the
 // (dev)dependency; the tsup build bundles it (Fortune is noExternal) so the
 // published package carries the styling without a runtime dependency.
 import "@fortune-sheet/react/dist/index.css";
+import "./sheet-viewer.css";
 
 import type { WorkbookInstance } from "@fortune-sheet/react";
+import type { Cell, Selection, Sheet } from "@fortune-sheet/core";
 
 import type { TableColumn, TableData } from "../../protocol/artifacts";
 import { computeFormulas, type FormulaValues } from "../../io/formula";
 import { mergeRowsIntoSheet } from "../../io/tableMerge";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
+import { useViewerSession } from "../../hooks/viewerSession";
+import { applyWorkbookView, connectWorkbookReading, parseCellAddress, summarizeSelection, type WorkbookReadingConnection, type WorkbookView } from "./workbookReading";
 import { SHEET_PAINT_HOOKS } from "./sheetPaint";
 import { useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
@@ -188,7 +194,12 @@ const READ_ONLY_SETTINGS = {
   showToolbar: false,
   showFormulaBar: false,
   showSheetTabs: true,
-} as const;
+  forceCalculation: false,
+  cellContextMenu: [],
+  headerContextMenu: [],
+  sheetTabContextMenu: [],
+  filterContextMenu: [],
+};
 
 /** Fortune-sheet's column width and row height (px) for an unsized column/row. */
 const DEFAULT_COLUMN_PX = 73;
@@ -250,6 +261,30 @@ export function watchBoxSize(element: HTMLElement, onChange: () => void): () => 
   };
 }
 
+function cellAddress(row: number, column: number): string {
+  let letters = "";
+  for (let n = column + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    letters = String.fromCharCode(65 + (n - 1) % 26) + letters;
+  }
+  return `${letters}${row + 1}`;
+}
+
+type CellInspection = { sheet: string; address: string; formula: string; value: string; missing: boolean; count: number; sum: number; average: number };
+
+// These hooks supplement allowEdit=false; no mutation menu or paste path is
+// needed by the viewer. Selection, copying, scrolling and sheet activation stay native.
+const READ_ONLY_HOOKS = {
+  ...SHEET_PAINT_HOOKS,
+  beforeUpdateCell: () => false,
+  beforePaste: () => false,
+  beforeAddSheet: () => false,
+  beforeDeleteSheet: () => false,
+  beforeUpdateSheetName: () => false,
+  beforeUpdateComment: () => false,
+  beforeInsertComment: () => false,
+  beforeDeleteComment: () => false,
+};
+
 export function TableRenderer({
   artifact,
   readOnly = false,
@@ -273,37 +308,40 @@ export function TableRenderer({
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => setMounted(true), []);
 
-  // Fortune-sheet advances only a couple of pixels per wheel notch, so a tall
-  // sheet feels like the vertical scroll is stuck (hundreds of gestures to reach
-  // the bottom). Forward the wheel delta 1:1 to its own scrollbars instead, for
-  // natural scrolling — and only swallow the event when we actually moved, so
-  // page scroll past the sheet's edges still works.
+  // Forward wheel gestures to Fortune's scrollbars in pixel units. Preserve
+  // native edge propagation when the grid cannot move any further vertically.
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const onWheel = (e: WheelEvent) => {
+      // Native tabs and zoom own their gestures, not the grid scrollbars.
+      if (readOnly && (e.ctrlKey || (e.target instanceof Element && e.target.closest(".luckysheet-sheet-area")))) return;
       const y = root.querySelector<HTMLElement>(".luckysheet-scrollbar-y");
       const x = root.querySelector<HTMLElement>(".luckysheet-scrollbar-x");
+      const lineHeight = e.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? Number.parseFloat(getComputedStyle(root).lineHeight) || 16 : 1;
+      const deltaY = e.deltaY * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? (y?.clientHeight || root.clientHeight) : lineHeight);
+      const deltaX = e.deltaX * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? (x?.clientWidth || root.clientWidth) : lineHeight);
       let moved = false;
       if (y && e.deltaY && y.scrollHeight > y.clientHeight) {
         const max = y.scrollHeight - y.clientHeight;
-        const next = Math.max(0, Math.min(max, y.scrollTop + e.deltaY));
+        const next = Math.max(0, Math.min(max, y.scrollTop + deltaY));
         if (next !== y.scrollTop) { y.scrollTop = next; moved = true; }
       }
       if (x && e.deltaX && x.scrollWidth > x.clientWidth) {
         const max = x.scrollWidth - x.clientWidth;
-        const next = Math.max(0, Math.min(max, x.scrollLeft + e.deltaX));
+        const next = Math.max(0, Math.min(max, x.scrollLeft + deltaX));
         if (next !== x.scrollLeft) { x.scrollLeft = next; moved = true; }
       }
       // A horizontal-dominant gesture must stay inside the sheet even at (or past)
       // the scroll edge — otherwise it leaks out and the surrounding layout grabs
       // it, so left–right scrolling feels like it "catches on the outside".
-      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const horizontal = Math.abs(deltaX) > Math.abs(deltaY);
       if (moved || (horizontal && e.deltaX)) { e.preventDefault(); e.stopPropagation(); }
     };
     root.addEventListener("wheel", onWheel, { passive: false, capture: true });
     return () => root.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
-  }, [mounted]);
+  }, [mounted, readOnly]);
 
   // Identity of the streamed data — the workbook re-keys on change (uncontrolled
   // afterward, so in-session edits are preserved between renders). `version` is
@@ -321,10 +359,11 @@ export function TableRenderer({
   // this the grid kept showing the old cells until a page reload.
   const remoteSeq = typeof artifact.meta?.remoteSeq === "number" ? artifact.meta.remoteSeq : 0;
   const dataKey = `${artifact.id}:v${artifact.version}:r${remoteSeq}:${columns.length}x${rows.length}:${rowsSig}`;
+  const viewerSession = useViewerSession<WorkbookView>(`workbook:${artifact.id}`, dataKey, () => ({ sheets: {} }));
   const hasFormulas = useMemo(
-    () => rows.slice(0, 400).some((row) => columns.some((col) => isFormula(row[col.key]))),
+    () => !(readOnly && artifact.data.sheet?.length) && rows.slice(0, 400).some((row) => columns.some((col) => isFormula(row[col.key]))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataKey],
+    [dataKey, readOnly, artifact.data.sheet],
   );
 
   // Formula cells are computed off the main bundle; until ready they render as
@@ -413,6 +452,9 @@ export function TableRenderer({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wbKey, formulasReady, readOnly]);
+  const viewerData = useMemo(() => readOnly && initialData
+    ? applyWorkbookView(initialData as Sheet[], viewerSession.current)
+    : initialData, [initialData, readOnly, viewerSession]);
 
   // Persist in-sheet edits (cell values, inserted rows/columns, images, styling)
   // back onto the artifact so they survive re-renders and flow into exports.
@@ -461,6 +503,114 @@ export function TableRenderer({
     wbRef.current?.insertRowOrColumn(type, Math.max(0, range[1]), 1, "rightbottom");
   };
 
+  // Inspect the parsed source, not Fortune's mutable calculation state: original
+  // formula text, formatting and saved results remain the authority in a preview.
+  const sheetIndex = useMemo(() => readOnly ? (initialData as Sheet[] | undefined)?.map((sheet, index) => {
+    const cells = new Map<string, Cell | null>();
+    let rowCount = sheet.row ?? 84;
+    let columnCount = sheet.column ?? 60;
+    for (const { r, c, v } of sheet.celldata ?? []) {
+      cells.set(`${r},${c}`, v);
+      rowCount = Math.max(rowCount, r + 1);
+      columnCount = Math.max(columnCount, c + 1);
+    }
+    return { sheet, id: sheet.id ?? `viewer-sheet-${index}`, cells, rowCount, columnCount };
+  }) ?? [] : [], [initialData, readOnly]);
+  const sheetIds = useMemo(() => (viewerData as Sheet[] | undefined)?.map((sheet) => ({ id: sheet.id!, order: Number(sheet.order) }))
+    .sort((a, b) => (Number.isNaN(a.order) ? Infinity : a.order) - (Number.isNaN(b.order) ? Infinity : b.order))
+    .map(({ id }) => id) ?? [], [viewerData]);
+  const readingConnection = useRef<WorkbookReadingConnection | null>(null);
+  const [inspection, setInspection] = useState<CellInspection | null>(null);
+  const [address, setAddress] = useState("");
+  const [addressError, setAddressError] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const [footer, setFooter] = useState<HTMLElement | null>(null);
+  const addressErrorId = useId();
+  const addressEditing = useRef(false);
+  const lastInspection = useRef<{ source: Sheet; key: string } | null>(null);
+  const inspectSelection = useCallback((sheetId: string, selection: Selection) => {
+    const source = sheetIndex.find(({ id }) => id === sheetId);
+    if (!source || !selection) { setInspection(null); return; }
+    const key = `${sheetId}:${selection.row.join(",")}:${selection.column.join(",")}:${selection.row_focus}:${selection.column_focus}`;
+    if (lastInspection.current?.source === source.sheet && lastInspection.current.key === key) return;
+    lastInspection.current = { source: source.sheet, key };
+    let row = selection.row_focus ?? selection.row[0];
+    let column = selection.column_focus ?? selection.column[0];
+    let cell: Cell | null | undefined = source.cells.get(`${row},${column}`);
+    const merge = cell?.mc ?? Object.values(source.sheet.config?.merge ?? {}).find(
+      (range) => row >= range.r && row < range.r + range.rs && column >= range.c && column < range.c + range.cs,
+    );
+    if (merge) {
+      row = merge.r;
+      column = merge.c;
+      cell = source.cells.get(`${row},${column}`);
+    }
+    const richText = cell?.ct?.t === "inlineStr" && Array.isArray(cell.ct.s)
+      ? cell.ct.s.map((run: { v?: unknown }) => String(run.v ?? "")).join("") : undefined;
+    const value = cell?.m ?? cell?.v ?? richText;
+    const next = {
+      ...summarizeSelection(source.sheet.celldata ?? [], selection),
+      sheet: source.sheet.name,
+      address: cellAddress(row, column),
+      formula: cell?.f ?? "",
+      value: value == null ? "" : String(value),
+      // The wire format uses an empty string for both absent and empty caches.
+      missing: !!cell?.f && (value == null || value === ""),
+    };
+    setInspection((previous) => previous && Object.keys(next).every((key) => previous[key as keyof CellInspection] === next[key as keyof CellInspection]) ? previous : next);
+    if (!addressEditing.current) setAddress(next.address);
+  }, [sheetIndex, viewerSession]);
+  const viewerHooks = useMemo(() => ({ ...READ_ONLY_HOOKS, afterSelectionChange: (sheetId: string, selection: Selection) => {
+    if (readingConnection.current) readingConnection.current.selectionChanged(sheetId, selection);
+    else inspectSelection(sheetId, selection);
+  } }), [inspectSelection]);
+  const captureViewerZoom = useCallback((sheets: Sheet[]) => {
+    for (const sheet of sheets) {
+      const saved = sheet.id ? viewerSession.current.sheets[sheet.id] : undefined;
+      if (saved && sheet.zoomRatio != null) saved.zoom = sheet.zoomRatio;
+    }
+  }, [viewerSession]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!readOnly || !root) return;
+    const connection = connectWorkbookReading(root, () => wbRef.current, viewerSession.current, sheetIds, {
+      zoomIn: labels.viewerZoomIn, zoomOut: labels.viewerZoomOut,
+    }, inspectSelection, setFooter);
+    readingConnection.current = connection;
+    return () => { connection(); readingConnection.current = null; };
+  }, [mounted, readOnly, wbKey, formulasReady, viewerSession, sheetIds, inspectSelection, labels.viewerZoomIn, labels.viewerZoomOut]);
+
+  const navigateToAddress = () => {
+    const target = parseCellAddress(address);
+    if (!target) { setAddressError(labels.sheetInvalidAddress); return; }
+    const workbook = wbRef.current;
+    const sheet = sheetIndex.find(({ id }) => id === viewerSession.current.activeSheet);
+    if (!workbook || !sheet || target.row >= sheet.rowCount || target.column >= sheet.columnCount) {
+      setAddressError(labels.sheetAddressUnavailable);
+      return;
+    }
+    const selection = { row: [target.row, target.row], column: [target.column, target.column], row_focus: target.row, column_focus: target.column };
+    readingConnection.current?.select(sheet.id, selection);
+    workbook.scroll({ targetRow: target.row, targetColumn: target.column });
+    setAddress(cellAddress(target.row, target.column));
+    setAddressError("");
+  };
+  const copyInspection = async (formula: boolean) => {
+    if (!inspection) return;
+    try {
+      await navigator.clipboard.writeText(formula ? inspection.formula : inspection.value);
+      setCopyFeedback(labels.sheetCopied);
+    } catch {
+      setCopyFeedback(labels.sheetCopyFailed);
+    }
+  };
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timer = setTimeout(() => setCopyFeedback(""), 3000);
+    return () => clearTimeout(timer);
+  }, [copyFeedback]);
+
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">{labels.tableLoading}</div>;
   }
@@ -480,6 +630,37 @@ export function TableRenderer({
 
   return (
     <div className={"cv-sheet-panel" + (readOnly ? " cv-sheet-panel--readonly" : "")}>
+      {readOnly && (
+        <>
+          <div className="cv-sheet-viewer__inspector">
+            <span className="cv-sheet-viewer__badge" title={`${labels.viewerReadOnly} · ${inspection?.sheet ?? ""} · ${labels.sheetCount(sheetIndex.filter(({ sheet }) => !sheet.hide).length)}`}>{labels.viewerReadOnly}</span>
+            <label className="cv-sheet-viewer__address">
+              <span>{labels.sheetCellAddress}</span>
+              <input value={address} placeholder="A1" aria-label={labels.sheetCellAddress} aria-invalid={!!addressError} aria-describedby={addressError ? addressErrorId : undefined}
+                onFocus={() => { addressEditing.current = true; }} onBlur={() => { addressEditing.current = false; }}
+                onChange={(event) => { setAddress(event.target.value); setAddressError(""); }}
+                onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter") { event.preventDefault(); navigateToAddress(); } }} />
+            </label>
+            {addressError && <span id={addressErrorId} className="cv-sheet-viewer__feedback cv-sheet-viewer__feedback--error" role="alert" title={addressError}>{addressError}</span>}
+            <span className="cv-sheet-viewer__fx" aria-hidden="true">ƒx</span>
+            <label className="cv-sheet-viewer__value">
+              <span>{inspection?.formula ? labels.sheetFormula : labels.sheetValue}</span>
+              <textarea readOnly rows={1} value={inspection?.formula || inspection?.value || ""} placeholder={inspection ? labels.sheetEmptyCell : labels.sheetSelectCell} aria-label={inspection?.formula ? labels.sheetFormula : labels.sheetValue} />
+            </label>
+            {inspection?.formula && (
+              <label className="cv-sheet-viewer__result" title={labels.sheetCachedValues}>
+                <span>{labels.sheetValue}</span>
+                <textarea readOnly rows={1} value={inspection.missing ? labels.sheetMissingValue : inspection.value} aria-label={labels.sheetValue} title={labels.sheetCachedValues} />
+              </label>
+            )}
+            <button type="button" className="cv-sheet-viewer__copy" disabled={!inspection || inspection.missing} title={labels.sheetCopyValue} aria-label={labels.sheetCopyValue} onClick={() => void copyInspection(false)}>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>
+            </button>
+            {inspection?.formula && <button type="button" className="cv-sheet-viewer__copy" title={labels.sheetCopyFormula} aria-label={labels.sheetCopyFormula} onClick={() => void copyInspection(true)}>ƒx</button>}
+            <span className="cv-sheet-viewer__feedback" role="status" aria-live="polite">{copyFeedback}</span>
+          </div>
+        </>
+      )}
       {!readOnly && (
       <div className="cv-sheet-tools">
         <button type="button" onClick={() => insert("column")}>{labels.addColumn}</button>
@@ -529,11 +710,14 @@ export function TableRenderer({
           <Workbook
             key={wbKey}
             ref={wbRef}
-            data={initialData as never}
-            onChange={readOnly ? undefined : handleChange}
-            {...(readOnly ? { ...READ_ONLY_SETTINGS, hooks: SHEET_PAINT_HOOKS } : {})}
+            data={viewerData as never}
+            onChange={readOnly ? captureViewerZoom : handleChange}
+            {...(readOnly ? { ...READ_ONLY_SETTINGS, hooks: viewerHooks } : {})}
           />
         </Suspense>
+        {readOnly && footer && inspection && createPortal(
+          <span className="cv-sheet-viewer__summary" tabIndex={0} aria-label={`${labels.sheetRangeSummary(inspection.count, inspection.sum, inspection.average)}. ${labels.sheetRangeSummaryHint}`} title={`${labels.sheetRangeSummary(inspection.count, inspection.sum, inspection.average)} · ${labels.sheetRangeSummaryHint}`}><span>{labels.sheetRangeSummary(inspection.count, inspection.sum, inspection.average)}</span></span>, footer,
+        )}
       </div>
     </div>
   );

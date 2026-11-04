@@ -26,8 +26,8 @@ export const INSPECTOR_MARK = "langchain-canvas";
  *  Also ensures a responsive viewport meta so device-width media queries behave
  *  the same in the preview, in export, and on a real device.
  *
- *  With `readOnly`, the script resolves asset references and stops: nothing is
- *  selectable or editable, and the frame answers no commands.
+ *  With `readOnly`, the script resolves assets and forwards Escape to the host.
+ *  Selection, editing and incoming commands stay disabled.
  *
  *  With `assetBaseUrl`, the inspector also resolves canvas-asset references
  *  (`src="assets/…"` / `src="sources/…"`) for display: the original relative
@@ -310,10 +310,15 @@ const INSPECTOR_SCRIPT = `
         subtree: true, childList: true, attributes: true, attributeFilter: ["src"]
       });
     }
-    // Read-only (the host's readOnly prop): the page is looked at, never edited.
-    // Asset references still resolve; nothing else of the inspector is wired —
-    // no element ids, hover, selection, drag, contenteditable or commands.
-    if (window.__LCX_READONLY) return;
+    // Read-only frames expose only a user Escape action, never editing commands.
+    if (window.__LCX_READONLY) {
+      window.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && e.isTrusted && !e.defaultPrevented) {
+          parent.postMessage({ source: MARK, type: "viewer_escape" }, "*");
+        }
+      });
+      return;
+    }
     assign(document.body, "e");
     var hovered = null;
     var selected = [];               // currently highlighted elements

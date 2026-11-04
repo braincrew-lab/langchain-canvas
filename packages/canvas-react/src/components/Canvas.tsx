@@ -8,7 +8,7 @@
  * component only owns view-local concerns (which tab, which version).
  */
 
-import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { Artifact } from "../protocol/artifacts";
 import { versionRail } from "../client/reconcile";
@@ -32,6 +32,8 @@ export interface CanvasProps {
   registry?: ArtifactRegistry;
   /** Rendered when no artifact has been opened yet. */
   emptyState?: ReactNode;
+  /** Optional decorative tab icon; the title remains the tab's accessible name. */
+  renderTabIcon?: (artifact: Artifact) => ReactNode;
   /**
    * Extra Export-menu entries for the shown artifact, appended after the
    * built-in ones — the seam for host-side (server) exports such as
@@ -113,6 +115,7 @@ export interface CanvasProps {
 export function Canvas({
   registry = builtinRenderers,
   emptyState,
+  renderTabIcon,
   exportExtras,
   onEditElement,
   onUserEdit,
@@ -132,6 +135,7 @@ export function Canvas({
       <ChromeProvider labels={labels} chrome={chrome}>
         <CanvasPanel
           emptyState={emptyState}
+          renderTabIcon={renderTabIcon}
           exportExtras={exportExtras}
           onEditElement={onEditElement}
           onUserEdit={onUserEdit}
@@ -151,6 +155,7 @@ export function Canvas({
 
 function CanvasPanel({
   emptyState,
+  renderTabIcon,
   exportExtras,
   onEditElement,
   onUserEdit,
@@ -165,6 +170,7 @@ function CanvasPanel({
 }: Pick<
   CanvasProps,
   | "emptyState"
+  | "renderTabIcon"
   | "exportExtras"
   | "onEditElement"
   | "onUserEdit"
@@ -178,10 +184,37 @@ function CanvasPanel({
   | "readOnly"
 >) {
   const labels = useLabels();
+  const chrome = useChrome();
   const debouncedSave = useCanvasSave(onSave);
   const { artifacts, order, activeId } = useCanvasStore((s) => s.canvas);
   const history = useCanvasStore((s) => s.canvas.history);
   const setActive = useCanvasStore((s) => s.setActiveArtifact);
+  const closeArtifact = useCanvasStore((s) => s.closeArtifact);
+  const closedArtifactIds = useCanvasStore((s) => s.closedArtifactIds);
+  const tabs = useMemo(() => visibleTabs(order).filter((id) => !closedArtifactIds.includes(id)), [order, closedArtifactIds]);
+  const tabListRef = useRef<HTMLElement>(null);
+  const focusAfterClose = useRef<string | null>(null);
+  useEffect(() => {
+    const focusId = focusAfterClose.current;
+    focusAfterClose.current = null;
+    const rail = tabListRef.current;
+    const button = Array.from(rail?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+      .find((tab) => tab.dataset.artifactId === activeId);
+    const item = button?.parentElement;
+    if (!rail || !button || !item) return;
+    const reveal = () => {
+      if (item.offsetLeft < rail.scrollLeft) rail.scrollLeft = item.offsetLeft;
+      else if (item.offsetLeft + item.offsetWidth > rail.scrollLeft + rail.clientWidth)
+        rail.scrollLeft = item.offsetLeft + item.offsetWidth - rail.clientWidth;
+    };
+    reveal();
+    if (focusId === activeId) button.focus({ preventScroll: true });
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(reveal);
+    observer.observe(rail);
+    observer.observe(item);
+    return () => observer.disconnect();
+  }, [activeId, tabs]);
   const setBusy = useCanvasStore((s) => s.setBusy);
   // The host knows when a run starts and ends; the store is what refuses
   // hand edits meanwhile. Keep them in step for as long as this Canvas lives.
@@ -277,25 +310,38 @@ function CanvasPanel({
   }
 
   const versions = versionRail(history[active.id] ?? [active]);
-  // An upload being edited through a copy shows as the copy alone.
-  const tabs = visibleTabs(order);
   const showSelection = Boolean(onEditElement) && selections.length > 0 && selections[0].artifactId === active.id;
 
   return (
     <aside className="cv-canvas" {...dropProps}>
       {dropOverlay}
-      {tabs.length > 1 && (
-        <nav className="cv-tabs" role="tablist">
-          {tabs.map((id) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={id === activeId}
-              className={`cv-tab ${id === activeId ? "is-active" : ""}`}
-              onClick={() => setActive(id)}
-            >
-              {artifacts[id].title}
-            </button>
+      {(tabs.length > 1 || chrome.tabClose) && (
+        <nav ref={tabListRef} className="cv-tabs" role="tablist">
+          {tabs.map((id, index) => (
+            <div key={id} className={`cv-tab-item${id === activeId ? " is-active" : ""}`} role="presentation">
+              <button
+                type="button"
+                role="tab"
+                data-artifact-id={id}
+                title={artifacts[id].title}
+                aria-selected={id === activeId}
+                className={`cv-tab ${id === activeId ? "is-active" : ""}`}
+                onClick={() => setActive(id)}
+              >
+                {renderTabIcon && <span className="cv-tab__icon" aria-hidden="true">{renderTabIcon(artifacts[id])}</span>}
+                <span className="cv-tab__title">{artifacts[id].title}</span>
+              </button>
+              {chrome.tabClose && (
+                <button type="button" className="cv-tab-close"
+                  aria-label={labels.closeTab(artifacts[id].title)} title={labels.closeTab(artifacts[id].title)}
+                  onClick={() => {
+                    focusAfterClose.current = id === activeId ? tabs[index + 1] ?? tabs[index - 1] ?? null : activeId;
+                    closeArtifact(id);
+                  }}>
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
+                </button>
+              )}
+            </div>
           ))}
         </nav>
       )}
