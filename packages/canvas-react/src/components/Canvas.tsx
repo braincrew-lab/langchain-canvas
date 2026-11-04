@@ -24,10 +24,12 @@ import { useCanvasImport, type CanvasImportOptions } from "../hooks/useCanvasImp
 import { useCanvasSave, type CanvasSaveHandler } from "../hooks/useCanvasSave";
 import { useCanvasStore } from "../hooks/useCanvasStore";
 import { ChromeProvider, useChrome, useLabels, type CanvasChrome, type CanvasLabels } from "./chrome";
+import type { CanvasElementSelectionProps } from "../protocol/elements";
+import { ElementSelectionContext } from "../hooks/elementSelection";
 
 const ACCEPT = IMPORTABLE_EXTENSIONS.join(",");
 
-export interface CanvasProps {
+export interface CanvasProps extends CanvasElementSelectionProps {
   /** Renderer map. Defaults to the built-in html/document/chart/table renderers. */
   registry?: ArtifactRegistry;
   /** Rendered when no artifact has been opened yet. */
@@ -129,10 +131,18 @@ export function Canvas({
   readOnly = false,
   labels,
   chrome,
+  selectionMode,
+  loadElements,
+  onAddElement,
+  selectedElements,
 }: CanvasProps) {
+  const elementSelection = useMemo(() => ({ selectionMode, loadElements, selectedElements,
+    onAddElement: busy ? undefined : onAddElement,
+  }), [selectionMode, loadElements, selectedElements, onAddElement, busy]);
   return (
     <CanvasRegistryProvider registry={registry}>
       <ChromeProvider labels={labels} chrome={chrome}>
+      <ElementSelectionContext.Provider value={elementSelection}>
         <CanvasPanel
           emptyState={emptyState}
           renderTabIcon={renderTabIcon}
@@ -148,6 +158,7 @@ export function Canvas({
           busyLabel={busyLabel}
           readOnly={readOnly}
         />
+      </ElementSelectionContext.Provider>
       </ChromeProvider>
     </CanvasRegistryProvider>
   );

@@ -14,22 +14,38 @@ import type { Artifact, TableData } from "../../protocol/artifacts";
 import { createCanvasStore } from "../../store/store";
 import { CanvasProvider } from "../../store/context";
 import { ChromeProvider } from "../chrome";
-import { TableRenderer } from "./TableRenderer";
+import { TableRenderer, selectionRange } from "./TableRenderer";
+import { ElementSelectionContext } from "../../hooks/elementSelection";
+import type { CanvasElementSelectionProps } from "../../protocol/elements";
+import type { Selection } from "@fortune-sheet/core";
+import type * as WorkbookReading from "./workbookReading";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const probe = vi.hoisted(() => ({
   data: undefined as Array<Record<string, unknown>> | undefined,
   hooks: undefined as Record<string, unknown> | undefined,
+  allowEdit: undefined as boolean | undefined,
 }));
 
 vi.mock("@fortune-sheet/react", () => ({
-  Workbook: (props: { data: Array<Record<string, unknown>>; hooks?: Record<string, unknown> }) => {
+  Workbook: (props: { data: Array<Record<string, unknown>>; hooks?: Record<string, unknown>; allowEdit?: boolean }) => {
     probe.data = props.data;
     probe.hooks = props.hooks;
+    probe.allowEdit = props.allowEdit;
     return null;
   },
 }));
+
+// DOM tab synchronization is covered by workbookReading tests; this probe drives
+// the renderer's inspection callback without pretending to mount Fortune's DOM.
+vi.mock("./workbookReading", async (importOriginal) => {
+  const actual = await importOriginal<typeof WorkbookReading>();
+  return { ...actual, connectWorkbookReading: (
+    _root: unknown, _workbook: unknown, _view: unknown, _ids: unknown, _labels: unknown,
+    inspect: (sheetId: string, selection: Selection) => void,
+  ) => Object.assign(() => {}, { selectionChanged: inspect, select: inspect }) };
+});
 
 // The workbook as the host parsed it: a title in B1, an empty row, and one
 // formatted value in B3. `columns`/`rows` are the lossy first-sheet projection.
@@ -68,9 +84,10 @@ afterEach(() => {
   host = null;
   probe.data = undefined;
   probe.hooks = undefined;
+  probe.allowEdit = undefined;
 });
 
-async function mountReadOnly(artifact: Artifact<TableData>): Promise<void> {
+async function mountReadOnly(artifact: Artifact<TableData>, selection: CanvasElementSelectionProps = {}): Promise<void> {
   const store = createCanvasStore();
   store.getState().applyEvent({ type: "canvas.create", artifact });
   host = document.createElement("div");
@@ -80,7 +97,9 @@ async function mountReadOnly(artifact: Artifact<TableData>): Promise<void> {
     root!.render(
       <CanvasProvider store={store}>
         <ChromeProvider>
-          <TableRenderer artifact={artifact} readOnly />
+          <ElementSelectionContext.Provider value={selection}>
+            <TableRenderer artifact={artifact} readOnly elementSource={{ path: artifact.id, revision: "r1" }} />
+          </ElementSelectionContext.Provider>
         </ChromeProvider>
       </CanvasProvider>,
     );
@@ -125,5 +144,43 @@ describe("TableRenderer read-only workbook", () => {
     await mountReadOnly(chartOnly);
 
     expect((probe.data![0].images as unknown[]).length).toBe(1);
+  });
+
+  it("adds the true selected rectangle and native sheet name without enabling edits", async () => {
+    const onAddElement = vi.fn();
+    await mountReadOnly(workbook, { selectionMode: "elements", onAddElement });
+    const afterSelectionChange = probe.hooks!.afterSelectionChange as (sheetId: string, selection: Selection) => void;
+    act(() => afterSelectionChange(String(probe.data![0].id), { row: [0, 2], column: [1, 3], row_focus: 1, column_focus: 2 }));
+    const button = host!.querySelector<HTMLButtonElement>(".cv-elements__range button")!;
+    expect(button.disabled).toBe(false);
+    expect(host!.querySelector(".cv-elements__range")!.textContent).toContain("요약!B1:D3");
+    act(() => button.click());
+    expect(onAddElement).toHaveBeenCalledWith(
+      { path: "sales.xlsx", revision: "r1", element_id: "sheet-range", sheet_name: "요약", range: "B1:D3" },
+      { id: "sheet-range", kind: "sheet-range", label: "요약!B1:D3", locator: { sheet_name: "요약", range: "B1:D3" } },
+    );
+    expect(probe.allowEdit).toBe(false);
+    expect((probe.hooks!.beforeUpdateCell as () => boolean)()).toBe(false);
+    expect((probe.hooks!.beforePaste as () => boolean)()).toBe(false);
+  });
+
+  it("keeps staging absent by default", async () => {
+    await mountReadOnly(workbook);
+    expect(host!.querySelector(".cv-elements__range")).toBeNull();
+  });
+
+  it("normalizes reversed range bounds without substituting the focused cell", () => {
+    expect(selectionRange({ row: [9, 0], column: [27, 25], row_focus: 5, column_focus: 26 })).toBe("Z1:AB10");
+    expect(selectionRange({ row: [0, 0], column: [0, 0] })).toBe("A1");
+    expect(selectionRange({ row: [-1, 0], column: [0, 0] })).toBeNull();
+    expect(selectionRange({ row: [0, 1048576], column: [0, 0] })).toBeNull();
+    expect(selectionRange({ row: [0, 100], column: [0, 100] })).toBeNull();
+  });
+
+  it("disables range staging when the host has no add callback", async () => {
+    await mountReadOnly(workbook, { selectionMode: "elements" });
+    const changed = probe.hooks!.afterSelectionChange as (sheetId: string, selection: Selection) => void;
+    act(() => changed(String(probe.data![0].id), { row: [0, 0], column: [0, 0] }));
+    expect(host!.querySelector<HTMLButtonElement>(".cv-elements__range button")!.disabled).toBe(true);
   });
 });

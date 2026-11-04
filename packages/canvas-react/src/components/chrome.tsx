@@ -64,6 +64,16 @@ export interface CanvasLabels {
   previewOf: (name: string) => string;
 
   // read-only Office viewers
+  elementLoading: string;
+  elementLoadFailed: string;
+  elementUnavailable: string;
+  elementEmpty: string;
+  elementIncomplete: string;
+  elementHint: string;
+  elementAdd: (label: string) => string;
+  elementAdded: (label: string) => string;
+  elementAddRange: string;
+  elementRangeUnavailable: string;
   viewerPreviousPage: string;
   viewerNextPage: string;
   viewerPage: (n: number, total: number) => string;
@@ -237,6 +247,16 @@ export interface CanvasLabels {
 }
 
 export const DEFAULT_LABELS: CanvasLabels = {
+  elementLoading: "Loading selectable elements…",
+  elementLoadFailed: "Could not load selectable elements.",
+  elementUnavailable: "Element selection is unavailable for this document.",
+  elementEmpty: "No selectable elements are available for this document.",
+  elementIncomplete: "Some elements cannot be mapped safely to the rendered page.",
+  elementHint: "Select an outlined element to add it to your message.",
+  elementAdd: (label) => `Add ${label} to message`,
+  elementAdded: (label) => `${label} added to message`,
+  elementAddRange: "Add selected range to message",
+  elementRangeUnavailable: "Select a single range of at most 10,000 cells within the workbook.",
   viewerPreviousPage: "Previous page",
   viewerNextPage: "Next page",
   viewerPage: (n, total) => `${n} / ${total}`,

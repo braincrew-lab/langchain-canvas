@@ -1398,6 +1398,34 @@
 }
 .cv-file__download:hover { border-color: var(--cv-accent); }
 
+/* Semantic targets track the source raster, never an inferred text layout. */
+.cv-elements__page { position: relative; }
+.cv-elements__overlay { position: absolute; inset: 1px; pointer-events: none; }
+.cv-elements__status { padding: 6px 12px; font-size: 12px; flex-shrink: 0; }
+.cv-elements__target {
+  position: absolute;
+  pointer-events: auto;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  padding: 0;
+  cursor: pointer;
+}
+.cv-elements__target:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--cv-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--cv-accent) 3%, transparent);
+}
+.cv-elements__target:not(:disabled):focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--cv-accent) 50%, transparent);
+  outline-offset: 1px;
+}
+.cv-elements__target:disabled { cursor: default; }
+.cv-elements__range { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; }
+.cv-elements__range button { font: inherit; }
+
 /* Tablet / narrow desktop: tighten paddings, let toolbars wrap. */
 @media (max-width: 900px) {
   .cv-body { padding: 16px; }

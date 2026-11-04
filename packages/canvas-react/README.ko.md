@@ -63,6 +63,11 @@ function App() {
 
 읽기 전용 HTML은 same-origin 접근 없는 `allow-scripts` 샌드박스를 유지합니다. 편집 메시지는 거부하고 Escape만 호스트로 전달하므로, 확장 뷰어에서도 편집을 활성화하지 않고 돌아갈 수 있습니다.
 
+### Office 요소 참조
+
+호스트가 `selectionMode="elements"`, `loadElements`, `onAddElement`, `selectedElements`를 제공하면 원본을 편집하지 않는 요소 선택을 사용할 수 있습니다. `loadElements({ path, revision, signal })`는 정확히 해당 revision의 `CanvasElementCollection`을 반환합니다. Word·PPT는 렌더 페이지 좌상단 기준 정규화 `bounds`로 요소를 표시하고 Excel은 실제 시트 이름·선택 A1 범위를 첨부합니다. `onAddElement(reference, element)`에서 채팅 입력창의 삭제 가능한 칩을 구성하고 다음 요청에 identity 참조를 전달합니다. 인증·publication pin·첨부 수명·서버 검증·접수 후 제거는 호스트 책임입니다. 이미지 좌표만으로 문단·도형 identity를 추측하지 않습니다. 읽기 전용 HTML의 inspector 비활성 sandbox는 유지합니다.
+
+
 
 ---
 

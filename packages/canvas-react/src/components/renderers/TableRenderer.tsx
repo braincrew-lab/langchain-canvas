@@ -34,6 +34,8 @@ import { applyWorkbookView, connectWorkbookReading, parseCellAddress, summarizeS
 import { SHEET_PAINT_HOOKS } from "./sheetPaint";
 import { useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
+import { sameElementReference, useElementSelection } from "../../hooks/elementSelection";
+import type { CanvasElement, CanvasElementReference } from "../../protocol/elements";
 
 const Workbook = lazy(() => import("@fortune-sheet/react").then((m) => ({ default: m.Workbook })));
 
@@ -269,7 +271,20 @@ function cellAddress(row: number, column: number): string {
   return `${letters}${row + 1}`;
 }
 
-type CellInspection = { sheet: string; address: string; formula: string; value: string; missing: boolean; count: number; sum: number; average: number };
+/** Preserve the actual native rectangle, not the focused cell used by the inspector. */
+export function selectionRange(selection: Selection): string | null {
+  const coordinates = [...selection.row, ...selection.column];
+  if (selection.row.length !== 2 || selection.column.length !== 2 ||
+    coordinates.some((n) => !Number.isInteger(n) || n < 0) ||
+    selection.row.some((n) => n >= 1048576) || selection.column.some((n) => n >= 16384)) return null;
+  if ((Math.abs(selection.row[1] - selection.row[0]) + 1) *
+    (Math.abs(selection.column[1] - selection.column[0]) + 1) > 10000) return null;
+  const first = cellAddress(Math.min(...selection.row), Math.min(...selection.column));
+  const last = cellAddress(Math.max(...selection.row), Math.max(...selection.column));
+  return first === last ? first : `${first}:${last}`;
+}
+
+type CellInspection = { sheet: string; address: string; range: string | null; sourceKey: string; formula: string; value: string; missing: boolean; count: number; sum: number; average: number };
 
 // These hooks supplement allowEdit=false; no mutation menu or paste path is
 // needed by the viewer. Selection, copying, scrolling and sheet activation stay native.
@@ -288,11 +303,15 @@ const READ_ONLY_HOOKS = {
 export function TableRenderer({
   artifact,
   readOnly = false,
+  elementSource,
 }: RendererProps<TableData> & {
   /** Read-only means the parsed `sheet` is the truth; `rows` are never merged into it. */
   readOnly?: boolean;
+  /** Only a native stored workbook can supply authoritative sheet/range references. */
+  elementSource?: { path: string; revision?: string };
 }) {
   const labels = useLabels();
+  const elementSelection = useElementSelection();
   // A table written by hand or by an agent may carry only `sheet`, or only
   // `rows`; neither absence is a reason to crash the tab.
   const rows = artifact.data.rows ?? [];
@@ -526,12 +545,14 @@ export function TableRenderer({
   const [copyFeedback, setCopyFeedback] = useState("");
   const [footer, setFooter] = useState<HTMLElement | null>(null);
   const addressErrorId = useId();
+  const selectionSourceKey = JSON.stringify([dataKey, elementSource?.path, elementSource?.revision]);
   const addressEditing = useRef(false);
   const lastInspection = useRef<{ source: Sheet; key: string } | null>(null);
   const inspectSelection = useCallback((sheetId: string, selection: Selection) => {
     const source = sheetIndex.find(({ id }) => id === sheetId);
     if (!source || !selection) { setInspection(null); return; }
-    const key = `${sheetId}:${selection.row.join(",")}:${selection.column.join(",")}:${selection.row_focus}:${selection.column_focus}`;
+    const multipleRanges = (wbRef.current?.getSelection()?.length ?? 1) > 1;
+    const key = `${selectionSourceKey}:${sheetId}:${selection.row.join(",")}:${selection.column.join(",")}:${selection.row_focus}:${selection.column_focus}:${multipleRanges}`;
     if (lastInspection.current?.source === source.sheet && lastInspection.current.key === key) return;
     lastInspection.current = { source: source.sheet, key };
     let row = selection.row_focus ?? selection.row[0];
@@ -552,6 +573,8 @@ export function TableRenderer({
       ...summarizeSelection(source.sheet.celldata ?? [], selection),
       sheet: source.sheet.name,
       address: cellAddress(row, column),
+      range: multipleRanges ? null : selectionRange(selection),
+      sourceKey: selectionSourceKey,
       formula: cell?.f ?? "",
       value: value == null ? "" : String(value),
       // The wire format uses an empty string for both absent and empty caches.
@@ -559,7 +582,7 @@ export function TableRenderer({
     };
     setInspection((previous) => previous && Object.keys(next).every((key) => previous[key as keyof CellInspection] === next[key as keyof CellInspection]) ? previous : next);
     if (!addressEditing.current) setAddress(next.address);
-  }, [sheetIndex, viewerSession]);
+  }, [sheetIndex, viewerSession, selectionSourceKey]);
   const viewerHooks = useMemo(() => ({ ...READ_ONLY_HOOKS, afterSelectionChange: (sheetId: string, selection: Selection) => {
     if (readingConnection.current) readingConnection.current.selectionChanged(sheetId, selection);
     else inspectSelection(sheetId, selection);
@@ -611,6 +634,19 @@ export function TableRenderer({
     return () => clearTimeout(timer);
   }, [copyFeedback]);
 
+  const rangeReference: CanvasElementReference | null = elementSource?.revision && inspection?.range &&
+    inspection.sourceKey === selectionSourceKey && inspection.sheet ? {
+      path: elementSource.path, revision: elementSource.revision, element_id: "sheet-range",
+      sheet_name: inspection.sheet, range: inspection.range,
+    } : null;
+  const rangeAdded = !!rangeReference && (elementSelection.selectedElements?.some((reference) => sameElementReference(reference, rangeReference)) ?? false);
+  const addRange = () => {
+    if (!rangeReference || !inspection || !elementSelection.onAddElement) return;
+    const element: CanvasElement = { id: "sheet-range", kind: "sheet-range",
+      label: `${inspection.sheet}!${inspection.range}`, locator: { sheet_name: inspection.sheet, range: inspection.range! } };
+    elementSelection.onAddElement({ ...rangeReference }, element);
+  };
+
   if (!mounted) {
     return <div className="cv-sheet cv-sheet--empty">{labels.tableLoading}</div>;
   }
@@ -659,6 +695,14 @@ export function TableRenderer({
             {inspection?.formula && <button type="button" className="cv-sheet-viewer__copy" title={labels.sheetCopyFormula} aria-label={labels.sheetCopyFormula} onClick={() => void copyInspection(true)}>ƒx</button>}
             <span className="cv-sheet-viewer__feedback" role="status" aria-live="polite">{copyFeedback}</span>
           </div>
+          {elementSelection.selectionMode === "elements" && elementSource && <div className="cv-elements__range">
+            {!elementSource.revision ? <span role="status">{labels.elementUnavailable}</span> : <>
+              <span>{rangeReference ? `${rangeReference.sheet_name}!${rangeReference.range}` : inspection ? labels.elementRangeUnavailable : labels.sheetSelectCell}</span>
+              <button type="button" disabled={!rangeReference || !elementSelection.onAddElement} aria-pressed={rangeAdded} onClick={addRange}>
+                {rangeAdded ? labels.elementAdded(`${rangeReference!.sheet_name}!${rangeReference!.range}`) : labels.elementAddRange}
+              </button>
+            </>}
+          </div>}
         </>
       )}
       {!readOnly && (

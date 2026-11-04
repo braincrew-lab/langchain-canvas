@@ -16,6 +16,7 @@
 
 // wire protocol (mirrors `langchain_canvas.protocol`)
 export * from "./protocol";
+export type { CanvasElement, CanvasElementReference, CanvasElementCollection, CanvasElementLoadRequest, CanvasElementSelectionProps } from "./protocol/elements";
 
 // low-level client (reconciler + SSE parser) for headless integrations
 export * from "./client";

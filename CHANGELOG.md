@@ -8,6 +8,9 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Hosts can opt into read-only Office element references with `selectionMode`, authenticated `loadElements`, `onAddElement`, and controlled `selectedElements`. Page overlays use revision-bound semantic geometry; Excel attaches actual sheet/range identities. Selection does not enable editing, and missing, ambiguous or failed metadata remains visible rather than guessing a target.
+- Semantic element hit targets are invisible at rest, including already-attached targets. Hover reveals only a 1px accent border at 24% opacity and a 3% tint; keyboard focus retains a separate 1px 50% accent outline without changing hit-target stacking.
+
 - Paged file previews use continuous vertical scrolling with a synchronized thumbnail rail, fit/zoom controls, lazy images, slide-shaped placeholders, and visible page failures. Current-page tracking remains stable on short slides and host width changes; zoomed pages retain native keyboard panning.
 - Word files use server-rendered page images with one compact navigation/zoom row. The selectable-text mode, mode-switch row and pagination disclaimer have been removed; unavailable pages offer retry and files without page metadata retain image/file fallbacks.
 - Office previews fit the available Canvas height instead of clipping their controls below the viewport. Read-only workbooks use a compact formula bar that preserves multiline values and distinguishes saved results from recalculation. Editable workbooks are unchanged.

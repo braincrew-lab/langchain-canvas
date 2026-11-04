@@ -14,6 +14,8 @@ import { createCanvasStore } from "../../store/store";
 import { CanvasProvider } from "../../store/context";
 import { ChromeProvider, DEFAULT_LABELS, type CanvasChrome } from "../chrome";
 import { HtmlRenderer } from "./HtmlRenderer";
+import { ElementSelectionContext } from "../../hooks/elementSelection";
+import type { CanvasElementSelectionProps } from "../../protocol/elements";
 
 const page: Artifact<HtmlData> = {
   id: "dash.html",
@@ -41,7 +43,8 @@ function mount(
     chrome,
     artifact = page,
     assetBaseUrl,
-  }: { chrome?: Partial<CanvasChrome>; artifact?: Artifact<HtmlData>; assetBaseUrl?: string } = {},
+    selection = {},
+  }: { chrome?: Partial<CanvasChrome>; artifact?: Artifact<HtmlData>; assetBaseUrl?: string; selection?: CanvasElementSelectionProps } = {},
 ) {
   const store = createCanvasStore();
   store.getState().applyEvent({ type: "canvas.create", artifact });
@@ -54,7 +57,9 @@ function mount(
     root!.render(
       <CanvasProvider store={store}>
         <ChromeProvider chrome={chrome}>
-          <HtmlRenderer artifact={artifact} />
+          <ElementSelectionContext.Provider value={selection}>
+            <HtmlRenderer artifact={artifact} />
+          </ElementSelectionContext.Provider>
         </ChromeProvider>
       </CanvasProvider>,
     ),
@@ -181,4 +186,18 @@ it("rejects frame edits in read-only mode and forwards Escape only from its own 
     data: { source: "langchain-canvas", type: "viewer_escape" },
   })));
   expect(keys).toEqual(["Escape"]);
+});
+
+it("semantic selection opt-in does not enable the HTML editor or relax its sandbox", () => {
+  const onAddElement = vi.fn();
+  const store = mount(true, { selection: { selectionMode: "elements", onAddElement } });
+  const frame = host!.querySelector("iframe")!;
+  expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+  expect(host!.querySelectorAll(".cv-html-add")).toHaveLength(0);
+  act(() => window.dispatchEvent(new MessageEvent("message", {
+    source: frame.contentWindow,
+    data: { source: "langchain-canvas", type: "doc_edit", html: "<p>Changed</p>" },
+  })));
+  expect(store.getState().canvas.artifacts[page.id].data).toEqual(page.data);
+  expect(onAddElement).not.toHaveBeenCalled();
 });
