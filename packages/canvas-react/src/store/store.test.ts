@@ -135,3 +135,41 @@ describe("undo is an edit of one file", () => {
     await store.getState().flushSaves(); // nothing registered is fine
   });
 });
+
+describe("view-only tab closing", () => {
+  it("selects adjacent tabs, retains documents and reopens a closed document", () => {
+    const store = createCanvasStore();
+    for (const id of ["a", "b", "c"]) store.getState().applyEvent({ type: "canvas.create", artifact: htmlArtifact(id, `<p>${id}</p>`) });
+    const onUserEdit = vi.fn();
+    store.getState().setOnUserEdit(onUserEdit);
+    store.getState().setActiveArtifact("b");
+    store.getState().closeArtifact("b");
+    expect(store.getState().canvas.activeId).toBe("c");
+    expect(store.getState().canvas.order).toEqual(["a", "b", "c"]);
+    expect(store.getState().canvas.artifacts.b.data).toEqual({ html: "<p>b</p>" });
+    expect(store.getState().canvas.history.b).toHaveLength(1);
+    store.getState().closeArtifact("a");
+    expect(store.getState().canvas.activeId).toBe("c");
+    store.getState().closeArtifact("c");
+    expect(store.getState().canvas.activeId).toBeNull();
+    expect(onUserEdit).not.toHaveBeenCalled();
+    store.getState().setActiveArtifact("b");
+    expect(store.getState().canvas.activeId).toBe("b");
+    expect(store.getState().closedArtifactIds).toEqual(["a", "c"]);
+  });
+
+  it("updates closed documents without reopening them and clears closure state on reset", () => {
+    const store = createCanvasStore();
+    store.getState().applyEvent({ type: "canvas.create", artifact: htmlArtifact("a", "old") });
+    store.getState().closeArtifact("a");
+    store.getState().applyEvents([
+      { type: "canvas.create", artifact: htmlArtifact("a", "new") },
+      { type: "canvas.commit", id: "a", description: "Updated closed document", revision: "v2" },
+    ]);
+    expect(store.getState().canvas.activeId).toBeNull();
+    expect(store.getState().canvas.artifacts.a.data).toEqual({ html: "new" });
+    expect(store.getState().closedArtifactIds).toEqual(["a"]);
+    store.getState().reset();
+    expect(store.getState().closedArtifactIds).toEqual([]);
+  });
+});

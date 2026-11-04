@@ -36,7 +36,7 @@ The final browser-generated DOCX was run through D4 after the Chromium image cas
 Run from the repository root with the workspace dependencies installed. These are diff-mapped commands, not full repository suites:
 
 ```sh
-pnpm --dir packages/canvas-react exec vitest run src/export/exporters.test.ts src/client/slideText.test.ts src/components/renderers/FreeSlide.test.ts src/export/pdf.test.ts src/export/markdownBlocks.test.ts src/export/wordPageContract.test.ts src/io/docxAddress.test.ts src/export/docxImage.test.ts
+pnpm --dir packages/canvas-react exec vitest run src/export/exporters.test.ts src/client/slideText.test.ts src/components/renderers/FreeSlide.test.ts src/export/pdf.test.ts src/export/markdownBlocks.test.ts src/export/wordPageContract.test.ts src/components/renderers/FileRenderer.test.tsx src/export/docxImage.test.ts
 uv run --offline --project packages/canvas-py --with pytest-timeout pytest packages/canvas-py/tests/test_exporters.py packages/canvas-py/tests/test_office_render_support.py packages/canvas-py/tests/test_slide_text.py packages/canvas-py/tests/test_office_parity.py packages/canvas-py/tests/test_layout_lint.py packages/canvas-py/tests/test_pptx_import.py packages/canvas-py/tests/test_document_ops.py -q --timeout=10
 pnpm --dir packages/canvas-react exec tsc --noEmit
 packages/canvas-py/.venv/bin/ruff check packages/canvas-py/src packages/canvas-py/tests/test_exporters.py packages/canvas-py/tests/test_office_render_gate.py packages/canvas-py/tests/office_render_support.py packages/canvas-py/tests/test_office_parity.py packages/canvas-py/tests/test_office_render_support.py packages/canvas-py/tests/test_layout_lint.py packages/canvas-py/tests/test_pptx_import.py packages/canvas-py/tests/test_slide_text.py

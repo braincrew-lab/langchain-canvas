@@ -23,6 +23,7 @@ export interface CanvasLabels {
   emptyOpen: string;
   emptyFormats: string;
   emptyFormatsAny: string;
+  closeTab: (title: string) => string;
 
   // header
   statusWriting: string;
@@ -57,19 +58,44 @@ export interface CanvasLabels {
   // renderer boundary
   renderFailed: string;
 
-  // file card + docx preview
+  // file card + preview
   download: string;
   firstPage: (name: string) => string;
   previewOf: (name: string) => string;
-  docxBanner: string;
-  docxWords: (n: number) => string;
-  docxPointingAt: (address: string) => string;
-  docxSubstituted: (fonts: string) => string;
-  docxShapesHidden: (n: number) => string;
-  docxBulletsRedrawn: (fonts: string) => string;
-  docxNoPageNumbers: string;
-  docxShapesHiddenHint: string;
-  docxBulletsRedrawnHint: string;
+
+  // read-only Office viewers
+  viewerPreviousPage: string;
+  viewerNextPage: string;
+  viewerPage: (n: number, total: number) => string;
+  viewerPages: string;
+  viewerThumbnails: string;
+  viewerReadOnly: string;
+  viewerZoom: string;
+  viewerZoomIn: string;
+  viewerZoomOut: string;
+  viewerFitWidth: string;
+  viewerBaselineZoom: string;
+  viewerFitPage: string;
+  viewerPageInput: string;
+  viewerInvalidPage: string;
+  viewerRetry: string;
+  docxRenderedPage: (n: number, total: number) => string;
+  sheetCellAddress: string;
+  sheetFormula: string;
+  sheetValue: string;
+  sheetEmptyCell: string;
+  sheetSelectCell: string;
+  sheetCachedValues: string;
+  sheetMissingValue: string;
+  sheetCount: (n: number) => string;
+  sheetInvalidAddress: string;
+  sheetAddressUnavailable: string;
+  sheetCopyValue: string;
+  sheetCopyFormula: string;
+  sheetCopied: string;
+  sheetCopyFailed: string;
+  sheetRangeSummary: (count: number, sum: number, average: number) => string;
+  sheetRangeSummaryHint: string;
 
   // renderer states
   tableLoading: string;
@@ -211,7 +237,40 @@ export interface CanvasLabels {
 }
 
 export const DEFAULT_LABELS: CanvasLabels = {
+  viewerPreviousPage: "Previous page",
+  viewerNextPage: "Next page",
+  viewerPage: (n, total) => `${n} / ${total}`,
+  viewerPages: "Pages",
+  viewerThumbnails: "Thumbnails",
+  viewerReadOnly: "Read only",
+  viewerZoom: "Zoom",
+  viewerZoomIn: "Zoom in",
+  viewerZoomOut: "Zoom out",
+  viewerFitWidth: "Fit width",
+  viewerBaselineZoom: "Reset zoom to 100%",
+  viewerFitPage: "Fit whole page",
+  viewerPageInput: "Go to page",
+  viewerInvalidPage: "Enter a page number within this document",
+  viewerRetry: "Retry page",
+  docxRenderedPage: (n) => `Page ${n}`,
+  sheetCellAddress: "Selected cell",
+  sheetFormula: "Formula",
+  sheetValue: "Value",
+  sheetEmptyCell: "Empty cell",
+  sheetSelectCell: "Select a cell to inspect its value or formula",
+  sheetCachedValues: "Formula results use saved workbook values and may be out of date.",
+  sheetMissingValue: "Saved result is empty or unavailable",
+  sheetCount: (n) => `${n} ${n === 1 ? "sheet" : "sheets"}`,
+  sheetInvalidAddress: "Enter a cell from A1 to XFD1048576",
+  sheetAddressUnavailable: "Cell is outside this sheet",
+  sheetCopyValue: "Copy value",
+  sheetCopyFormula: "Copy formula",
+  sheetCopied: "Copied",
+  sheetCopyFailed: "Copy failed",
+  sheetRangeSummary: (count, sum, average) => `Count ${count.toLocaleString()} · Sum ${sum.toLocaleString()} · Average ${average.toLocaleString(undefined, { maximumFractionDigits: 4 })}`,
+  sheetRangeSummaryHint: "Stored numeric values only; formula results excluded",
   busy: "Agent is working…",
+  closeTab: (title) => `Close ${title}`,
   dropToOpen: "Drop to open on the canvas",
   loading: "Loading…",
   noRenderer: (type) => `No renderer registered for type “${type}”.`,
@@ -254,21 +313,6 @@ export const DEFAULT_LABELS: CanvasLabels = {
   download: "Download",
   firstPage: (name) => `${name} — first page`,
   previewOf: (name) => `${name} preview`,
-  docxBanner: "Preview only — to change it, ask in chat or select some text.",
-  docxWords: (n) => `${n.toLocaleString()} words`,
-  docxPointingAt: (address) => `pointing at [${address}]`,
-  docxSubstituted: (fonts) => `substituted: ${fonts}`,
-  docxShapesHidden: (n) =>
-    n === 1
-      ? "1 shape not shown — download the file to see it"
-      : `${n} shapes not shown — download the file to see them`,
-  docxBulletsRedrawn: (fonts) => `bullets redrawn: ${fonts}`,
-  docxNoPageNumbers:
-    "The preview keeps the document's own page breaks; it does not repaginate, so it states no page number.",
-  docxShapesHiddenHint:
-    "This document draws shapes the preview cannot show. They are in the file — a download opens with them in place.",
-  docxBulletsRedrawnHint:
-    "This document writes its list bullets as characters in a symbol font's own private area, which no other font can draw. They are shown here as the standard characters that mean the same mark; the stored file is unchanged.",
 
   tableLoading: "Loading spreadsheet…",
   tableWaiting: "Waiting for data…",
@@ -401,7 +445,7 @@ export const DEFAULT_LABELS: CanvasLabels = {
   styleSolidColor: "Solid color (clear image)",
 };
 
-/** Optional chrome. Every flag defaults to `true` — the package's own look. */
+/** Optional chrome. Tab closing is opt-in; existing chrome defaults to visible. */
 export interface CanvasChrome {
   /** The per-artifact header row (title, status, actions). */
   header: boolean;
@@ -409,10 +453,6 @@ export interface CanvasChrome {
   undoRedo: boolean;
   versions: boolean;
   exportMenu: boolean;
-  /** The "Preview only" note above a Word preview. */
-  docxBanner: boolean;
-  /** The word-count / font-substitution line under a Word preview. */
-  docxStatus: boolean;
   /** The "mime · size · detail" facts under a file card's name. */
   fileFacts: boolean;
   /** The Download link on a file card — off when the host's own export
@@ -424,6 +464,8 @@ export interface CanvasChrome {
   /** The Desktop / Tablet / Mobile width switch above a web page — off when
    *  pages are only looked at on a desktop; the page then takes the full width. */
   htmlPreviewWidth: boolean;
+  /** Non-destructive close controls on document tabs. Off by default. */
+  tabClose: boolean;
 }
 
 export const DEFAULT_CHROME: CanvasChrome = {
@@ -432,12 +474,11 @@ export const DEFAULT_CHROME: CanvasChrome = {
   undoRedo: true,
   versions: true,
   exportMenu: true,
-  docxBanner: true,
-  docxStatus: true,
   fileFacts: true,
   fileDownload: true,
   fileVersions: true,
   htmlPreviewWidth: true,
+  tabClose: false,
 };
 
 const ChromeContext = createContext<{ labels: CanvasLabels; chrome: CanvasChrome }>({

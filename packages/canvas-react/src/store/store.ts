@@ -18,6 +18,7 @@ import { isCanvasEvent } from "../protocol/events";
 import type { ElementSelection } from "../protocol/selection";
 import type { Artifact } from "../protocol/artifacts";
 import { type CanvasState, emptyCanvasState, reduceCanvas, updateLive } from "../client/reconcile";
+import { visibleTabs } from "../client/workingCopies";
 
 /** Fired when the *user* edits an artifact in the canvas (a table cell, a chart
  *  value, document text, a slide/HTML element). The host wires this to sync the
@@ -76,6 +77,8 @@ export interface IframeCommand {
 export interface CanvasStore {
   // state
   canvas: CanvasState;
+  /** View-only closed tabs. Artifacts, order and history remain intact. */
+  closedArtifactIds: string[];
   messages: ChatMessage[];
   isStreaming: boolean;
   /** The agent is working on this canvas: hand edits are refused until it is done. */
@@ -135,6 +138,8 @@ export interface CanvasStore {
   /** Freeze or thaw hand editing (the host flips this around an agent run). */
   setBusy: (value: boolean) => void;
   setActiveArtifact: (id: string) => void;
+  /** Close a tab without deleting its file; selecting it again reopens it. */
+  closeArtifact: (id: string) => void;
   setSelections: (selections: ElementSelection[]) => void;
   sendIframeCommand: (command: Omit<IframeCommand, "seq">) => void;
   /** Register (or clear) the user-edit write-back handler. */
@@ -150,6 +155,7 @@ const UNDO_LIMIT = 50;
 
 const initialState = () => ({
   canvas: emptyCanvasState(),
+  closedArtifactIds: [] as string[],
   messages: [] as ChatMessage[],
   isStreaming: false,
   isBusy: false,
@@ -282,7 +288,26 @@ function restore(set: (fn: (s: CanvasStore) => Partial<CanvasStore>) => void, ge
 
     setStreaming: (value) => set({ isStreaming: value }),
     setBusy: (value) => set({ isBusy: value }),
-    setActiveArtifact: (id) => set((state) => ({ canvas: { ...state.canvas, activeId: id } })),
+    setActiveArtifact: (id) => set((state) => ({
+      canvas: { ...state.canvas, activeId: id },
+      closedArtifactIds: state.closedArtifactIds.includes(id)
+        ? state.closedArtifactIds.filter((closed) => closed !== id)
+        : state.closedArtifactIds,
+    })),
+    closeArtifact: (id) => set((state) => {
+      const tabs = visibleTabs(state.canvas.order).filter((tab) => !state.closedArtifactIds.includes(tab));
+      const index = tabs.indexOf(id);
+      if (index < 0) return state;
+      const remaining = tabs.filter((tab) => tab !== id);
+      const activeId = state.canvas.activeId === id
+        ? remaining[index] ?? remaining[index - 1] ?? null
+        : state.canvas.activeId;
+      return {
+        canvas: { ...state.canvas, activeId },
+        closedArtifactIds: [...state.closedArtifactIds, id],
+        selections: state.selections.filter((selection) => selection.artifactId !== id),
+      };
+    }),
     setSelections: (selections) => set({ selections }),
     sendIframeCommand: (command) =>
       set((state) => ({ iframeCommand: { ...command, seq: (state.iframeCommand?.seq ?? 0) + 1 } })),
@@ -320,7 +345,12 @@ function foldEvent(state: CanvasStore, event: StreamEvent): CanvasStore {
 
 function reduceEvent(state: CanvasStore, event: StreamEvent): CanvasStore {
   if (isCanvasEvent(event)) {
-    const canvas = reduceCanvas(state.canvas, event);
+    let canvas = reduceCanvas(state.canvas, event);
+    if (canvas.activeId && state.closedArtifactIds.includes(canvas.activeId)) {
+      const open = visibleTabs(canvas.order).filter((id) => !state.closedArtifactIds.includes(id));
+      const previous = state.canvas.activeId;
+      canvas = { ...canvas, activeId: previous && open.includes(previous) ? previous : open[0] ?? null };
+    }
     if (event.type === "canvas.create") {
       return { ...state, canvas, messages: linkArtifact(state.messages, event.artifact.id) };
     }

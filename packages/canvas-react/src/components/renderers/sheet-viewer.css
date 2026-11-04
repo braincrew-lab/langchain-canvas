@@ -1,0 +1,192 @@
+/* Viewer chrome follows the host theme; the workbook canvas keeps file colors. */
+.cv-sheet-panel--readonly {
+  container-type: inline-size;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+  overflow: hidden;
+}
+
+.cv-sheet-panel--readonly .fortune-stat-area {
+  background: var(--cv-bg);
+  color: var(--cv-muted);
+  border-top: 1px solid var(--cv-border);
+}
+
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__badge {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid var(--cv-border);
+  border-radius: 6px;
+  background: var(--cv-surface);
+  color: var(--cv-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--cv-border);
+  background: var(--cv-surface);
+}
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--cv-muted);
+  font: 11px var(--cv-font);
+}
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__address { flex: 0 0 88px; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__value { flex: 1 1 120px; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__result { flex: 0 1 160px; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__result > span { flex: none; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__fx { flex: none; color: var(--cv-muted); font: italic 16px Georgia, serif; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__address > span,
+.cv-sheet-panel--readonly .cv-sheet-viewer__value > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector input,
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector textarea {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--cv-border);
+  border-radius: 5px;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+  font: 12px var(--cv-mono);
+  text-overflow: ellipsis;
+}
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector textarea { height: 30px; min-height: 30px; max-height: 120px; resize: vertical; line-height: 1.4; white-space: pre; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector textarea:focus-visible { outline: 2px solid var(--cv-accent); outline-offset: 1px; }
+
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector input::placeholder { color: var(--cv-muted); }
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector input:focus-visible {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: 1px;
+}
+
+
+/* Keep Fortune's measured 31px footer height and native activation/zoom. */
+.cv-sheet-panel--readonly .luckysheet-sheet-area {
+  padding: 0 6px;
+  border-top: 1px solid var(--cv-border);
+  background: var(--cv-surface);
+  color: var(--cv-text);
+  transition: none;
+}
+
+.cv-sheet-panel--readonly #luckysheet-sheet-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+
+.cv-sheet-panel--readonly .fortune-sheettab-container {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cv-sheet-panel--readonly .fortune-sheettab-container .fortune-sheettab-container-c {
+  display: block;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cv-sheet-panel--readonly .fortune-sheettab-container-c::-webkit-scrollbar { display: none; }
+
+.cv-sheet-panel--readonly .luckysheet-sheet-area div.luckysheet-sheets-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 29px;
+  line-height: 29px;
+  min-width: 56px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-color: var(--cv-border);
+  background: transparent;
+  color: var(--cv-muted);
+  font-family: var(--cv-font);
+}
+.cv-sheet-panel--readonly .luckysheet-sheets-item-function,
+.cv-sheet-panel--readonly #luckysheet-sheets-m { display: none; }
+.cv-sheet-panel--readonly .luckysheet-sheet-area .luckysheet-sheets-item-name { padding: 0; pointer-events: none; }
+
+.cv-sheet-panel--readonly .luckysheet-sheet-area div.luckysheet-sheets-item:hover {
+  background: var(--cv-bg);
+  color: var(--cv-text);
+}
+
+.cv-sheet-panel--readonly .luckysheet-sheet-area div.luckysheet-sheets-item-active,
+.cv-sheet-panel--readonly .luckysheet-sheet-area div.luckysheet-sheets-item-active:hover {
+  background: var(--cv-accent-weak);
+  color: var(--cv-accent);
+  box-shadow: inset 0 2px var(--cv-accent);
+  font-weight: 600;
+}
+
+.cv-sheet-panel--readonly .fortune-sheet-area-right { order: 2; flex: none; margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--cv-border); }
+.cv-sheet-panel--readonly .fortune-zoom-ratio { color: var(--cv-text); }
+.cv-sheet-panel--readonly .fortune-zoom-ratio-menu {
+  background: var(--cv-bg);
+  border: 1px solid var(--cv-border);
+  color: var(--cv-text);
+}
+.cv-sheet-panel--readonly .fortune-zoom-button:hover,
+.cv-sheet-panel--readonly .fortune-zoom-ratio-item:hover,
+.cv-sheet-panel--readonly .fortune-sheettab-scroll:hover { background: var(--cv-accent-weak); }
+.cv-sheet-panel--readonly .luckysheet-sheet-area [tabindex]:focus-visible {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: -2px;
+}
+
+.cv-sheet-panel--readonly .fortune-zoom-container { align-items: center; height: 29px; }
+.cv-sheet-panel--readonly .fortune-zoom-container > .fortune-zoom-button { width: 32px; height: 29px; display: inline-flex; align-items: center; justify-content: center; }
+.cv-sheet-panel--readonly .fortune-zoom-ratio-current { min-height: 29px; display: flex; align-items: center; justify-content: center; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__copy {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--cv-border);
+  border-radius: 5px;
+  background: var(--cv-bg);
+  color: var(--cv-text);
+  font: 14px var(--cv-font);
+  cursor: pointer;
+}
+.cv-sheet-panel--readonly .cv-sheet-viewer__copy:disabled { opacity: .45; cursor: default; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__copy:not(:disabled):hover { background: var(--cv-accent-weak); }
+.cv-sheet-panel--readonly .cv-sheet-viewer__copy:focus-visible,
+.cv-sheet-panel--readonly .cv-sheet-viewer__summary:focus-visible { outline: 2px solid var(--cv-accent); outline-offset: 1px; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__feedback { flex: 0 1 auto; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cv-muted); font: 11px var(--cv-font); }
+.cv-sheet-panel--readonly .cv-sheet-viewer__feedback:empty { display: none; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__feedback--error { min-width: 24px; color: var(--cv-text); text-decoration: underline dotted; }
+.cv-sheet-panel--readonly .cv-sheet-viewer__inspector input[aria-invalid="true"] { border: 2px solid var(--cv-text); }
+.cv-sheet-panel--readonly .cv-sheet-viewer__summary { order: 1; flex: 0 1 300px; min-width: 24px; max-height: 29px; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cv-muted); font: 11px var(--cv-font); }
+
+@container (max-width: 760px) {
+  .cv-sheet-panel--readonly .cv-sheet-viewer__summary { flex: 0 0 24px; text-align: center; }
+  .cv-sheet-panel--readonly .cv-sheet-viewer__summary::before { content: "Σ"; font-size: 15px; }
+  .cv-sheet-panel--readonly .cv-sheet-viewer__summary > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .cv-sheet-panel--readonly .cv-sheet-viewer__badge { padding-inline: 4px; }
+}
+
+@container (max-width: 480px) {
+  .cv-sheet-panel--readonly .cv-sheet-viewer__inspector { gap: 4px; padding: 3px 6px; }
+  .cv-sheet-panel--readonly .cv-sheet-viewer__address { flex-basis: 64px; }
+  .cv-sheet-panel--readonly .cv-sheet-viewer__result { flex: 0 1 90px; }
+}

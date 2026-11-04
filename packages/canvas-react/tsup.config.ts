@@ -49,7 +49,8 @@ export default defineConfig({
     const fortuneCss = fs.readFileSync(req.resolve("@fortune-sheet/react/dist/index.css"), "utf8");
     fs.writeFileSync(
       "dist/styles.css",
-      fs.readFileSync("src/styles/canvas.css", "utf8") + "\n\n/* --- @fortune-sheet/react (bundled) --- */\n" + fortuneCss,
+      fs.readFileSync("src/styles/canvas.css", "utf8") + "\n\n/* --- @fortune-sheet/react (bundled) --- */\n" + fortuneCss
+        + "\n" + fs.readFileSync("src/components/renderers/sheet-viewer.css", "utf8"),
     );
   },
 });

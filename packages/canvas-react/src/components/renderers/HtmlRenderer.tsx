@@ -421,6 +421,14 @@ export function HtmlRenderer({
       if (event.source !== iframeRef.current?.contentWindow) return;
       const data = event.data;
       if (data?.source !== INSPECTOR_MARK) return;
+      if (data.type === "viewer_escape" && api.getState().readOnly) {
+        iframeRef.current?.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Escape", code: "Escape", bubbles: true, cancelable: true,
+        }));
+        return;
+      }
+      // The iframe is untrusted even when its editing inspector is disabled.
+      if (api.getState().readOnly) return;
 
       if (data.type === "select") {
         setSelections([
