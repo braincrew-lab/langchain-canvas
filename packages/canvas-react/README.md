@@ -73,6 +73,11 @@ Stored Office files use read-only viewers: server-rendered pages for Word and pr
 
 Read-only HTML frames keep the `allow-scripts` sandbox without same-origin access. They reject edit messages and forward Escape to the host so an expanded viewer can close without enabling editing.
 
+### Office element references
+
+Hosts opt into reference selection with `selectionMode="elements"`, `loadElements`, `onAddElement`, and controlled `selectedElements`. This does not enable editing. `loadElements({ path, revision, signal })` returns a `CanvasElementCollection` for that exact revision; Word/PPT overlays use normalized top-left `bounds` on the rendered page, while Excel stages the actual sheet name and selected A1 range. `onAddElement(reference, element)` lets the host display removable composer chips and send identity-only references with its next chat request. The host owns authenticated metadata loading, attachment lifetime, publication pins, server validation, and accepted-send clearing. Never infer native paragraph or shape identity from image coordinates alone. Read-only HTML keeps its existing inspector-disabled sandbox.
+
+
 
 ---
 

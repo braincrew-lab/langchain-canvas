@@ -4,6 +4,8 @@ import { useViewerSession } from "../../hooks/viewerSession";
 import { resolveCanvasPageUrl } from "../../io/canvasAssets";
 import { useLabels } from "../chrome";
 import { MAX_PAGE_ZOOM, MIN_PAGE_ZOOM, PAGE_BASELINE_WIDTH, pageDisplayWidth, parsePageDestination, readingScrollPosition, type PageZoom, type ReadingAnchor } from "./pageReading";
+import { sameElementReference, useElementSelection, usePageElements } from "../../hooks/elementSelection";
+import type { CanvasElementReference } from "../../protocol/elements";
 
 const THUMB_WIDTH = 480;
 const MAX_PAGE_WIDTH = 2400;
@@ -24,14 +26,30 @@ export interface PageViewerProps {
   pageCount: number;
   pageBaseUrl: string;
   version?: number | string;
+  /** Authoritative source revision; a display version alone cannot identify an edit target. */
+  revision?: string;
 }
 
 export function PageViewer(props: PageViewerProps) {
-  return <PageSequence key={JSON.stringify([props.path, props.version])} {...props} />;
+  return <PageSequence key={JSON.stringify([props.path, props.version, props.revision, props.pageBaseUrl])} {...props} />;
 }
 
-function PageSequence({ path, name, pageCount, pageBaseUrl, version }: PageViewerProps) {
+function PageSequence({ path, name, pageCount, pageBaseUrl, version, revision }: PageViewerProps) {
   const labels = useLabels();
+  const selection = useElementSelection();
+  const metadata = usePageElements(path, revision, pageCount);
+  const elementsByPage = useMemo(() => {
+    const pages = new Map<number, typeof metadata.elements>();
+    for (const element of metadata.elements) {
+      const list = pages.get(element.page!) ?? [];
+      list.push(element);
+      pages.set(element.page!, list);
+    }
+    // Small nested elements remain reachable above containing tables/shapes.
+    for (const elements of pages.values()) elements.sort((a, b) =>
+      b.bounds!.width * b.bounds!.height - a.bounds!.width * a.bounds!.height);
+    return pages;
+  }, [metadata.elements]);
   const isDeck = /\.(pptx?|odp)$/i.test(path) || /\.(pptx?|odp)$/i.test(name);
   const isWord = /\.docx?$/i.test(path) || /\.docx?$/i.test(name);
   const session = useViewerSession<PageReadingSession>(`pages:${path}`, version ?? "", () => ({
@@ -291,6 +309,12 @@ function PageSequence({ path, name, pageCount, pageBaseUrl, version }: PageViewe
           <button type="button" disabled={page >= pageCount} onClick={() => goTo(page + 1)} aria-label={labels.viewerNextPage}>›</button>
         </div>
       </div>
+      {metadata.enabled && <div className="cv-elements__status" role={metadata.status === "error" ? "alert" : "status"}>
+        {metadata.status === "loading" ? labels.elementLoading : metadata.status === "error" ? labels.elementLoadFailed :
+          metadata.status === "unavailable" ? labels.elementUnavailable : metadata.unsupportedReason ||
+          (metadata.elements.length ? labels.elementHint : labels.elementEmpty)}
+        {metadata.incomplete && <span> {labels.elementIncomplete}</span>}
+      </div>}
       <div className="cv-pages__workspace">
         {showRail && <nav ref={railRef} className="cv-pages__rail" aria-label={labels.viewerThumbnails}>
           {pageNumbers.map((n) => (
@@ -308,6 +332,7 @@ function PageSequence({ path, name, pageCount, pageBaseUrl, version }: PageViewe
             const rasterWidth = Math.round(Math.min(MAX_PAGE_WIDTH, Math.max(PAGE_BASELINE_WIDTH, Math.ceil(width * pixelRatio / 400) * 400)) * RASTER_SCALE);
             return <section key={n} ref={(node) => { pagesRef.current[n - 1] = node; }} className="cv-pages__sheet" aria-label={labels.viewerPage(n, pageCount)}
               style={{ width, maxWidth: "none" }}>
+              <div className="cv-elements__page">
               {failed.has(n) ? <div className="cv-pages__error" role="status">
                 <span>{labels.renderFailed}</span>
                 <button type="button" onClick={() => setFailed((previous) => {
@@ -326,6 +351,18 @@ function PageSequence({ path, name, pageCount, pageBaseUrl, version }: PageViewe
                     setAspectRatios((previous) => previous[n] === ratio ? previous : { ...previous, [n]: ratio });
                   }}
                   onError={() => setFailed((previous) => new Set(previous).add(n))} />}
+              {metadata.enabled && !failed.has(n) && aspectRatios[n] && <div className="cv-elements__overlay">{(elementsByPage.get(n) ?? []).map((element) => {
+                const bounds = element.bounds!;
+                const reference: CanvasElementReference = { path, revision: revision!, element_id: element.id };
+                const selected = selection.selectedElements?.some((item) => sameElementReference(item, reference)) ?? false;
+                return <button key={JSON.stringify([element.id, element.page, bounds])} type="button"
+                  className={`cv-elements__target${selected ? " is-selected" : ""}`}
+                  style={{ left: `${bounds.x * 100}%`, top: `${bounds.y * 100}%`, width: `${bounds.width * 100}%`, height: `${bounds.height * 100}%` }}
+                  aria-label={selected ? labels.elementAdded(element.label) : labels.elementAdd(element.label)}
+                  title={element.label} aria-pressed={selected} disabled={!selection.onAddElement}
+                  onClick={() => selection.onAddElement?.({ ...reference }, { ...element, bounds: { ...bounds }, locator: { ...element.locator } })} />;
+              })}</div>}
+              </div>
             </section>;
           })}
         </div>

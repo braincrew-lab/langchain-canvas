@@ -10,8 +10,8 @@
  *
  * Paged files, including Word documents, use a continuous `PageViewer` when
  * a page endpoint is available. Its synchronized thumbnail rail and lazy
- * page images preserve the source layout without exposing a text-editing
- * or text-selection mode. Word files without pages use the image/file fallback.
+ * page images preserve the source layout without exposing text editing.
+ * Hosts can explicitly opt into source-bound semantic element references.
  */
 
 import type { FileData } from "../../protocol/artifacts";
@@ -21,6 +21,7 @@ import { TableRenderer } from "./TableRenderer";
 import { useCanvasStore } from "../../hooks/useCanvasStore";
 import { useChrome, useLabels } from "../chrome";
 import type { RendererProps } from "../../registry/registry";
+import { useElementSelection } from "../../hooks/elementSelection";
 
 /** Human-readable byte size ("3.7 KB", "1.2 MB"). */
 function formatSize(size: number | undefined): string | null {
@@ -47,6 +48,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
   const pageBaseUrl = useCanvasStore((s) => s.pageBaseUrl);
   const labels = useLabels();
   const chrome = useChrome();
+  const { selectionMode } = useElementSelection();
   // Without an asset endpoint the card still states the file's facts —
   // only the live image, the preview and the download link need the URL.
   const href = assetBaseUrl && path ? resolveCanvasFileUrl(path, assetBaseUrl) : null;
@@ -81,6 +83,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
         <TableRenderer
           artifact={{ ...artifact, type: "table", data: workbook } as never}
           readOnly
+          elementSource={{ path, revision: typeof artifact.meta?.revision === "string" ? artifact.meta.revision : undefined }}
         />
         {pageBaseUrl && chartPages && chartPages.length > 0 && (
           <div className="cv-file__charts">
@@ -103,6 +106,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
         pageCount={pageCount as number}
         pageBaseUrl={pageBaseUrl}
         version={stamp}
+        revision={typeof artifact.meta?.revision === "string" ? artifact.meta.revision : undefined}
       />
     ) : grids && grids.length > 0 ? (
       // Every page at a glance — the same grid sheets the agent reads.
@@ -123,6 +127,7 @@ export function FileRenderer({ artifact }: RendererProps<FileData>) {
 
   return (
     <div className={"cv-file" + (paged || isWorkbook ? " cv-file--pages" : "")}>
+      {selectionMode === "elements" && !paged && !isWorkbook && <div className="cv-elements__status" role="status">{labels.elementUnavailable}</div>}
       {preview}
       {(!(paged || isWorkbook) || (chrome.fileDownload && href)) && (
       <div className="cv-file__card">
