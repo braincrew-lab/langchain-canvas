@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.56] — 2026-11-05
+
 ### Changed
 
 - Hosts can opt into read-only Office element references with `selectionMode`, authenticated `loadElements`, `onAddElement`, and controlled `selectedElements`. Page overlays use revision-bound semantic geometry; Excel attaches actual sheet/range identities. Selection does not enable editing, and missing, ambiguous or failed metadata remains visible rather than guessing a target.
