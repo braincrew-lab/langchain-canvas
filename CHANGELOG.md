@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.57] — 2026-11-08
+
 ### Fixed
 
 - Renewing only a page-rendering URL's `ticket` keeps the existing page viewer, focus, zoom and reading position; failed pages retry using the new credential. Every other URL field, document version and source revision still scopes reading state. Tickets are excluded from the saved layout identity, not from image requests.
