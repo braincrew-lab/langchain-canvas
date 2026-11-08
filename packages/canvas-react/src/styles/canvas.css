@@ -47,10 +47,11 @@
 /* Containers fade only — never `transform`. A transform on an ancestor creates a
  * containing block that breaks the free-canvas drag math and the fixed-position
  * Present overlay, so the entrance for panels/bodies is strictly opacity. */
-.cv-canvas:not(.cv-canvas--empty) { animation: cv-fade 0.32s ease; }
 .cv-body { animation: cv-fade 0.34s ease; }
 .cv-header { animation: cv-fade 0.4s ease; }
 .cv-canvas--empty .cv-empty { animation: cv-fade 0.45s ease; }
+/* Restored document pixels must appear immediately, not replay a blank-to-visible entrance. */
+.cv-body:has(.cv-pages) { animation: none; }
 /* Small, self-contained overlays/cards can safely rise/pop (no interactive
  * absolutely-positioned or fixed descendants). */
 .cv-card { animation: cv-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1); }

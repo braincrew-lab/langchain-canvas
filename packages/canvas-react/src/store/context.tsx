@@ -29,7 +29,7 @@ export interface CanvasProviderProps {
 
 export function CanvasProvider({ children, store }: CanvasProviderProps) {
   const [instance] = useState(() => store ?? createCanvasStore());
-  return <CanvasStoreContext.Provider value={instance}>{children}</CanvasStoreContext.Provider>;
+  return <CanvasStoreContext.Provider value={store ?? instance}>{children}</CanvasStoreContext.Provider>;
 }
 
 /** The raw store API for the nearest provider (or the default store). */

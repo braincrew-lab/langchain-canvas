@@ -3,21 +3,36 @@ import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CanvasProvider, createCanvasStore } from "../../hooks/useCanvasStore";
-import { PageViewer } from "./PageViewer";
+import { PageViewer, type PageViewerProps } from "./PageViewer";
 
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let viewport: HTMLDivElement;
 let notifyResize: () => void;
 let store = createCanvasStore();
+let createdImages: HTMLImageElement[];
 
-function renderViewer(path = "slides.pptx", version: number | string = 1) {
-  act(() => root.render(<CanvasProvider store={store}><PageViewer path={path} name={path} pageCount={8} pageBaseUrl="/page?path=" version={version} /></CanvasProvider>));
+function renderViewer(path = "slides.pptx", version: number | string = 1, props: Partial<PageViewerProps> = {}) {
+  act(() => root.render(<CanvasProvider store={store}><PageViewer path={path} name={path} pageCount={8} pageBaseUrl="/page?path=" version={version} {...props} /></CanvasProvider>));
+}
+
+function loadPage(image: HTMLImageElement, width: number, height: number) {
+  Object.defineProperties(image, {
+    naturalWidth: { value: width, configurable: true },
+    naturalHeight: { value: height, configurable: true },
+  });
+  act(() => image.dispatchEvent(new Event("load")));
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  createdImages = [];
+  vi.stubGlobal("Image", function Image() {
+    const image = document.createElement("img");
+    createdImages.push(image);
+    return image;
+  });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   store = createCanvasStore();
@@ -169,6 +184,177 @@ it("uses each loaded slide's aspect ratio and available height for whole-page fi
   expect(Number.parseFloat(sheets[1].style.width)).toBe(736);
   act(() => host.querySelector<HTMLButtonElement>('[aria-label="Fit width"]')!.click());
   expect(Number.parseFloat(sheets[0].style.width)).toBe(952);
+});
+
+it("keeps the first valid per-page ratio when rounded raster dimensions change", () => {
+  const images = host.querySelectorAll<HTMLImageElement>(".cv-pages__page");
+  loadPage(images[0], 0, 1600);
+  expect(images[0].style.aspectRatio).toBe("");
+  loadPage(images[0], 1200, 1600);
+  loadPage(images[1], 1600, 1200);
+  const sheet = host.querySelector<HTMLElement>(".cv-pages__sheet")!;
+  const width = sheet.style.width;
+  const source = images[0].src;
+  viewport.scrollTop = 350;
+  viewport.scrollLeft = 90;
+  loadPage(images[0], 1201, 1600);
+  loadPage(images[1], 2400, 1801);
+  expect(images[0].style.aspectRatio).toBe("0.75");
+  expect(images[1].style.aspectRatio).toBe(String(4 / 3));
+  expect(sheet.style.width).toBe(width);
+  expect(images[0].src).toBe(source);
+  expect(viewport.scrollTop).toBe(350);
+  expect(viewport.scrollLeft).toBe(90);
+});
+
+it("preserves reading DOM, focus and position while rotating only the page ticket", () => {
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=first&path=" });
+  const image = host.querySelector<HTMLImageElement>(".cv-pages__page")!;
+  const sheet = host.querySelector<HTMLElement>(".cv-pages__sheet")!;
+  loadPage(image, 1200, 1600);
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="4 / 8"]')!.click());
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')!.click());
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Thumbnails"]')!.click());
+  viewport.scrollTop = 650;
+  viewport.scrollLeft = 120;
+  viewport.focus();
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=second&path=" });
+  expect(host.querySelector(".cv-pages__main")).toBe(viewport);
+  expect(host.querySelector(".cv-pages__sheet")).toBe(sheet);
+  expect(host.querySelector(".cv-pages__page")).toBe(image);
+  expect(new URL(image.src).searchParams.get("ticket")).toBe("first");
+  const renewal = createdImages.find((candidate) => candidate.src.includes("ticket=second") && candidate.src.includes("page=1&"))!;
+  loadPage(renewal, 1200, 1600);
+  expect(host.querySelector(".cv-pages__page")).toBe(renewal);
+  expect(new URL(renewal.src).searchParams.get("ticket")).toBe("second");
+  expect(document.activeElement).toBe(viewport);
+  expect(host.querySelector(".cv-pages__page-number")?.textContent).toBe("4 / 8");
+  expect(host.querySelector(".cv-pages__percentage")?.textContent).toBe("100%");
+  expect(host.querySelector(".cv-pages__rail")).toBeNull();
+  expect(viewport.scrollTop).toBe(650);
+  expect(viewport.scrollLeft).toBe(120);
+  expect(renewal.style.aspectRatio).toBe("0.75");
+});
+
+it("clears committed pixels immediately when a page ticket is removed", () => {
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=first&path=" });
+  const image = host.querySelector<HTMLImageElement>(".cv-pages__page")!;
+  loadPage(image, 1200, 1600);
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?path=" });
+  expect(host.querySelector(".cv-pages__main")).toBe(viewport);
+  expect(host.querySelector(".cv-pages__page")).not.toBe(image);
+  expect(image.isConnected).toBe(false);
+  expect(image.getAttribute("src")).toBeNull();
+});
+
+it("restores learned ratios before images load on a tab remount with a renewed ticket", () => {
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=first&path=" });
+  const image = host.querySelector<HTMLImageElement>(".cv-pages__page")!;
+  loadPage(image, 1200, 1600);
+  const width = host.querySelector<HTMLElement>(".cv-pages__sheet")!.style.width;
+  act(() => root.render(<CanvasProvider store={store}><div>Other tab</div></CanvasProvider>));
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=second&path=" });
+  const restored = host.querySelector<HTMLImageElement>(".cv-pages__page")!;
+  expect(restored).not.toBe(image);
+  expect(restored.style.aspectRatio).toBe("0.75");
+  expect(host.querySelector<HTMLElement>(".cv-pages__sheet")!.style.width).toBe(width);
+  loadPage(restored, 1201, 1600);
+  expect(restored.style.aspectRatio).toBe("0.75");
+  act(() => root.render(<CanvasProvider store={store}><div>Other tab</div></CanvasProvider>));
+  store = createCanvasStore();
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=second&path=" });
+  expect(host.querySelector<HTMLImageElement>(".cv-pages__page")!.style.aspectRatio).toBe("");
+});
+
+it("replaces mounted reading DOM and layout state when the provider store changes", () => {
+  const image = host.querySelector<HTMLImageElement>(".cv-pages__page")!;
+  loadPage(image, 1200, 1600);
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="4 / 8"]')!.click());
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')!.click());
+  viewport.scrollTop = 650;
+  viewport.scrollLeft = 120;
+  store = createCanvasStore();
+  renderViewer();
+  const next = host.querySelector<HTMLDivElement>(".cv-pages__main")!;
+  expect(next).not.toBe(viewport);
+  expect(viewport.isConnected).toBe(false);
+  expect(image.isConnected).toBe(false);
+  expect(next.scrollTop).toBe(0);
+  expect(next.scrollLeft).toBe(0);
+  expect(host.querySelector(".cv-pages__page-number")?.textContent).toBe("1 / 8");
+  expect(host.querySelector('[aria-label="Fit whole page"]')?.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector<HTMLImageElement>(".cv-pages__page")!.style.aspectRatio).toBe("");
+});
+
+it("retries failed pages on a new ticket without replacing healthy pages or reading state", () => {
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=first&path=" });
+  const images = host.querySelectorAll<HTMLImageElement>(".cv-pages__page");
+  loadPage(images[0], 1200, 1600);
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="4 / 8"]')!.click());
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')!.click());
+  act(() => images[0].dispatchEvent(new Event("error")));
+  expect(host.querySelector(".cv-pages__error")).not.toBeNull();
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=first&path=" });
+  expect(host.querySelector(".cv-pages__error")).not.toBeNull();
+  viewport.scrollTop = 650;
+  viewport.scrollLeft = 120;
+  renderViewer("slides.pptx", 1, { pageBaseUrl: "/page?ticket=second&path=" });
+  expect(host.querySelector(".cv-pages__error")).toBeNull();
+  expect(host.querySelector(".cv-pages__main")).toBe(viewport);
+  const renewed = host.querySelectorAll<HTMLImageElement>(".cv-pages__page");
+  expect(renewed[1]).toBe(images[1]);
+  expect(new URL(renewed[0].src).searchParams.get("ticket")).toBe("second");
+  expect(renewed[0].style.aspectRatio).toBe("0.75");
+  expect(host.querySelector(".cv-pages__page-number")?.textContent).toBe("4 / 8");
+  expect(host.querySelector(".cv-pages__percentage")?.textContent).toBe("100%");
+  expect(viewport.scrollTop).toBe(650);
+  expect(viewport.scrollLeft).toBe(120);
+  act(() => renewed[0].dispatchEvent(new Event("error")));
+  expect(host.querySelector(".cv-pages__error")).not.toBeNull();
+});
+
+it.each([
+  ["origin", "https://first.example", "https://second.example"],
+  ["endpoint", "/threads/one/page", "/threads/one/preview"],
+  ["thread", "/threads/one/", "/threads/two/"],
+  ["snapshot", "snapshot=s1", "snapshot=s2"],
+  ["URL revision", "revision=r1", "revision=r2"],
+  ["general auth", "auth=a1", "auth=a2"],
+  ["token", "token=t1", "token=t2"],
+  ["access token", "access_token=b1", "access_token=b2"],
+  ["other query field", "variant=preview", "variant=original"],
+])("resets reading state and ratios when the semantic source %s changes", (_label, from, to) => {
+  const pageBaseUrl = "https://first.example/threads/one/page?ticket=first&snapshot=s1&revision=r1&auth=a1&token=t1&access_token=b1&variant=preview&path=";
+  renderViewer("slides.pptx", 1, { pageBaseUrl });
+  const previous = host.querySelector<HTMLDivElement>(".cv-pages__main")!;
+  loadPage(host.querySelector<HTMLImageElement>(".cv-pages__page")!, 1200, 1600);
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')!.click());
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Thumbnails"]')!.click());
+  previous.scrollTop = 650;
+  previous.scrollLeft = 120;
+  renderViewer("slides.pptx", 1, { pageBaseUrl: pageBaseUrl.replace(from, to) });
+  const next = host.querySelector<HTMLDivElement>(".cv-pages__main")!;
+  expect(next).not.toBe(previous);
+  expect(previous.isConnected).toBe(false);
+  expect(next.scrollTop).toBe(0);
+  expect(next.scrollLeft).toBe(0);
+  expect(host.querySelector(".cv-pages__page-number")?.textContent).toBe("1 / 8");
+  expect(host.querySelector('[aria-label="Fit whole page"]')?.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector(".cv-pages__rail")).not.toBeNull();
+  expect(host.querySelector<HTMLImageElement>(".cv-pages__page")!.style.aspectRatio).toBe("");
+});
+
+it("resets ratios and reading preferences on an authoritative revision change at the same version", () => {
+  renderViewer("slides.pptx", 1, { revision: "revision-one" });
+  const previous = host.querySelector<HTMLDivElement>(".cv-pages__main")!;
+  loadPage(host.querySelector<HTMLImageElement>(".cv-pages__page")!, 1200, 1600);
+  act(() => host.querySelector<HTMLButtonElement>('[aria-label="Reset zoom to 100%"]')!.click());
+  previous.scrollTop = 350;
+  renderViewer("slides.pptx", 1, { revision: "revision-two" });
+  expect(host.querySelector(".cv-pages__main")).not.toBe(previous);
+  expect(host.querySelector<HTMLDivElement>(".cv-pages__main")!.scrollTop).toBe(0);
+  expect(host.querySelector('[aria-label="Fit whole page"]')?.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector<HTMLImageElement>(".cv-pages__page")!.style.aspectRatio).toBe("");
 });
 
 it("does not interpret toolbar arrow keys as page navigation", () => {

@@ -1,15 +1,20 @@
 /** Continuous, lazy-loaded document pages with a synchronized thumbnail rail. */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useViewerSession } from "../../hooks/viewerSession";
+import { useCanvasStoreApi, type CanvasStore } from "../../hooks/useCanvasStore";
+import type { StoreApi } from "zustand/vanilla";
 import { resolveCanvasPageUrl } from "../../io/canvasAssets";
 import { useLabels } from "../chrome";
 import { MAX_PAGE_ZOOM, MIN_PAGE_ZOOM, PAGE_BASELINE_WIDTH, pageDisplayWidth, parsePageDestination, readingScrollPosition, type PageZoom, type ReadingAnchor } from "./pageReading";
 import { sameElementReference, useElementSelection, usePageElements } from "../../hooks/elementSelection";
 import type { CanvasElementReference } from "../../protocol/elements";
+import { PageRaster } from "./PageRaster";
 
 const THUMB_WIDTH = 480;
 const MAX_PAGE_WIDTH = 2400;
 const RASTER_SCALE = 1.2;
+const viewerStoreIds = new WeakMap<StoreApi<CanvasStore>, number>();
+let nextViewerStoreId = 0;
 
 interface PageReadingSession {
   page: number;
@@ -18,6 +23,7 @@ interface PageReadingSession {
   scrollTop: number;
   scrollLeft: number;
   anchor: ReadingAnchor | null;
+  aspectRatios: Record<number, number>;
 }
 
 export interface PageViewerProps {
@@ -30,11 +36,30 @@ export interface PageViewerProps {
   revision?: string;
 }
 
-export function PageViewer(props: PageViewerProps) {
-  return <PageSequence key={JSON.stringify([props.path, props.version, props.revision, props.pageBaseUrl])} {...props} />;
+/** Only the host's renewable ticket is transport state; every other URL field scopes the document. */
+function pageSourceIdentity(pageBaseUrl: string): string {
+  const fragmentStart = pageBaseUrl.indexOf("#");
+  const source = fragmentStart < 0 ? pageBaseUrl : pageBaseUrl.slice(0, fragmentStart);
+  const fragment = fragmentStart < 0 ? "" : pageBaseUrl.slice(fragmentStart);
+  const queryStart = source.indexOf("?");
+  if (queryStart < 0) return pageBaseUrl;
+  const query = source.slice(queryStart + 1).split("&")
+    .filter((parameter) => !new URLSearchParams(parameter).has("ticket")).join("&");
+  return `${source.slice(0, queryStart)}${query ? `?${query}` : ""}${fragment}`;
 }
 
-function PageSequence({ path, name, pageCount, pageBaseUrl, version, revision }: PageViewerProps) {
+export function PageViewer(props: PageViewerProps) {
+  const store = useCanvasStoreApi();
+  let storeId = viewerStoreIds.get(store);
+  if (storeId === undefined) {
+    storeId = ++nextViewerStoreId;
+    viewerStoreIds.set(store, storeId);
+  }
+  const identity = JSON.stringify([props.path, props.version, props.revision, pageSourceIdentity(props.pageBaseUrl)]);
+  return <PageSequence key={`${storeId}:${identity}`} {...props} identity={identity} />;
+}
+
+function PageSequence({ path, name, pageCount, pageBaseUrl, version, revision, identity }: PageViewerProps & { identity: string }) {
   const labels = useLabels();
   const selection = useElementSelection();
   const metadata = usePageElements(path, revision, pageCount);
@@ -52,18 +77,23 @@ function PageSequence({ path, name, pageCount, pageBaseUrl, version, revision }:
   }, [metadata.elements]);
   const isDeck = /\.(pptx?|odp)$/i.test(path) || /\.(pptx?|odp)$/i.test(name);
   const isWord = /\.docx?$/i.test(path) || /\.docx?$/i.test(name);
-  const session = useViewerSession<PageReadingSession>(`pages:${path}`, version ?? "", () => ({
-    page: 1, zoom: isDeck ? "page" : "width", thumbnails: null, scrollTop: 0, scrollLeft: 0, anchor: null,
+  const ticketQuery = pageBaseUrl.includes("?") ? pageBaseUrl.slice(pageBaseUrl.indexOf("?") + 1).split("#", 1)[0] : "";
+  const hasPageTicket = Boolean(new URLSearchParams(ticketQuery).get("ticket"));
+  const session = useViewerSession<PageReadingSession>(`pages:${path}`, identity, () => ({
+    page: 1, zoom: isDeck ? "page" : "width", thumbnails: null, scrollTop: 0, scrollLeft: 0, anchor: null, aspectRatios: {},
   }));
   const [page, setPage] = useState(() => Math.max(1, Math.min(pageCount, session.current.page)));
   const [railPreference, setRailPreference] = useState(session.current.thumbnails);
   const [containerWidth, setContainerWidth] = useState(0);
   const showRail = railPreference ?? containerWidth >= 520;
   const [failed, setFailed] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    setFailed((previous) => previous.size ? new Set() : previous);
+  }, [pageBaseUrl]);
   const [zoom, setZoom] = useState<PageZoom>(session.current.zoom);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [pixelRatio, setPixelRatio] = useState(1);
-  const [aspectRatios, setAspectRatios] = useState<Record<number, number>>({});
+  const [aspectRatios, setAspectRatios] = useState(session.current.aspectRatios);
   const [editingPage, setEditingPage] = useState(false);
   const [pageDraft, setPageDraft] = useState("");
   const [invalidPage, setInvalidPage] = useState(false);
@@ -341,14 +371,17 @@ function PageSequence({ path, name, pageCount, pageBaseUrl, version, revision }:
                   return next;
                 })}>{labels.viewerRetry}</button>
               </div> :
-                <img className="cv-pages__page" src={resolveCanvasPageUrl(path, n, rasterWidth, pageBaseUrl, version)} alt={`${name} ${n}`}
-                  style={aspectRatios[n] ? { aspectRatio: String(aspectRatios[n]) } : undefined}
-                  loading={n === 1 ? "eager" : "lazy"} decoding="async"
-                  onLoad={(event) => {
-                    const image = event.currentTarget;
-                    if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+                <PageRaster scope={JSON.stringify([identity, n, hasPageTicket])}
+                  source={JSON.stringify([path, version, revision, pageBaseUrl, n])}
+                  src={resolveCanvasPageUrl(path, n, rasterWidth, pageBaseUrl, version)} width={rasterWidth} alt={`${name} ${n}`}
+                  aspectRatio={aspectRatios[n]} loading={n === 1 ? "eager" : "lazy"}
+                  onLoad={(image) => {
+                    if (session.current.aspectRatios[n] !== undefined || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
                     const ratio = image.naturalWidth / image.naturalHeight;
-                    setAspectRatios((previous) => previous[n] === ratio ? previous : { ...previous, [n]: ratio });
+                    if (!Number.isFinite(ratio) || ratio <= 0) return;
+                    const next = { ...session.current.aspectRatios, [n]: ratio };
+                    session.current.aspectRatios = next;
+                    setAspectRatios(next);
                   }}
                   onError={() => setFailed((previous) => new Set(previous).add(n))} />}
               {metadata.enabled && !failed.has(n) && aspectRatios[n] && <div className="cv-elements__overlay">{(elementsByPage.get(n) ?? []).map((element) => {

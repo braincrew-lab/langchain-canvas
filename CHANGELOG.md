@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Renewing only a page-rendering URL's `ticket` keeps the existing page viewer, focus, zoom and reading position; failed pages retry using the new credential. Every other URL field, document version and source revision still scopes reading state. Tickets are excluded from the saved layout identity, not from image requests.
+- Paged previews retain each page's first valid aspect ratio in their Canvas-store reading session, including across tab remounts. Raster rounding no longer feeds back into fitted page sizes; changing the semantic source or revision resets the learned ratios.
+- `CanvasProvider` honors replacement of an explicitly supplied store. Mounted page viewers reset their DOM and layout state when the store changes instead of carrying another store's reading state into the new instance.
+- Paged previews retain decoded image nodes across resolution changes and tab remounts in a store-scoped cache bounded to 16 detached pages and 16 million pixels. Upgrades decode before replacing visible pixels; visited offscreen pages defer upgrades and ticket renewals until near the viewport.
+- Image transport failures clear affected pixels instead of treating authorization denial as a safe resolution fallback. Committed images notify host load/error capture after detached loading or cache restoration, keeping preview availability and selection state synchronized.
+- Restored document pages appear without a blank-to-visible entrance fade; switching away from a page preview no longer restarts a persistent canvas fade.
+
 ## [0.7.56] — 2026-11-05
 
 ### Changed
